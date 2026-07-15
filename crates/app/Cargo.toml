@@ -9,6 +9,8 @@ name = "trango"
 path = "src/main.rs"
 
 [dependencies]
+anyhow = "1"
+libmpv2 = { version = "6", features = ["render"] }
 playback-state = { path = "../playback-state" }
 slint = "1.17.1"
 tracing = "0.1"

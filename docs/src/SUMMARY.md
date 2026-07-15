@@ -9,6 +9,7 @@
 # Architecture
 
 - [Crates](architecture/crates.md)
+- [Video playback](architecture/video-playback.md)
 
 # Specs
 
@@ -19,3 +20,4 @@
 - [tracing](technology/tracing.md)
 - [thiserror](technology/thiserror.md)
 - [slint](technology/slint.md)
+- [libmpv2](technology/libmpv2.md)

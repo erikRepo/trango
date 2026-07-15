@@ -4,7 +4,10 @@
 //! `ui/app-window.slint`). libmpv integration and the rest of the UI are
 //! wired in later development steps (see `TODO.md`).
 
+mod video_player;
+
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use playback_state::{PlaybackMode, PlayerState};
@@ -41,7 +44,15 @@ fn wire_player_state(window: &AppWindow) -> Rc<RefCell<PlayerState>> {
     state
 }
 
-fn main() -> Result<(), slint::PlatformError> {
+/// Reads the video path to play (if any) from CLI arguments, as used by
+/// `main`. `args` is expected to include the program name at index 0 (i.e.
+/// `std::env::args()`), matching Vaihe 11's `trango <path/to/video>` usage —
+/// the Open Video dialog for picking a file in-app arrives in a later step.
+fn video_path_from_args(args: &[String]) -> Option<PathBuf> {
+    args.get(1).map(PathBuf::from)
+}
+
+fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
     tracing::info!("trango starting");
     print_version();
@@ -49,7 +60,18 @@ fn main() -> Result<(), slint::PlatformError> {
     let window = AppWindow::new()?;
     window.set_version(env!("CARGO_PKG_VERSION").into());
     let _player_state = wire_player_state(&window);
-    window.run()
+
+    let args: Vec<String> = std::env::args().collect();
+    let _video_player = match video_path_from_args(&args) {
+        Some(video_path) => Some(video_player::VideoPlayer::attach(&window, &video_path)?),
+        None => {
+            tracing::info!("no video path given; run as `trango <path/to/video>` to play one");
+            None
+        }
+    };
+
+    window.run()?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -62,6 +84,29 @@ mod tests {
         // When:  reading CARGO_PKG_VERSION
         // Then:  it is non-empty, proving the version is wired up for display
         assert!(!env!("CARGO_PKG_VERSION").is_empty());
+    }
+
+    #[test]
+    fn test_video_path_from_args_with_path() {
+        // Given: argv as std::env::args() would yield it, program name + one path
+        let args = vec!["trango".to_string(), "video.mp4".to_string()];
+
+        // When:  extracting the video path
+        // Then:  it's the first argument after the program name
+        assert_eq!(
+            video_path_from_args(&args),
+            Some(PathBuf::from("video.mp4"))
+        );
+    }
+
+    #[test]
+    fn test_video_path_from_args_without_path() {
+        // Given: argv with only the program name, i.e. no video was requested
+        let args = vec!["trango".to_string()];
+
+        // When:  extracting the video path
+        // Then:  there is none
+        assert_eq!(video_path_from_args(&args), None);
     }
 
     // Slint's winit backend can only be initialized once per process (and

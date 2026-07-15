@@ -67,8 +67,13 @@ describe its role. The product name shown in the UI is **TrangoPlayer**.
 version, and opens the Slint main window defined in
 `crates/app/ui/app-window.slint` (see `docs/src/technology/slint.md`) —
 window background and a full top bar (wordmark, segmented control, ghost
-buttons), nothing else yet. No libmpv integration yet (see `TODO.md` for the
-current step).
+buttons). If a video path is given as a CLI argument
+(`trango path/to/video.mp4`), `video_player::VideoPlayer::attach` embeds
+libmpv playback into the window (see
+`docs/src/architecture/video-playback.md` and
+`docs/src/technology/libmpv2.md`); without one, the video area just shows
+the window background as a placeholder. Picking a file from an in-app
+dialog is a later `TODO.md` step.
 
 Depends on `playback-state` for `PlayerState`. `wire_player_state(&AppWindow)`
 creates a `PlayerState` (behind `Rc<RefCell<_>>` — Slint callbacks run on the

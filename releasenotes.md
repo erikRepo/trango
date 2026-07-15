@@ -9,6 +9,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.10] - 2026-07-15
+
+### Added
+- `trango` depends on `libmpv2` (`render` feature) for libmpv OpenGL render-API embedding — asked and approved per `CLAUDE.md` before adding, chosen over the unmaintained original `libmpv` crate
+- `crates/app/src/video_player.rs` (+ `gl_proc_address_bridge` submodule): embeds libmpv video playback into the Slint window as an OpenGL underlay via `Window::set_rendering_notifier`, with no separate mpv window
+- `trango <path/to/video>` CLI argument (`video_path_from_args`) starts playing that video on launch; without one, the video area just shows the placeholder background
+- `docs/src/architecture/video-playback.md` and `docs/src/technology/libmpv2.md`
+
+### Changed
+- `app-window.slint`: root `Window` no longer has an opaque `background` (needed so the mpv underlay can show through); the video area's background is now `Palette.window-bg` only while no video is loaded (`video-loaded` property, `in`, defaults `false`), and fully transparent once one is
+
 ## [0.1.9] - 2026-07-15
 
 ### Added

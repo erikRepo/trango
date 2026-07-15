@@ -92,10 +92,16 @@ component GhostButton {
 export component AppWindow inherits Window {
     in property <string> version;
     in property <bool> sentence-mode-active: false;
+    // Whether crates/app/src/video_player.rs has an mpv OpenGL render
+    // context underlay active. While true, the video area below is left
+    // fully transparent so that underlay (drawn straight into the window's
+    // backbuffer before this scene, via Window::set_rendering_notifier) is
+    // visible through it; opaque window-bg is only needed as a placeholder
+    // when no video is loaded yet.
+    in property <bool> video-loaded: false;
     callback toggle-mode();
 
     title: "TrangoPlayer v" + version;
-    background: Palette.window-bg;
     width: 960px;
     height: 600px;
 
@@ -178,8 +184,13 @@ export component AppWindow inherits Window {
         }
 
         Rectangle {
-            // Placeholder body; video column and sentence panel land in
-            // later TODO.md steps.
+            // Video frame area, filling the remaining window height below
+            // the top bar. Transparent while a video is loaded so the mpv
+            // underlay shows through (see `video-loaded` above); otherwise
+            // filled with the window background color as a placeholder.
+            // Precise inset margins, rounded corners and the sentence panel
+            // column land in later TODO.md steps.
+            background: root.video-loaded ? transparent : Palette.window-bg;
         }
     }
 }

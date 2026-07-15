@@ -1,0 +1,20 @@
+1
+00:00:00,500 --> 00:00:02,480
+Welcome to Trango Player.
+
+2
+00:00:03,080 --> 00:00:05,765
+This is a short sample video for testing.
+
+3
+00:00:06,365 --> 00:00:09,190
+It contains several spoken sentences.
+
+4
+00:00:09,790 --> 00:00:12,665
+Each sentence has its own subtitle line.
+
+5
+00:00:13,265 --> 00:00:16,345
+Enjoy exploring the sentence by sentence mode.
+
