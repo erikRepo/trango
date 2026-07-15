@@ -6,7 +6,10 @@
 //! Slint window or a video file.
 
 mod mode;
+mod navigation;
+mod seek_command;
 mod state;
 
 pub use mode::PlaybackMode;
+pub use seek_command::SeekCommand;
 pub use state::PlayerState;

@@ -9,6 +9,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.6] - 2026-07-15
+
+### Added
+- `playback-state` crate: `SeekCommand { start, end, then_pause }` describing what the player should do without driving mpv itself
+- `playback-state` crate: `PlayerState::next_cue()`, `previous_cue()`, `repeat_current_cue()` implementing the README's Right/Left/Space navigation rules — `next_cue`/`previous_cue` return `None` and leave the cursor in place at the last/first cue or on an empty cue list; `repeat_current_cue` never moves the cursor and returns the identical command however many times it is called
+
 ## [0.1.5] - 2026-07-15
 
 ### Added

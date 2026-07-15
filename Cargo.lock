@@ -43,7 +43,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "playback-state"
-version = "0.1.4"
+version = "0.1.6"
 dependencies = [
  "subtitle",
 ]
@@ -83,7 +83,7 @@ checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 
 [[package]]
 name = "subtitle"
-version = "0.1.4"
+version = "0.1.6"
 dependencies = [
  "thiserror",
 ]
@@ -187,7 +187,7 @@ dependencies = [
 
 [[package]]
 name = "trango"
-version = "0.1.4"
+version = "0.1.6"
 dependencies = [
  "tracing",
  "tracing-subscriber",

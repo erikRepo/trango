@@ -41,9 +41,20 @@ cues: Vec<Cue>, current_cue_index: Option<usize>, show_translation: bool
 `current_cue_index` to `Some(0)`, or `None` if `cues` is empty.
 `toggle_translation()` flips `show_translation`.
 
+Cue navigation implements the README's Right/Left/Space rules as pure
+logic returning a `SeekCommand { start, end, then_pause }` — "what the
+player should do" — instead of driving mpv directly:
+
+- `next_cue()` / `previous_cue()` move `current_cue_index` and return the
+  command to play the newly-focused cue's span. At the last/first cue (or
+  on an empty cue list) they return `None` and leave the cursor where it
+  is — there's nothing further to navigate to.
+- `repeat_current_cue()` never moves the cursor; calling it any number of
+  times for the same cue returns the identical command, matching the
+  README's requirement that Space always replays the same span.
+
 No I/O and no UI yet, so this state machine is TDD'd without a Slint
-window or a video file. Cue navigation (next/previous/repeat sentence) is
-added in a later step (see `TODO.md`, Vaihe 7).
+window or a video file.
 
 ## `crates/app` (binary, package `trango`)
 
