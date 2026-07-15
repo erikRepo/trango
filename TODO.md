@@ -23,11 +23,11 @@ Näitä ei toisteta jokaisen askeleen kohdalla erikseen alla — ne pätevät ai
 
 ## Esivalmistelu (ei koodia, kertaalleen)
 
-- [ ] Varmista työkalut asennettuna: `rustc`, `cargo`, `mdbook`, `cargo-audit`,
+- [x] Varmista työkalut asennettuna: `rustc`, `cargo`, `mdbook`, `cargo-audit`,
       `cargo-outdated`, ja `libmpv`-kehitysheaderit (esim. `libmpv-dev` /
       `mpv-libs-devel` järjestelmästä riippuen) — `libmpv-rs` tarvitsee nämä
       linkitykseen
-- [ ] Päätä minimi Rust-versio (MSRV) ja kirjaa se `Cargo.toml`:iin (`rust-version`)
+- [x] Päätä minimi Rust-versio (MSRV) ja kirjaa se `Cargo.toml`:iin (`rust-version`) — 1.97 (rustup stable)
 
 ---
 

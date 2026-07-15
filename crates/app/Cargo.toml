@@ -1,0 +1,13 @@
+[package]
+name = "trango"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "trango"
+path = "src/main.rs"
+
+[dependencies]
+tracing = "0.1"
+tracing-subscriber = "0.3"
