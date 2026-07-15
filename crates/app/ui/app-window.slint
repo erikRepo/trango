@@ -1,10 +1,11 @@
 // TrangoPlayer main window shell.
 //
-// Vaihe 9 scope: top bar in its full visual form per README.md's design
-// tokens (wordmark, segmented control, ghost buttons) — pixel reference is
-// sketch/design_reference.dc.html#1c. The segmented control only flips a
-// local Slint property so far; wiring it to playback-state::PlayerState
-// arrives in TODO.md Vaihe 10. Body/bottom-hint-bar content arrives in
+// Top bar in its full visual form per README.md's design tokens (wordmark,
+// segmented control, ghost buttons) — pixel reference is
+// sketch/design_reference.dc.html#1c. The segmented control's `toggle-mode`
+// callback is handled in Rust (crates/app/src/main.rs), which drives
+// playback-state::PlayerState::toggle_mode() and mirrors the result back
+// into `sentence-mode-active`. Body/bottom-hint-bar content arrives in
 // later steps.
 
 /// Color tokens from README.md's "Design Tokens" section, shared across the
@@ -90,7 +91,8 @@ component GhostButton {
 
 export component AppWindow inherits Window {
     in property <string> version;
-    in-out property <bool> sentence-mode-active: false;
+    in property <bool> sentence-mode-active: false;
+    callback toggle-mode();
 
     title: "TrangoPlayer v" + version;
     background: Palette.window-bg;
@@ -142,13 +144,21 @@ export component AppWindow inherits Window {
                         SegmentButton {
                             label: "Normal";
                             active: !root.sentence-mode-active;
-                            clicked => { root.sentence-mode-active = false; }
+                            clicked => {
+                                if (root.sentence-mode-active) {
+                                    root.toggle-mode();
+                                }
+                            }
                         }
 
                         SegmentButton {
                             label: "Sentence by sentence";
                             active: root.sentence-mode-active;
-                            clicked => { root.sentence-mode-active = true; }
+                            clicked => {
+                                if (!root.sentence-mode-active) {
+                                    root.toggle-mode();
+                                }
+                            }
                         }
                     }
                 }

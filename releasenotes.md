@@ -9,6 +9,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.9] - 2026-07-15
+
+### Added
+- `trango` depends on `playback-state`; `crates/app/src/main.rs` owns a `PlayerState` (behind `Rc<RefCell<_>>`) and wires it to a new `toggle-mode` Slint callback
+
+### Changed
+- Top bar segmented control now drives `PlayerState::toggle_mode()` for real instead of only flipping a local Slint property: each `SegmentButton`'s `clicked` handler invokes `toggle-mode()` (guarded so clicking the already-active segment is a no-op), Rust toggles the mode and logs it with `tracing::debug!`, then mirrors the result back into `sentence-mode-active` — `sentence-mode-active` changed from `in-out` to `in` since only Rust writes it now
+
 ## [0.1.8] - 2026-07-15
 
 ### Added

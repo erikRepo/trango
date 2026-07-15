@@ -66,8 +66,20 @@ describe its role. The product name shown in the UI is **TrangoPlayer**.
 `crates/app/src/main.rs` initializes `tracing` logging, prints the crate
 version, and opens the Slint main window defined in
 `crates/app/ui/app-window.slint` (see `docs/src/technology/slint.md`) —
-window background and a top bar showing the version, nothing else yet. No
-libmpv integration yet (see `TODO.md` for the current step).
+window background and a full top bar (wordmark, segmented control, ghost
+buttons), nothing else yet. No libmpv integration yet (see `TODO.md` for the
+current step).
+
+Depends on `playback-state` for `PlayerState`. `wire_player_state(&AppWindow)`
+creates a `PlayerState` (behind `Rc<RefCell<_>>` — Slint callbacks run on the
+UI thread, so no `Send`/`Sync` is needed) and registers a handler for the
+window's `toggle-mode` callback: it calls `PlayerState::toggle_mode()`, logs
+the new mode with `tracing::debug!`, and mirrors it into the `sentence-mode-
+active` Slint property so the segmented control's active pill stays in sync.
+The top bar's `SegmentButton`s invoke `toggle-mode()` from their `clicked`
+handler (guarded so clicking the already-active segment is a no-op) instead
+of assigning `sentence-mode-active` directly, so the click always goes
+through the real state machine.
 
 ## Why three crates instead of one
 
