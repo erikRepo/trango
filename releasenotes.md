@@ -17,6 +17,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Changed
 - App version moved from a top bar label to the window title (`"TrangoPlayer v{version}"`) to make room for the full top bar layout
 
+### Fixed
+- Segmented control pills and ghost buttons were stretched to the full 52px top bar height (`HorizontalLayout` stretches children to fill the cross axis by default) — added `horizontal-stretch: 0; vertical-stretch: 0;` to `SegmentButton`, `GhostButton`, and their wrapping containers so they size to their own padding and sit vertically centered, matching `sketch/design_reference.dc.html#1c`
+
 ## [0.1.7] - 2026-07-15
 
 ### Added
