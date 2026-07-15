@@ -1,18 +1,31 @@
-//! The `SeekCommand` directive returned by navigation functions, describing
-//! what the video player should do without actually driving mpv.
+//! The `SeekCommand`/`PlaySpanCommand` directives returned by navigation
+//! functions, describing what the video player should do without actually
+//! driving mpv.
 
 use std::time::Duration;
 
-/// A directive telling the player to seek to `start`, play through to `end`,
-/// and pause afterward if `then_pause` is set. Produced by
-/// [`crate::PlayerState`] navigation methods; interpreting it against a real
-/// mpv instance is the caller's responsibility.
+/// A directive telling the player to seek the playhead to `start` and stay
+/// paused there — produced by [`crate::PlayerState`]'s `next_cue`/
+/// `previous_cue`/`jump_to_cue`. No mode starts playback on its own (see
+/// `docs/src/specs/`); only [`PlaySpanCommand`] (Space) does that.
+/// Interpreting it against a real mpv instance is the caller's
+/// responsibility.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SeekCommand {
     /// Timestamp to seek the playhead to.
     pub start: Duration,
-    /// Timestamp at which playback should stop if `then_pause` is set.
+}
+
+/// A directive telling the player to play from `start` through to `end` and
+/// pause there — produced by [`crate::PlayerState::repeat_current_cue`]
+/// (Space). Whether to actually start this playback, versus pausing
+/// immediately because a previous span is already mid-play, depends on live
+/// mpv state `PlayerState` doesn't have — that decision belongs to the
+/// caller (`crates/app/src/video_player.rs`'s `toggle_play_span`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlaySpanCommand {
+    /// Timestamp to start playback from.
+    pub start: Duration,
+    /// Timestamp at which playback should pause.
     pub end: Duration,
-    /// Whether the player should pause once `end` is reached.
-    pub then_pause: bool,
 }

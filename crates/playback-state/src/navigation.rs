@@ -1,60 +1,57 @@
-//! Cue navigation: `next_cue`, `previous_cue`, and `repeat_current_cue`,
-//! implementing the README's Right/Left/Space rules as pure logic. These
-//! methods only move `PlayerState`'s cursor and report what the player
-//! should do next — they never touch mpv themselves.
+//! Cue navigation: `next_cue`, `previous_cue`, `jump_to_cue` (always land
+//! paused — no mode autoplays on its own, see `docs/src/specs/`) and
+//! `repeat_current_cue` (Space's "play/replay this cue" directive), as pure
+//! logic. These methods only move `PlayerState`'s cursor and report what
+//! the player should do next — they never touch mpv themselves.
 
-use subtitle::Cue;
-
-use crate::seek_command::SeekCommand;
+use crate::seek_command::{PlaySpanCommand, SeekCommand};
 use crate::state::PlayerState;
-
-/// Builds the seek command that plays a cue's full span and pauses at its end.
-fn seek_command_for(cue: &Cue) -> SeekCommand {
-    SeekCommand {
-        start: cue.start,
-        end: cue.end,
-        then_pause: true,
-    }
-}
 
 impl PlayerState {
     /// Advances the cursor to the next cue and returns the seek command to
-    /// play through it, or `None` if there is no cues loaded or the cursor
-    /// is already on the last cue.
+    /// land the playhead at its start (paused — see [`SeekCommand`]'s doc
+    /// comment), or `None` if there is no cues loaded or the cursor is
+    /// already on the last cue.
     pub fn next_cue(&mut self) -> Option<SeekCommand> {
         let next_index = self.current_cue_index? + 1;
         let cue = self.cues.get(next_index)?;
         self.current_cue_index = Some(next_index);
-        Some(seek_command_for(cue))
+        Some(SeekCommand { start: cue.start })
     }
 
     /// Moves the cursor to the previous cue and returns the seek command to
-    /// play through it, or `None` if there are no cues loaded or the cursor
-    /// is already on the first cue.
+    /// land the playhead at its start, or `None` if there are no cues
+    /// loaded or the cursor is already on the first cue.
     pub fn previous_cue(&mut self) -> Option<SeekCommand> {
         let previous_index = self.current_cue_index?.checked_sub(1)?;
         let cue = self.cues.get(previous_index)?;
         self.current_cue_index = Some(previous_index);
-        Some(seek_command_for(cue))
+        Some(SeekCommand { start: cue.start })
     }
 
-    /// Returns the seek command to replay the current cue's span, without
-    /// moving the cursor. Calling this repeatedly always yields the same
-    /// command for the same cue. `None` if no cue is in focus.
-    pub fn repeat_current_cue(&self) -> Option<SeekCommand> {
+    /// Returns the command to play the current cue's span, without moving
+    /// the cursor. Calling this repeatedly always yields the same command
+    /// for the same cue. `None` if no cue is in focus. Whether this
+    /// actually starts playback (versus pausing an already-playing span
+    /// early) is decided by the caller against live mpv state — see
+    /// [`PlaySpanCommand`]'s doc comment.
+    pub fn repeat_current_cue(&self) -> Option<PlaySpanCommand> {
         let cue = self.cues.get(self.current_cue_index?)?;
-        Some(seek_command_for(cue))
+        Some(PlaySpanCommand {
+            start: cue.start,
+            end: cue.end,
+        })
     }
 
     /// Moves the cursor directly to `index` and returns the seek command to
-    /// play through that cue — the same command shape `next_cue`/
-    /// `previous_cue` return, so a sentence list row click behaves exactly
-    /// like arrow navigation. `None`, leaving the cursor untouched, if
-    /// `index` is out of range for the loaded cues.
+    /// land the playhead at that cue's start — the same command shape
+    /// `next_cue`/`previous_cue` return, so a sentence list row click
+    /// behaves exactly like arrow navigation. `None`, leaving the cursor
+    /// untouched, if `index` is out of range for the loaded cues.
     pub fn jump_to_cue(&mut self, index: usize) -> Option<SeekCommand> {
         let cue = self.cues.get(index)?;
         self.current_cue_index = Some(index);
-        Some(seek_command_for(cue))
+        Some(SeekCommand { start: cue.start })
     }
 }
 
@@ -97,7 +94,8 @@ mod tests {
     fn test_next_cue_advances_cursor_and_returns_seek_command() {
         // Given: a state with three cues, cursor on the first
         // When:  calling next_cue
-        // Then:  the cursor moves to the second cue and the command covers its span
+        // Then:  the cursor moves to the second cue and the command seeks
+        //        to its start
         let mut state = PlayerState::new();
         state.set_cues(three_cues());
 
@@ -108,8 +106,6 @@ mod tests {
             command,
             Some(SeekCommand {
                 start: Duration::from_millis(1_000),
-                end: Duration::from_millis(2_000),
-                then_pause: true,
             })
         );
     }
@@ -158,7 +154,8 @@ mod tests {
     fn test_previous_cue_moves_cursor_back_and_returns_seek_command() {
         // Given: a state with three cues, cursor on the second
         // When:  calling previous_cue
-        // Then:  the cursor moves to the first cue and the command covers its span
+        // Then:  the cursor moves to the first cue and the command seeks
+        //        to its start
         let mut state = PlayerState::new();
         state.set_cues(three_cues());
         state.next_cue();
@@ -170,8 +167,6 @@ mod tests {
             command,
             Some(SeekCommand {
                 start: Duration::from_millis(0),
-                end: Duration::from_millis(1_000),
-                then_pause: true,
             })
         );
     }
@@ -189,7 +184,8 @@ mod tests {
     fn test_repeat_current_cue_does_not_move_cursor() {
         // Given: a state with three cues, cursor on the second
         // When:  calling repeat_current_cue
-        // Then:  the cursor stays put and the command covers the current cue's span
+        // Then:  the cursor stays put and the command covers the current
+        //        cue's full span (start and end)
         let mut state = PlayerState::new();
         state.set_cues(three_cues());
         state.next_cue();
@@ -199,10 +195,9 @@ mod tests {
         assert_eq!(state.current_cue_index, Some(1));
         assert_eq!(
             command,
-            Some(SeekCommand {
+            Some(PlaySpanCommand {
                 start: Duration::from_millis(1_000),
                 end: Duration::from_millis(2_000),
-                then_pause: true,
             })
         );
     }
@@ -221,7 +216,7 @@ mod tests {
     fn test_jump_to_cue_moves_cursor_and_returns_seek_command() {
         // Given: a state with three cues, cursor on the first
         // When:  jumping directly to the third cue
-        // Then:  the cursor moves there and the command covers its span
+        // Then:  the cursor moves there and the command seeks to its start
         let mut state = PlayerState::new();
         state.set_cues(three_cues());
 
@@ -232,8 +227,6 @@ mod tests {
             command,
             Some(SeekCommand {
                 start: Duration::from_millis(2_000),
-                end: Duration::from_millis(3_000),
-                then_pause: true,
             })
         );
     }

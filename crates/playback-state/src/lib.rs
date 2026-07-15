@@ -12,6 +12,6 @@ mod state;
 mod time_format;
 
 pub use mode::PlaybackMode;
-pub use seek_command::SeekCommand;
+pub use seek_command::{PlaySpanCommand, SeekCommand};
 pub use state::PlayerState;
 pub use time_format::format_time;

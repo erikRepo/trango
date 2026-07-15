@@ -9,6 +9,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.29] - 2026-07-15
+
+### Fixed
+- `crates/app/src/video_player.rs`: pressing Space to repeat the current sentence could instead replay the *next* one — real speech-to-text output commonly produces contiguous cues (cue N's `end` equals cue N+1's `start`), so pausing exactly at a cue's end also matched the next cue's start, and the live `time-pos`-driven sentence tracking (`sync_current_sentence`) silently reclassified the cursor there right after auto-pausing. It now only re-derives the cursor from `time-pos` while a span is actually still playing toward its own scheduled pause (`pause_at` armed), leaving it alone once paused for any reason
+
+### Changed
+- **Right/Left/sentence-list navigation no longer starts playback.** They now only seek to the target cue's start and leave mpv paused there (`VideoPlayer::seek_and_pause`, replacing `apply_seek_command`); **Space is now the only thing that starts or stops playback**, toggling between playing the current cue's span (auto-pausing at its end, same as before) and pausing immediately if pressed again while that's still playing (`VideoPlayer::toggle_play_span`) — nothing plays until asked to, in any mode. See `docs/src/specs/`'s "No mode autoplays" for the full reasoning (this was chosen as the fix for the bug above, not just alongside it)
+- `playback_state::SeekCommand` dropped `end`/`then_pause` (only `start` now — `next_cue`/`previous_cue`/`jump_to_cue`'s contract is now purely "land here, paused"); new `playback_state::PlaySpanCommand { start, end }` carries what `repeat_current_cue` (Space) needs instead
+- README.md: Right/Left/Space's documented behavior updated to match
+
 ## [0.1.28] - 2026-07-15
 
 ### Fixed

@@ -59,9 +59,9 @@ Open `design_reference.dc.html` in any browser to view it (it needs `support.js`
 
 **Sentence-by-sentence mode** (core language-learning feature):
 - Driven entirely by subtitle cue timing (start/end timestamps per line).
-- **Right Arrow:** jump playhead to the start of the next subtitle cue, pause or continue per current play state (recommend: play through to the end of that cue, then pause — reinforces one-sentence-at-a-time listening).
-- **Left Arrow:** jump to previous cue's start.
-- **Space:** replay the current cue's span (seek to cue start, play to cue end, pause). Pressing Space repeatedly replays the same span every time — do not advance.
+- **Right Arrow:** jump playhead to the start of the next subtitle cue and pause there — never autoplays (see `docs/src/specs/` for why: no mode starts playback on its own, only Space does).
+- **Left Arrow:** jump to previous cue's start, same "always pause there" behavior as Right Arrow.
+- **Space:** toggles playback of the current cue — if paused, plays from the cue's start through to its end and pauses there automatically; if already playing, pauses immediately instead (so you're never stuck waiting out a sentence you've heard enough of). Pressing Space again after it auto-paused replays the same span from the start every time — do not advance.
 - **Translation toggle:** shows/hides the translated line under the original in the current-sentence card, via either the card's toggle switch or the **Ctrl+T** keyboard shortcut (works in both Normal and Sentence-by-sentence mode). Off by default. Purely visual — does not affect playback.
 - **Sentence list:** clicking a row jumps to that cue (same behavior as arrow navigation) and highlights it as current.
 

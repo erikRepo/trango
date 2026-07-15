@@ -313,3 +313,60 @@ records its arguments into a `Vec`, letting the test assert
 `wire_open_subtitles_dialog`'s own wiring (that a reload is triggered,
 with the correct video path) without needing a working mpv instance at
 all.
+
+## No mode autoplays — only Space starts/stops playback
+
+Found through real usage, right after the fix above: pressing Space to
+replay the current sentence kept landing on the *next* sentence instead,
+even with a healthy, seekable mpv core. README originally left Right
+Arrow's exact behavior on landing at a new cue as an implementer's call
+("pause or continue per current play state... recommend: play through to
+the end of that cue, then pause"); the initial implementation chose
+"always autoplay through to the end, then pause" for every navigation
+action (`next_cue`/`previous_cue`/`jump_to_cue`/`repeat_current_cue` all
+produced the same "seek, resume, arm an end-of-span auto-pause" command).
+That choice turned out to directly cause the bug: `sync_current_sentence`
+(`video_player.rs`) tracks `current_cue_index` from mpv's live `time-pos`
+so the sentence card/list follow whatever's actually playing, and real
+speech-to-text output very commonly produces *contiguous* cues — cue N's
+`end` exactly equals cue N+1's `start`, no gap — so the instant mpv
+auto-paused at cue N's end, that same timestamp *also* matched cue N+1's
+start, and the very next poll tick reclassified the cursor onto cue N+1.
+Pressing Space to "repeat" then replayed the wrong sentence, because the
+cursor had already silently moved.
+
+The chosen fix goes beyond patching that one boundary case: **navigation
+(`Right`/`Left`/sentence-list clicks) no longer starts playback at all** —
+it only seeks to the target cue's start and leaves mpv paused there.
+**Space is the only thing that starts or stops playback**, as a toggle:
+pressed while paused, it plays the current cue's span and auto-pauses at
+its end (unchanged from before, just no longer triggered by navigation
+too); pressed again while that's still playing, it pauses immediately
+rather than waiting out the rest of the sentence. This is a deliberate,
+uniform "nothing plays until you ask it to" model, not just a targeted
+bugfix — it also removes the awkwardness of a sentence starting to play
+the instant you glance at the next line via the arrow keys.
+
+This split needed a matching type-level split in `playback-state`:
+`SeekCommand { start }` (no `end`/`then_pause` — used by `next_cue`/
+`previous_cue`/`jump_to_cue`, which now only ever mean "land here,
+paused") versus `PlaySpanCommand { start, end }` (used by
+`repeat_current_cue`, which still needs both ends of the span). Deciding
+whether a `PlaySpanCommand` should actually start playing, versus pausing
+an already-playing one early, needs live mpv state `PlayerState` can't
+see — that decision moved into `video_player.rs`'s `toggle_play_span`,
+which is genuinely a toggle (checks mpv's own `pause` property) rather
+than the pure, mpv-agnostic transform `PlayerState`'s navigation methods
+are elsewhere.
+
+The original `sync_current_sentence` boundary bug still needed its own
+fix independent of this redesign — `toggle_play_span` still arms the same
+kind of end-of-span auto-pause `repeat_current_cue`'s command, so the
+identical contiguous-cue reclassification could still happen once Space
+starts a span and it auto-pauses. The fix: `sync_current_sentence` now
+only re-derives `current_cue_index` from live `time-pos` while
+`VideoPlayerInner::pause_at` is actually armed (i.e. a span is genuinely
+still playing toward its own scheduled pause) — once paused, for any
+reason, it leaves the cursor exactly where the triggering navigation/Space
+action already set it, rather than letting a boundary-matching pause
+position silently reclassify it.

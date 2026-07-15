@@ -77,11 +77,19 @@ fn wire_player_state(window: &AppWindow) -> Rc<RefCell<PlayerState>> {
 /// Wires the window's `next-cue`, `previous-cue`, `repeat-cue`, and
 /// `jump-to-cue` callbacks — invoked by `app-window.slint`'s `key-pressed`
 /// handler for Right/Left/Space while in `SentenceBySentence` mode, and by
-/// the sentence list's row clicks, respectively — to `PlayerState`'s
-/// matching navigation methods, mirroring the resulting cue into the
-/// sentence card/list and handing any produced `SeekCommand` to
-/// `video_player` to drive mpv (seek + play-to-end + pause, see
-/// `video_player::VideoPlayer::apply_seek_command`).
+/// the sentence list's row clicks, respectively.
+///
+/// `next-cue`/`previous-cue`/`jump-to-cue` land on a different cue's start
+/// and always leave mpv paused there — no mode autoplays on navigation
+/// alone (see `docs/src/specs/`) — via `PlayerState`'s matching methods,
+/// mirroring the result into the sentence card/list and handing the
+/// produced `SeekCommand` to `video_player::VideoPlayer::seek_and_pause`.
+///
+/// `repeat-cue` (Space) doesn't move the cursor, so it skips the sentence
+/// card/list refresh entirely: it hands `PlayerState::repeat_current_cue`'s
+/// `PlaySpanCommand` straight to `video_player::VideoPlayer::toggle_play_span`,
+/// which decides whether that means starting playback or pausing an
+/// already-playing span early based on mpv's live state.
 fn wire_cue_navigation(
     window: &AppWindow,
     state: &Rc<RefCell<PlayerState>>,
@@ -99,12 +107,14 @@ fn wire_cue_navigation(
         &video_player,
         PlayerState::previous_cue,
     ));
-    window.on_repeat_cue(cue_navigation_handler(
-        window,
-        state,
-        &video_player,
-        |state| state.repeat_current_cue(),
-    ));
+
+    let repeat_state = Rc::clone(state);
+    let repeat_video_player = Rc::clone(&video_player);
+    window.on_repeat_cue(move || {
+        if let Some(command) = repeat_state.borrow().repeat_current_cue() {
+            repeat_video_player.toggle_play_span(command);
+        }
+    });
 
     let jump_state = Rc::clone(state);
     let jump_window_weak = window.as_weak();
@@ -144,7 +154,7 @@ fn cue_navigation_handler(
 
 /// Mirrors a navigation result into the sentence card and sentence list, and
 /// — if a `SeekCommand` was produced — hands it to `video_player` to drive
-/// mpv. Shared by arrow/space key handling and the sentence list's row-click
+/// mpv. Shared by arrow-key handling and the sentence list's row-click
 /// handling so both paths behave identically, per README's "Sentence list"
 /// spec ("same behavior as arrow navigation").
 fn apply_navigation_result(
@@ -156,7 +166,7 @@ fn apply_navigation_result(
     sentence_card::update_sentence_card(window, state);
     sentence_list::update_sentence_list(window, state);
     if let Some(command) = command {
-        video_player.apply_seek_command(command);
+        video_player.seek_and_pause(command);
     }
 }
 

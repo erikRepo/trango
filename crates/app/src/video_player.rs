@@ -29,7 +29,7 @@ use std::time::Duration;
 
 use libmpv2::render::{OpenGLInitParams, RenderContext, RenderParam, RenderParamApiType};
 use libmpv2::Mpv;
-use playback_state::{format_time, PlaybackMode, PlayerState, SeekCommand};
+use playback_state::{format_time, PlaySpanCommand, PlaybackMode, PlayerState, SeekCommand};
 use slint::{ComponentHandle, GraphicsAPI, RenderingState, Timer, TimerMode, Weak};
 
 use gl_proc_address_bridge::{
@@ -64,8 +64,11 @@ struct VideoPlayerInner {
     /// framebuffer in [`render_frame`].
     gl_get_integerv: Option<unsafe extern "C" fn(u32, *mut i32)>,
     /// Timestamp at which the scrub bar poll tick (see [`apply_pending_pause`])
-    /// should pause mpv, armed by [`VideoPlayer::apply_seek_command`] for a
-    /// [`SeekCommand`] with `then_pause` set. Cleared once reached.
+    /// should pause mpv, armed by [`VideoPlayer::toggle_play_span`] when it
+    /// starts playing a [`PlaySpanCommand`]'s span. Cleared once reached, or
+    /// immediately if `toggle_play_span` is called again while still armed
+    /// (Space pausing early). While this is armed, [`sync_current_sentence`]
+    /// leaves `current_cue_index` alone — see its doc comment for why.
     pause_at: Option<Duration>,
     /// Timestamp the next poll tick (see [`apply_pending_start_seek`]) should
     /// seek mpv to once a file is actually loaded, armed by
@@ -79,10 +82,10 @@ struct VideoPlayerInner {
 
 /// Owns an mpv core registered as a rendering underlay on an [`AppWindow`],
 /// plus the scrub bar's polling timer. The rendering notifier and timer
-/// closures hold their own `Rc` clone of `inner`; [`VideoPlayer::apply_seek_command`]
-/// uses this handle's own clone to drive mpv from `main.rs`'s cue navigation
-/// callbacks. `scrub_bar_timer` must be kept alive too: dropping a
-/// `slint::Timer` stops it.
+/// closures hold their own `Rc` clone of `inner`; [`VideoPlayer::seek_and_pause`]/
+/// [`VideoPlayer::toggle_play_span`] use this handle's own clone to drive
+/// mpv from `main.rs`'s cue navigation callbacks. `scrub_bar_timer` must be
+/// kept alive too: dropping a `slint::Timer` stops it.
 pub struct VideoPlayer {
     inner: Rc<RefCell<VideoPlayerInner>>,
     #[allow(dead_code)]
@@ -183,13 +186,44 @@ impl VideoPlayer {
     }
 
     /// Applies a `playback_state` navigation `SeekCommand`: seeks mpv to
-    /// `command.start`, resumes playback, and — if `command.then_pause` is
-    /// set — arms `pause_at` so the next scrub bar poll tick pauses once
-    /// `command.end` is reached (see [`apply_pending_pause`]). Called from
-    /// `main.rs`'s `next-cue`/`previous-cue`/`repeat-cue` callback handlers.
-    pub fn apply_seek_command(&self, command: SeekCommand) {
+    /// `command.start` and pauses it there. No mode autoplays on navigation
+    /// (see `docs/src/specs/`) — only [`toggle_play_span`](Self::toggle_play_span)
+    /// (Space) starts playback. Called from `main.rs`'s `next-cue`/
+    /// `previous-cue`/`jump-to-cue` callback handlers.
+    pub fn seek_and_pause(&self, command: SeekCommand) {
         let mut inner = self.inner.borrow_mut();
         let mpv = inner.mpv;
+        if let Err(err) = mpv.command(
+            "seek",
+            &[&command.start.as_secs_f64().to_string(), "absolute"],
+        ) {
+            tracing::error!(%err, "failed to seek mpv");
+        }
+        if let Err(err) = mpv.set_property("pause", true) {
+            tracing::error!(%err, "failed to pause mpv after seek");
+        }
+        inner.pause_at = None;
+    }
+
+    /// Applies a `playback_state` `PlaySpanCommand` (Space's "play/replay
+    /// the current cue" directive) as a toggle: if mpv is currently playing
+    /// (presumably this same span, mid-play toward its own `pause_at`),
+    /// pauses immediately rather than waiting out the rest of it. Otherwise
+    /// seeks to `command.start`, resumes playback, and arms `pause_at` so
+    /// the next scrub bar poll tick pauses once `command.end` is reached
+    /// (see [`apply_pending_pause`]). Called from `main.rs`'s `repeat-cue`
+    /// callback handler (wired to Space).
+    pub fn toggle_play_span(&self, command: PlaySpanCommand) {
+        let mut inner = self.inner.borrow_mut();
+        let mpv = inner.mpv;
+        let is_playing = mpv.get_property::<bool>("pause").map(|paused| !paused);
+        if is_playing.unwrap_or(false) {
+            if let Err(err) = mpv.set_property("pause", true) {
+                tracing::error!(%err, "failed to pause mpv early");
+            }
+            inner.pause_at = None;
+            return;
+        }
         if let Err(err) = mpv.command(
             "seek",
             &[&command.start.as_secs_f64().to_string(), "absolute"],
@@ -199,7 +233,7 @@ impl VideoPlayer {
         if let Err(err) = mpv.set_property("pause", false) {
             tracing::error!(%err, "failed to resume mpv playback after seek");
         }
-        inner.pause_at = command.then_pause.then_some(command.end);
+        inner.pause_at = Some(command.end);
     }
 
     /// Loads `video_path` into this already-attached `VideoPlayer` — used
@@ -255,7 +289,7 @@ fn load_file(
 }
 
 /// Pauses mpv once its `time-pos` reaches `inner`'s armed `pause_at` (set by
-/// [`VideoPlayer::apply_seek_command`]), then clears it. A no-op if nothing
+/// [`VideoPlayer::toggle_play_span`]), then clears it. A no-op if nothing
 /// is armed. Called on every `SCRUB_BAR_POLL_INTERVAL` tick.
 fn apply_pending_pause(inner: &Rc<RefCell<VideoPlayerInner>>) {
     let mut inner = inner.borrow_mut();
@@ -348,15 +382,31 @@ fn poll_scrub_bar(inner: &Rc<RefCell<VideoPlayerInner>>, window_weak: &Weak<AppW
     });
 }
 
-/// While `player_state` is in `SentenceBySentence` mode, syncs its
-/// `current_cue_index` to mpv's `time-pos` (see
-/// `PlayerState::sync_cue_to_time`) and mirrors the resulting cue into the
-/// window's current-sentence card. The sentence list is only rebuilt when
-/// the cursor's cue actually changed, since this runs on every
-/// `SCRUB_BAR_POLL_INTERVAL` tick and rebuilding its model is otherwise
-/// pointless churn. A no-op in `Normal` mode, and while mpv hasn't started
-/// decoding a file yet (`time-pos` unavailable). Called on
-/// `SCRUB_BAR_POLL_INTERVAL` by the timer started in [`VideoPlayer::attach`].
+/// While `player_state` is in `SentenceBySentence` mode and a
+/// [`PlaySpanCommand`] is actively playing (`inner.pause_at` armed — see
+/// [`VideoPlayer::toggle_play_span`]), syncs `current_cue_index` to mpv's
+/// live `time-pos` (see `PlayerState::sync_cue_to_time`) and mirrors the
+/// resulting cue into the window's current-sentence card. The sentence
+/// list is only rebuilt when the cursor's cue actually changed, since this
+/// runs on every `SCRUB_BAR_POLL_INTERVAL` tick and rebuilding its model is
+/// otherwise pointless churn.
+///
+/// Skipped entirely once `pause_at` is no longer armed — i.e. once mpv has
+/// paused (whether at the end of the span or early, via Space) — rather
+/// than continuing to derive `current_cue_index` from `time-pos` while
+/// paused: a paused position can land exactly on the *next* cue's start
+/// (common with real speech-to-text output, whose cues are often back-to-
+/// back with no gap between them), which would otherwise silently flip the
+/// cursor to that next cue the instant playback stopped — so pressing
+/// Space again to "replay" would actually play the wrong sentence. The
+/// cursor navigation methods (`next_cue`/`previous_cue`/`jump_to_cue`/
+/// `repeat_current_cue`) already set it correctly the moment they're
+/// invoked; live-syncing here is only useful while a span set in motion by
+/// `repeat_current_cue` is actually still playing toward its own end.
+///
+/// A no-op in `Normal` mode, and while mpv hasn't started decoding a file
+/// yet (`time-pos` unavailable). Called on `SCRUB_BAR_POLL_INTERVAL` by the
+/// timer started in [`VideoPlayer::attach`].
 fn sync_current_sentence(
     inner: &Rc<RefCell<VideoPlayerInner>>,
     player_state: &Rc<RefCell<PlayerState>>,
@@ -369,9 +419,14 @@ fn sync_current_sentence(
     if state.mode != PlaybackMode::SentenceBySentence {
         return;
     }
-    let Ok(time_pos) = inner.borrow().mpv.get_property::<f64>("time-pos") else {
+    let inner = inner.borrow();
+    if inner.pause_at.is_none() {
+        return;
+    }
+    let Ok(time_pos) = inner.mpv.get_property::<f64>("time-pos") else {
         return;
     };
+    drop(inner);
     let previous_cue_index = state.current_cue_index;
     state.sync_cue_to_time(Duration::from_secs_f64(time_pos.max(0.0)));
     update_sentence_card(&window, &state);

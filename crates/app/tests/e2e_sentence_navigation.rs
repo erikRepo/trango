@@ -57,8 +57,11 @@ fn test_cue_navigation_walks_all_sample_cues_forward_and_back() {
     // Given: PlayerState loaded with the real, parsed sample cues
     // When:  walking next_cue() to the end, then previous_cue() back to the
     //        start, then repeat_current_cue() on the first cue
-    // Then:  the cursor and every returned SeekCommand match the fixture's
-    //        real timings at each step
+    // Then:  the cursor and every returned command match the fixture's
+    //        real timings at each step. next_cue/previous_cue only ever
+    //        carry a seek target (no mode autoplays on navigation, see
+    //        docs/src/specs/); repeat_current_cue (Space) is the one that
+    //        carries a full start/end span to play.
     let cues = sample_cues();
     let mut state = PlayerState::new();
     state.set_cues(cues.clone());
@@ -70,8 +73,6 @@ fn test_cue_navigation_walks_all_sample_cues_forward_and_back() {
             .unwrap_or_else(|| panic!("expected a seek command advancing to cue {expected_index}"));
         assert_eq!(state.current_cue_index, Some(expected_index));
         assert_eq!(command.start, cue.start);
-        assert_eq!(command.end, cue.end);
-        assert!(command.then_pause);
     }
 
     // Cursor is on the last cue now; next_cue() has nowhere further to go.
@@ -84,7 +85,6 @@ fn test_cue_navigation_walks_all_sample_cues_forward_and_back() {
         });
         assert_eq!(state.current_cue_index, Some(expected_index));
         assert_eq!(command.start, cue.start);
-        assert_eq!(command.end, cue.end);
     }
 
     assert_eq!(state.previous_cue(), None);
