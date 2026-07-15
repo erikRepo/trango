@@ -7,8 +7,12 @@ three members:
 
 Holds the `Cue` data model (`index`, `start`, `end`, `text`) and
 `SubtitleError` (see `docs/src/technology/thiserror.md`). `Cue::new`
-validates that `start < end`. `.srt` parsing itself is not implemented
-yet — populated starting at Vaihe 4 in `TODO.md`.
+validates that `start < end`. `parse_srt(&str) -> Result<Vec<Cue>,
+SubtitleError>` parses `.srt` file contents into cues: it strips a
+leading UTF-8 BOM, normalizes `\n`/`\r\n` line endings, and returns
+`SubtitleError::InvalidFormat` for malformed blocks (bad index, missing
+timing line, unparseable timestamp). Tested against fixture files in
+`crates/subtitle/tests/fixtures/`.
 
 No dependency on Slint or libmpv, so it can be tested with fast, isolated
 unit tests, later against real `.srt` fixtures.
