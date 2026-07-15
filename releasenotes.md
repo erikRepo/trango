@@ -9,6 +9,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.19] - 2026-07-15
+
+### Added
+- `app-window.slint`: **Ctrl+T** keyboard shortcut toggles translation visibility, handled first in `nav-focus`'s `key-pressed` (before the `sentence-mode-active` guard) since translation display is purely visual and independent of playback mode; calls the same `toggle-translation` callback as the current-sentence card's toggle switch. `HintBar` gained a fourth hint, "ctrl+t · toggle translation"
+
+### Changed
+- `app-window.slint`: `AppWindow`'s default height grew from 600px to 660px — `CurrentSentenceCard`'s Vaihe 17 header row ("Translation" label + toggle switch) and conditional translation line left no slack for the bottom `HintBar` at 600px, clipping it off the bottom of the fixed-height window whenever the sentence panel's content grew tall enough
+
 ## [0.1.18] - 2026-07-15
 
 ### Added

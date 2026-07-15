@@ -99,11 +99,14 @@ way frame rendering does (see below).
 
 `app-window.slint`'s root `Window` sets `forward-focus: nav-focus`, so a
 `FocusScope` (`nav-focus`) wrapping the whole window content always holds
-keyboard focus. Its `key-pressed` handler only acts while
-`sentence-mode-active` is `true`; it checks `event.text` against
-`Key.RightArrow`, `Key.LeftArrow`, and the literal `" "` (Space), and calls
-`next-cue()`, `previous-cue()`, or `repeat-cue()` respectively — otherwise
-it `reject`s the event, leaving Normal-mode key handling for a later step.
+keyboard focus. Its `key-pressed` handler checks for Ctrl+T first — that one
+calls `toggle-translation()` unconditionally, since translation visibility
+is purely visual and independent of playback mode (see README). Everything
+else only acts while `sentence-mode-active` is `true`; it checks
+`event.text` against `Key.RightArrow`, `Key.LeftArrow`, and the literal
+`" "` (Space), and calls `next-cue()`, `previous-cue()`, or `repeat-cue()`
+respectively — otherwise it `reject`s the event, leaving Normal-mode key
+handling for a later step.
 
 `main.rs`'s `wire_cue_navigation` connects those three callbacks (via
 `cue_navigation_handler`) to the matching `PlayerState` method

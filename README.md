@@ -36,7 +36,7 @@ Open `design_reference.dc.html` in any browser to view it (it needs `support.js`
 - **Current sentence card:** rounded 8px, dark card background, border, ~20px padding. Header row: "Sentence 14 / 61" label (uppercase, mono, muted, 10px) left; "Translation" label + toggle switch right (pill switch, accent when on). Below: original-language sentence, 24px/600 Inter. Divider line. Translation sentence below in accent-tinted blue, 18px/500 — **hidden by default**, only shown when the toggle is on.
 - **Sentence list card:** rounded 8px, fills remaining vertical space, scrollable. Header label "Sentence list" (uppercase, mono, muted, 10px). List of rows, each `index · sentence text…`; current row highlighted with a subtle accent-tinted background pill, others plain muted text. Row padding ~9px/10px, 6px radius.
 
-**Bottom hint bar:** thin strip, centered row of 3 keyboard hints separated by gap: "← previous sentence", "space · repeat sentence", "→ next sentence" (only meaningful in sentence-by-sentence mode — in Normal mode this bar can be hidden or show standard playback shortcuts instead).
+**Bottom hint bar:** thin strip, centered row of keyboard hints separated by gap: "← previous sentence", "space · repeat sentence", "→ next sentence", "ctrl+t · toggle translation" (the first three only meaningful in sentence-by-sentence mode — in Normal mode this bar can be hidden or show standard playback shortcuts instead).
 
 ### 2. Open Video dialog (`#2a`, left mock)
 **Purpose:** Pick a video file to open.
@@ -62,7 +62,7 @@ Open `design_reference.dc.html` in any browser to view it (it needs `support.js`
 - **Right Arrow:** jump playhead to the start of the next subtitle cue, pause or continue per current play state (recommend: play through to the end of that cue, then pause — reinforces one-sentence-at-a-time listening).
 - **Left Arrow:** jump to previous cue's start.
 - **Space:** replay the current cue's span (seek to cue start, play to cue end, pause). Pressing Space repeatedly replays the same span every time — do not advance.
-- **Translation toggle:** shows/hides the translated line under the original in the current-sentence card. Off by default. Purely visual — does not affect playback.
+- **Translation toggle:** shows/hides the translated line under the original in the current-sentence card, via either the card's toggle switch or the **Ctrl+T** keyboard shortcut (works in both Normal and Sentence-by-sentence mode). Off by default. Purely visual — does not affect playback.
 - **Sentence list:** clicking a row jumps to that cue (same behavior as arrow navigation) and highlights it as current.
 
 **Normal mode:** standard continuous playback with scrub bar; subtitle panel can still show the current line (optionally hide the sentence-list card, or keep it as a chapter-like index — your call, mock only depicts sentence-by-sentence panel content).

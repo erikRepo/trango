@@ -304,10 +304,14 @@ component SentenceListCard inherits Rectangle {
 
 /// Bottom hint bar shown only in `SentenceBySentence` mode (see the `if`
 /// guard where it's instantiated in `AppWindow`), listing the Right/Left/
-/// Space keyboard shortcuts. Those keys are handled by `AppWindow`'s
-/// `key-pressed` callback and drive `next-cue`/`previous-cue`/`repeat-cue`,
-/// wired to `playback-state` navigation and mpv seeking in
-/// `crates/app/src/main.rs` and `video_player.rs`.
+/// Space keyboard shortcuts plus Ctrl+T. Right/Left/Space are handled by
+/// `AppWindow`'s `key-pressed` callback and drive
+/// `next-cue`/`previous-cue`/`repeat-cue`, wired to `playback-state`
+/// navigation and mpv seeking in `crates/app/src/main.rs` and
+/// `video_player.rs`. Ctrl+T calls `toggle-translation` directly — it also
+/// works outside `SentenceBySentence` mode (translation visibility is
+/// purely visual, per README), it's just only *advertised* here since this
+/// is the app's only hint surface so far.
 component HintBar {
     height: 34px;
 
@@ -340,6 +344,15 @@ component HintBar {
 
             Text {
                 text: "→ next sentence";
+                color: Palette.muted-text;
+                font-family: "JetBrains Mono";
+                font-size: 11px;
+                font-weight: 500;
+                vertical-alignment: center;
+            }
+
+            Text {
+                text: "ctrl+t · toggle translation";
                 color: Palette.muted-text;
                 font-family: "JetBrains Mono";
                 font-size: 11px;
@@ -459,12 +472,26 @@ export component AppWindow inherits Window {
 
     title: "TrangoPlayer v" + version;
     width: 960px;
-    height: 600px;
+    // 660px (was 600px pre-Vaihe-17): CurrentSentenceCard's header row grew
+    // a "Translation" label + toggle switch, and — while show-translation
+    // is on — an extra wrapped translation line below the divider. Without
+    // the extra headroom the fixed-height window has no slack left for the
+    // bottom HintBar once the sentence panel's natural content height grows,
+    // so it gets clipped off below the window's visible bounds.
+    height: 660px;
     forward-focus: nav-focus;
 
     nav-focus := FocusScope {
         key-pressed(event) => {
-            if (!root.sentence-mode-active) {
+            if (event.modifiers.control && (event.text == "t" || event.text == "T")) {
+                // Translation visibility is purely visual and independent
+                // of playback mode (see README), so Ctrl+T is handled
+                // before the sentence-mode-active guard below, unlike
+                // Right/Left/Space which only make sense in
+                // SentenceBySentence mode.
+                root.toggle-translation();
+                accept
+            } else if (!root.sentence-mode-active) {
                 reject
             } else if (event.text == Key.RightArrow) {
                 root.next-cue();
