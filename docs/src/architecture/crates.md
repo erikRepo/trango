@@ -98,15 +98,26 @@ background as a placeholder and the scrub bar stays at `00:00`. Picking a
 file from an in-app dialog is a later `TODO.md` step.
 
 If a second CLI argument is given (`trango video.mp4 subs.srt`),
-`load_subtitles` reads and parses it with `subtitle::parse_srt`, loads the
-resulting cues into `PlayerState` via `set_cues`, and mirrors the first cue
-into the current-sentence card (`crates/app/src/sentence_card.rs`,
+`load_subtitles` reads and parses it (via the shared `parse_subtitle_file`
+helper, which wraps `subtitle::parse_srt`), loads the resulting cues into
+`PlayerState` via `set_cues`, and mirrors the first cue into the
+current-sentence card (`crates/app/src/sentence_card.rs`,
 `update_sentence_card`) and the sentence list (`crates/app/src/sentence_list.rs`,
 `update_sentence_list`) — see
 `docs/src/architecture/video-playback.md` for how both keep updating
 from mpv's `time-pos` afterward. A file that can't be read or doesn't parse
 is logged and otherwise ignored — a bad subtitle path shouldn't stop the
 video from playing.
+
+If a third CLI argument is given (`trango video.mp4 subs.srt subs.en.srt`),
+`load_subtitles` also parses it with `parse_subtitle_file` and merges it into
+the original cues via `subtitle::merge_translation` before loading them into
+`PlayerState`, populating each cue's `translation` field. A translation file
+that can't be read or parsed is logged and skipped — the original cues still
+load, just without translations. `update_sentence_card` mirrors the current
+cue's translation into the window's `translation-text` property regardless
+of the toggle state below; only its Slint-side visibility depends on
+`show-translation`.
 
 Depends on `playback-state` for `PlayerState`. `wire_player_state(&AppWindow)`
 creates a `PlayerState` (behind `Rc<RefCell<_>>` — Slint callbacks run on the
@@ -118,6 +129,13 @@ The top bar's `SegmentButton`s invoke `toggle-mode()` from their `clicked`
 handler (guarded so clicking the already-active segment is a no-op) instead
 of assigning `sentence-mode-active` directly, so the click always goes
 through the real state machine.
+
+`wire_player_state` wires the window's `toggle-translation` callback the
+same way: it calls `PlayerState::toggle_translation()` and mirrors the
+resulting `show_translation` into the window's `show-translation` property,
+which `CurrentSentenceCard`'s `ToggleSwitch` and translation `Text` (in
+`app-window.slint`) read directly — purely visual, no effect on playback,
+per the README's translation toggle spec.
 
 ## Why three crates instead of one
 

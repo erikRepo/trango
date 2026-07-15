@@ -27,11 +27,16 @@ fn print_version() {
 /// itself only hardcodes `false`. Also wires the window's `toggle-mode`
 /// callback (invoked by the top bar's segmented control) to
 /// `PlayerState::toggle_mode()`, mirroring each subsequent mode change back
-/// into `sentence-mode-active` too. Returns the shared state so callers can
-/// inspect it (used by tests; later steps will read it too).
+/// into `sentence-mode-active` too, and the window's `toggle-translation`
+/// callback (invoked by the current-sentence card's toggle switch) to
+/// `PlayerState::toggle_translation()`, mirroring `show_translation` into
+/// the window's `show-translation` property the same way. Returns the
+/// shared state so callers can inspect it (used by tests; later steps will
+/// read it too).
 fn wire_player_state(window: &AppWindow) -> Rc<RefCell<PlayerState>> {
     let state = Rc::new(RefCell::new(PlayerState::new()));
     window.set_sentence_mode_active(state.borrow().mode == PlaybackMode::SentenceBySentence);
+    window.set_show_translation(state.borrow().show_translation);
 
     let state_for_callback = Rc::clone(&state);
     let window_weak = window.as_weak();
@@ -44,6 +49,20 @@ fn wire_player_state(window: &AppWindow) -> Rc<RefCell<PlayerState>> {
         tracing::debug!(?mode, "playback mode toggled");
         if let Some(window) = window_weak.upgrade() {
             window.set_sentence_mode_active(mode == PlaybackMode::SentenceBySentence);
+        }
+    });
+
+    let translation_state = Rc::clone(&state);
+    let translation_window_weak = window.as_weak();
+    window.on_toggle_translation(move || {
+        let show_translation = {
+            let mut state = translation_state.borrow_mut();
+            state.toggle_translation();
+            state.show_translation
+        };
+        tracing::debug!(show_translation, "translation visibility toggled");
+        if let Some(window) = translation_window_weak.upgrade() {
+            window.set_show_translation(show_translation);
         }
     });
 
@@ -153,25 +172,55 @@ fn subtitle_path_from_args(args: &[String]) -> Option<PathBuf> {
     args.get(2).map(PathBuf::from)
 }
 
-/// Reads and parses `subtitle_path` into cues, loading them into `state` and
-/// mirroring the resulting current cue into the window's sentence card. Logs
-/// and leaves `state` untouched if the file can't be read or parsed, since a
-/// bad subtitle path shouldn't prevent the video from playing.
-fn load_subtitles(window: &AppWindow, state: &Rc<RefCell<PlayerState>>, subtitle_path: &Path) {
-    let contents = match std::fs::read_to_string(subtitle_path) {
+/// Reads the translation subtitle path to merge in (if any) from CLI
+/// arguments, as used by `main`. `args` is expected to include the program
+/// name at index 0, matching Vaihe 17's
+/// `trango <path/to/video> <path/to/subs.srt> <path/to/subs.en.srt>` usage.
+fn translation_path_from_args(args: &[String]) -> Option<PathBuf> {
+    args.get(3).map(PathBuf::from)
+}
+
+/// Reads and parses `path` into cues. Logs and returns `None` if the file
+/// can't be read or doesn't parse, so a bad path doesn't panic the caller.
+fn parse_subtitle_file(path: &Path) -> Option<Vec<subtitle::Cue>> {
+    let contents = match std::fs::read_to_string(path) {
         Ok(contents) => contents,
         Err(err) => {
-            tracing::error!(?subtitle_path, %err, "failed to read subtitle file");
-            return;
+            tracing::error!(?path, %err, "failed to read subtitle file");
+            return None;
         }
     };
-    let cues = match subtitle::parse_srt(&contents) {
-        Ok(cues) => cues,
+    match subtitle::parse_srt(&contents) {
+        Ok(cues) => Some(cues),
         Err(err) => {
-            tracing::error!(?subtitle_path, %err, "failed to parse subtitle file");
-            return;
+            tracing::error!(?path, %err, "failed to parse subtitle file");
+            None
         }
+    }
+}
+
+/// Reads and parses `subtitle_path` into cues, merges in `translation_path`'s
+/// cues if given (via `subtitle::merge_translation`), loads the result into
+/// `state`, and mirrors the resulting current cue into the window's
+/// sentence card and sentence list. Leaves `state` untouched if
+/// `subtitle_path` can't be read or parsed, since a bad subtitle path
+/// shouldn't prevent the video from playing. A `translation_path` that
+/// can't be read or parsed is logged and simply skipped — the original
+/// cues still load, just without translations.
+fn load_subtitles(
+    window: &AppWindow,
+    state: &Rc<RefCell<PlayerState>>,
+    subtitle_path: &Path,
+    translation_path: Option<&Path>,
+) {
+    let Some(mut cues) = parse_subtitle_file(subtitle_path) else {
+        return;
     };
+    if let Some(translation_path) = translation_path {
+        if let Some(translation_cues) = parse_subtitle_file(translation_path) {
+            cues = subtitle::merge_translation(cues, translation_cues);
+        }
+    }
     tracing::info!(?subtitle_path, cue_count = cues.len(), "loaded subtitles");
     state.borrow_mut().set_cues(cues);
     sentence_card::update_sentence_card(window, &state.borrow());
@@ -191,7 +240,13 @@ fn main() -> anyhow::Result<()> {
 
     let args: Vec<String> = std::env::args().collect();
     if let Some(subtitle_path) = subtitle_path_from_args(&args) {
-        load_subtitles(&window, &player_state, &subtitle_path);
+        let translation_path = translation_path_from_args(&args);
+        load_subtitles(
+            &window,
+            &player_state,
+            &subtitle_path,
+            translation_path.as_deref(),
+        );
     }
 
     let video_player = match video_path_from_args(&args) {
@@ -277,6 +332,38 @@ mod tests {
         assert_eq!(subtitle_path_from_args(&args), None);
     }
 
+    #[test]
+    fn test_translation_path_from_args_with_all_three_paths() {
+        // Given: argv with a video path, a subtitle path, and a translation path
+        let args = vec![
+            "trango".to_string(),
+            "video.mp4".to_string(),
+            "subs.srt".to_string(),
+            "subs.en.srt".to_string(),
+        ];
+
+        // When:  extracting the translation path
+        // Then:  it's the third argument after the program name
+        assert_eq!(
+            translation_path_from_args(&args),
+            Some(PathBuf::from("subs.en.srt"))
+        );
+    }
+
+    #[test]
+    fn test_translation_path_from_args_without_translation_path() {
+        // Given: argv with a video path and a subtitle path, no translation path
+        let args = vec![
+            "trango".to_string(),
+            "video.mp4".to_string(),
+            "subs.srt".to_string(),
+        ];
+
+        // When:  extracting the translation path
+        // Then:  there is none
+        assert_eq!(translation_path_from_args(&args), None);
+    }
+
     // Slint's winit backend can only be initialized once per process (and
     // stays bound to the thread that created it), so every assertion that
     // needs a real `AppWindow` lives in this single test instead of one
@@ -323,15 +410,18 @@ mod tests {
         assert_eq!(window.get_sentence_label(), "Sentence – / –");
         assert!(!window.get_has_current_sentence());
 
-        // When:  loading the real sample.srt fixture via load_subtitles
-        // Then:  the cards's properties reflect the first parsed cue
+        // When:  loading the real sample.srt fixture via load_subtitles, with
+        //        no translation path
+        // Then:  the card's properties reflect the first parsed cue, with no
+        //        translation text
         let subtitle_path =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../test-media/sample/sample.srt");
-        load_subtitles(&window, &player_state, &subtitle_path);
+        load_subtitles(&window, &player_state, &subtitle_path, None);
         assert_eq!(player_state.borrow().cues.len(), 5);
         assert_eq!(window.get_sentence_label(), "Sentence 1 / 5");
         assert_eq!(window.get_sentence_text(), "Welcome to Trango Player.");
         assert!(window.get_has_current_sentence());
+        assert_eq!(window.get_translation_text(), "");
 
         // When:  the same load_subtitles call also feeds the sentence list
         // Then:  it holds one row per cue, the first one marked current
@@ -341,5 +431,35 @@ mod tests {
         assert_eq!(first_row.label, "1 · Welcome to Trango Player.");
         assert!(first_row.is_current);
         assert_eq!(window.get_sentence_list_current_index(), 0);
+
+        // When:  reloading with the sample.fi.srt translation fixture merged in
+        // Then:  the current cue's translation text is populated, but stays
+        //        hidden (show-translation defaults to false)
+        let translation_path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../test-media/sample/sample.fi.srt");
+        load_subtitles(
+            &window,
+            &player_state,
+            &subtitle_path,
+            Some(&translation_path),
+        );
+        assert_eq!(
+            window.get_translation_text(),
+            "Tervetuloa Trango Playeriin."
+        );
+        assert!(!window.get_show_translation());
+
+        // When:  invoking toggle-translation, as the card's toggle switch does
+        // Then:  both the Rust-owned PlayerState and the mirrored Slint
+        //        property switch to visible
+        window.invoke_toggle_translation();
+        assert!(player_state.borrow().show_translation);
+        assert!(window.get_show_translation());
+
+        // When:  invoking toggle-translation again
+        // Then:  both flip back to hidden
+        window.invoke_toggle_translation();
+        assert!(!player_state.borrow().show_translation);
+        assert!(!window.get_show_translation());
     }
 }

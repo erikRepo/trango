@@ -1,0 +1,19 @@
+1
+00:00:00,500 --> 00:00:02,480
+Tervetuloa Trango Playeriin.
+
+2
+00:00:03,080 --> 00:00:05,765
+Tämä on lyhyt esimerkkivideo testausta varten.
+
+3
+00:00:06,365 --> 00:00:09,190
+Siinä on useita puhuttuja lauseita.
+
+4
+00:00:09,790 --> 00:00:12,665
+Jokaisella lauseella on oma tekstitysrivinsä.
+
+5
+00:00:13,265 --> 00:00:16,345
+Nauti lause kerrallaan -tilan tutkimisesta.

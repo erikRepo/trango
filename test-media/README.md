@@ -9,6 +9,10 @@ Small, license-free media fixtures for manual testing (Vaihe 11+ in
   five spoken English sentences as the audio track.
 - `sample.srt` — subtitles for `sample.mp4`, one cue per sentence, timed to
   match the generated speech exactly.
+- `sample.fi.srt` — Finnish translation track for `sample.srt`, same five
+  cue timings, hand-translated text. Used to exercise
+  `subtitle::merge_translation` and the translation toggle (Vaihe 17) without
+  a second generated audio track.
 
 Both files are generated locally, not sourced from any third party:
 - Speech audio: `ffmpeg`'s built-in `flite` filter (offline TTS, voice `slt`),

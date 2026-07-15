@@ -21,6 +21,7 @@ global Palette {
     out property <color> muted-text: #8a8d99;
     out property <color> ghost-text: #b4b7c0;
     out property <color> segmented-bg: #2a2c33;
+    out property <color> translation-text: #7fa6f0;
 }
 
 /// One pill in the top bar's Normal / Sentence-by-sentence segmented
@@ -60,6 +61,39 @@ component SegmentButton {
     }
 }
 
+/// Pill-shaped on/off switch used by the current-sentence card's
+/// "Translation" toggle: accent-filled track with a white knob when `on`,
+/// muted track with the knob on the left otherwise.
+component ToggleSwitch {
+    in property <bool> on;
+    callback toggled;
+
+    width: 34px;
+    height: 18px;
+
+    Rectangle {
+        border-radius: self.height / 2;
+        background: root.on ? Palette.accent : Palette.segmented-bg;
+        border-width: 1px;
+        border-color: Palette.border;
+
+        Rectangle {
+            width: 14px;
+            height: 14px;
+            border-radius: self.height / 2;
+            background: white;
+            y: (parent.height - self.height) / 2;
+            x: root.on ? parent.width - self.width - 2px : 2px;
+
+            animate x { duration: 120ms; easing: ease-out; }
+        }
+
+        TouchArea {
+            clicked => { root.toggled(); }
+        }
+    }
+}
+
 /// A bordered, no-fill "Open video…" / "Open subtitles…" top bar button.
 /// Static in Vaihe 9 — no click behavior wired up yet.
 component GhostButton {
@@ -92,16 +126,23 @@ component GhostButton {
 }
 
 /// The right-hand sentence panel's top card: "Sentence N / M" (uppercase,
-/// mono, muted) above the current cue's original-language text, with a
-/// divider below. `sentence-label`/`sentence-text`/`has-sentence` are set
-/// from Rust: `main.rs` after loading a subtitle file, and
+/// mono, muted) left / "Translation" label + toggle switch right, above the
+/// current cue's original-language text, a divider, and (while
+/// `show-translation` is on) the translation text in accent-tinted blue.
+/// `sentence-label`/`sentence-text`/`has-sentence`/`translation-text` are
+/// set from Rust: `main.rs` after loading a subtitle file, and
 /// `video_player.rs`'s scrub bar poll (while in `SentenceBySentence` mode,
-/// synced from mpv's `time-pos`). Translation display and the sentence-list
-/// card underneath it arrive in later TODO.md steps.
+/// synced from mpv's `time-pos`) — see `crates/app/src/sentence_card.rs`.
+/// `show-translation` is wired directly to `main.rs`'s `toggle-translation`
+/// callback (see `wire_player_state`), independent of cue changes. The
+/// sentence-list card underneath it arrives in a later TODO.md step.
 component CurrentSentenceCard {
     in property <string> sentence-label;
     in property <string> sentence-text;
     in property <bool> has-sentence;
+    in property <string> translation-text;
+    in property <bool> show-translation;
+    callback toggle-translation;
 
     Rectangle {
         border-width: 1px;
@@ -113,12 +154,36 @@ component CurrentSentenceCard {
             padding: 20px;
             spacing: 12px;
 
-            Text {
-                text: root.sentence-label;
-                color: Palette.muted-text;
-                font-family: "JetBrains Mono";
-                font-size: 10px;
-                font-weight: 600;
+            HorizontalLayout {
+                alignment: space-between;
+                cross-axis-alignment: center;
+
+                Text {
+                    text: root.sentence-label;
+                    color: Palette.muted-text;
+                    font-family: "JetBrains Mono";
+                    font-size: 10px;
+                    font-weight: 600;
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    cross-axis-alignment: center;
+
+                    Text {
+                        text: "Translation";
+                        color: Palette.muted-text;
+                        font-family: "Inter";
+                        font-size: 12px;
+                        font-weight: 500;
+                        vertical-alignment: center;
+                    }
+
+                    ToggleSwitch {
+                        on: root.show-translation;
+                        toggled => { root.toggle-translation(); }
+                    }
+                }
             }
 
             Text {
@@ -133,6 +198,15 @@ component CurrentSentenceCard {
             Rectangle {
                 height: 1px;
                 background: Palette.border;
+            }
+
+            if root.show-translation : Text {
+                text: root.translation-text;
+                color: Palette.translation-text;
+                font-family: "Inter";
+                font-size: 18px;
+                font-weight: 500;
+                wrap: word-wrap;
             }
         }
     }
@@ -357,11 +431,21 @@ export component AppWindow inherits Window {
     in property <string> sentence-label: "Sentence – / –";
     in property <string> sentence-text: "No sentence loaded.";
     in property <bool> has-current-sentence: false;
+    in property <string> translation-text: "";
+    // Whether the current-sentence card's translation line is shown,
+    // mirrored from playback_state::PlayerState.show_translation by
+    // main.rs's wire_player_state — flipped by the toggle-translation
+    // callback below, off by default.
+    in property <bool> show-translation: false;
     // Sentence list state, mirrored from playback_state::PlayerState by
     // crates/app/src/sentence_list.rs — see SentenceListCard above.
     in property <[SentenceListRow]> sentence-list-rows: [];
     in property <int> sentence-list-current-index: -1;
     callback toggle-mode();
+    // Invoked by the current-sentence card's Translation toggle switch —
+    // wired in main.rs's wire_player_state to
+    // playback_state::PlayerState::toggle_translation().
+    callback toggle-translation();
     // Sentence-by-sentence navigation, invoked by `nav-focus`'s key-pressed
     // handler below for Right/Left/Space respectively — see
     // `crates/app/src/main.rs` for how they drive `playback-state` and mpv.
@@ -507,6 +591,9 @@ export component AppWindow inherits Window {
                         sentence-label: root.sentence-label;
                         sentence-text: root.sentence-text;
                         has-sentence: root.has-current-sentence;
+                        translation-text: root.translation-text;
+                        show-translation: root.show-translation;
+                        toggle-translation => { root.toggle-translation(); }
                     }
 
                     SentenceListCard {

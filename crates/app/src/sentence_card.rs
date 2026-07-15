@@ -1,7 +1,12 @@
 //! Mirrors `PlayerState`'s current cue into the Slint window's current-
 //! sentence card properties (`sentence-label`, `sentence-text`,
-//! `has-current-sentence`) — the "Sentence N / M" header, original-language
-//! text, and whether either has anything to show yet.
+//! `has-current-sentence`, `translation-text`) — the "Sentence N / M"
+//! header, original-language text, whether either has anything to show
+//! yet, and the current cue's translation (if any merged in via
+//! `subtitle::merge_translation`). The card's `show-translation` toggle
+//! is a separate, independently-wired property — see `main.rs`'s
+//! `wire_player_state` — since it reflects `PlayerState.show_translation`
+//! rather than anything cue-specific.
 
 use playback_state::PlayerState;
 
@@ -14,11 +19,15 @@ struct SentenceCardDisplay {
     label: String,
     text: String,
     has_sentence: bool,
+    translation_text: String,
 }
 
 /// Computes the current-sentence card's display state from `state`'s cursor
 /// and loaded cues. Falls back to a placeholder label/text when no cue is in
-/// focus (no cues loaded yet, or the cursor is `None`).
+/// focus (no cues loaded yet, or the cursor is `None`). `translation_text`
+/// is empty when the current cue has no merged translation, regardless of
+/// whether the translation toggle is currently on — visibility is handled
+/// separately in Slint via the `show-translation` property.
 fn sentence_card_display(state: &PlayerState) -> SentenceCardDisplay {
     match state
         .current_cue_index
@@ -28,11 +37,13 @@ fn sentence_card_display(state: &PlayerState) -> SentenceCardDisplay {
             label: format!("Sentence {} / {}", index + 1, state.cues.len()),
             text: cue.text.clone(),
             has_sentence: true,
+            translation_text: cue.translation.clone().unwrap_or_default(),
         },
         None => SentenceCardDisplay {
             label: "Sentence – / –".to_string(),
             text: "No sentence loaded.".to_string(),
             has_sentence: false,
+            translation_text: String::new(),
         },
     }
 }
@@ -40,12 +51,14 @@ fn sentence_card_display(state: &PlayerState) -> SentenceCardDisplay {
 /// Sets `window`'s current-sentence card properties from `state`. Called
 /// once after cues are (re)loaded, and again after every cue-sync driven by
 /// mpv's `time-pos` polling in `SentenceBySentence` mode (see
-/// `video_player.rs`).
+/// `video_player.rs`). Does not touch `show-translation`, which is wired
+/// directly to the toggle callback in `main.rs`.
 pub fn update_sentence_card(window: &AppWindow, state: &PlayerState) {
     let display = sentence_card_display(state);
     window.set_sentence_label(display.label.into());
     window.set_sentence_text(display.text.into());
     window.set_has_current_sentence(display.has_sentence);
+    window.set_translation_text(display.translation_text.into());
 }
 
 #[cfg(test)]
@@ -78,6 +91,7 @@ mod tests {
         assert_eq!(display.label, "Sentence – / –");
         assert_eq!(display.text, "No sentence loaded.");
         assert!(!display.has_sentence);
+        assert_eq!(display.translation_text, "");
     }
 
     #[test]
@@ -98,5 +112,21 @@ mod tests {
         assert_eq!(display.label, "Sentence 2 / 3");
         assert_eq!(display.text, "two");
         assert!(display.has_sentence);
+        assert_eq!(display.translation_text, "");
+    }
+
+    #[test]
+    fn test_sentence_card_display_includes_merged_translation() {
+        // Given: a state whose current cue has a translation merged in
+        // When:  computing the sentence card display
+        // Then:  translation_text carries the translated text
+        let mut original = cue(1, 0, 1_000, "Hello");
+        original.translation = Some("Hei".to_string());
+        let mut state = PlayerState::new();
+        state.set_cues(vec![original]);
+
+        let display = sentence_card_display(&state);
+
+        assert_eq!(display.translation_text, "Hei");
     }
 }

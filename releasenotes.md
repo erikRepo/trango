@@ -9,6 +9,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.18] - 2026-07-15
+
+### Added
+- `app-window.slint`: `ToggleSwitch` component (pill track, animated knob, accent-filled when on) and a "Translation" label + switch in `CurrentSentenceCard`'s header row; the translation line itself renders below the divider, in `Palette.translation-text` (`#7fa6f0`), only while `show-translation` is on
+- `crates/app/src/main.rs`: `translation_path_from_args` reads a third CLI argument (`trango video.mp4 subs.srt subs.en.srt`); `load_subtitles` merges it into the loaded cues via `subtitle::merge_translation` when given. `wire_player_state` now also wires the window's `toggle-translation` callback to `playback_state::PlayerState::toggle_translation()`, mirroring `show_translation` into the window's `show-translation` property, off by default — the same pattern already used for `toggle-mode`/`sentence-mode-active`
+- `crates/app/src/sentence_card.rs`: `update_sentence_card` now also sets `translation-text` from the current cue's merged `translation` (empty string if none), independent of the toggle's own visibility state
+- `test-media/sample/sample.fi.srt`: Finnish translation fixture for `sample.srt`, same five cue timings, used to exercise `merge_translation` and the translation toggle without a second generated audio track
+
+### Changed
+- `crates/app/src/main.rs`: subtitle file reading + `parse_srt` was extracted from `load_subtitles` into a reusable `parse_subtitle_file` helper, now shared between the original and translation subtitle loads
+
 ## [0.1.17] - 2026-07-15
 
 ### Added
