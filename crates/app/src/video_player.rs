@@ -91,12 +91,25 @@ pub struct VideoPlayer {
 
 impl VideoPlayer {
     /// Creates an mpv core configured for render-API embedding, registers it
-    /// as `window`'s rendering underlay, and starts loading `video_path`.
+    /// as `window`'s rendering underlay, and — if `video_path` is given —
+    /// starts loading it.
     ///
-    /// The render context itself is created lazily on the first
-    /// `RenderingSetup` notification (only that callback exposes the OpenGL
-    /// loader mpv needs), so actual playback start is deferred until Slint
-    /// delivers it — normally on the very first rendered frame.
+    /// Always called exactly once per process, right after `AppWindow` is
+    /// created, **regardless of whether a video path is given yet**: Slint's
+    /// `RenderingState::RenderingSetup` notification — the only place the
+    /// OpenGL loader mpv needs is exposed — fires *once* for the whole
+    /// window's lifetime, on its very first rendered frame, not once per
+    /// `set_rendering_notifier` call. Deferring `attach` until the user
+    /// actually picks a video via the Open Video dialog (`TODO.md` Vaihe 18)
+    /// — i.e. calling it after the window has already rendered other frames
+    /// — would mean `RenderingSetup` never fires for it, so the render
+    /// context (and the initial `loadfile`) would never happen and every
+    /// later seek would fail against mpv's permanently idle core. Loading a
+    /// video after `attach`, whether the first one or a later Open Video
+    /// dialog pick, goes through [`VideoPlayer::load_video`] instead, which
+    /// only needs the render context to already exist — true as soon as the
+    /// first frame has rendered, well before any video is likely to have
+    /// been picked.
     ///
     /// `player_state` is shared with the rest of the app (see `main.rs`); in
     /// `SentenceBySentence` mode, the scrub bar's polling timer also syncs
@@ -104,7 +117,7 @@ impl VideoPlayer {
     /// into the window's current-sentence card (see [`sync_current_sentence`]).
     pub fn attach(
         window: &AppWindow,
-        video_path: &Path,
+        video_path: Option<&Path>,
         player_state: Rc<RefCell<PlayerState>>,
     ) -> anyhow::Result<Self> {
         let mpv = Mpv::with_initializer(|init| {
@@ -126,7 +139,7 @@ impl VideoPlayer {
             pending_start_seek: None,
         }));
 
-        let video_path = video_path.to_owned();
+        let video_path = video_path.map(Path::to_owned);
         let window_weak = window.as_weak();
         let notifier_inner = Rc::clone(&inner);
         let notifier_player_state = Rc::clone(&player_state);
@@ -137,7 +150,7 @@ impl VideoPlayer {
                     &notifier_inner,
                     graphics_api,
                     &window_weak,
-                    &video_path,
+                    video_path.as_deref(),
                     &notifier_player_state,
                 ),
                 RenderingState::BeforeRendering => render_frame(&notifier_inner, &window_weak),
@@ -189,41 +202,56 @@ impl VideoPlayer {
         inner.pause_at = command.then_pause.then_some(command.end);
     }
 
-    /// Loads `video_path` into this already-attached `VideoPlayer`, e.g.
-    /// when the Open Video dialog (`TODO.md` Vaihe 18) picks a new file
-    /// mid-session — as opposed to `attach`'s first-ever load. Re-arms the
-    /// sentence-by-sentence start pause/seek for the new file exactly like
-    /// the first load does (see [`load_file`]); `player_state` should
-    /// already reflect the new file's cues (or be cleared) by the time this
-    /// is called, since that's what the armed start seek reads.
-    pub fn load_video(&self, video_path: &Path, player_state: &PlayerState) {
+    /// Loads `video_path` into this already-attached `VideoPlayer` — used
+    /// for every video load, including the one `attach`'s `video_path` names
+    /// (if any) as well as later Open Video dialog picks (`TODO.md` Vaihe
+    /// 18); see `attach`'s doc comment for why loading is split out from
+    /// attaching in the first place. `player_state` should already reflect
+    /// the new file's cues (or be cleared) by the time this is called, since
+    /// the sentence-by-sentence start-pause/seek this arms reads them.
+    pub fn load_video(&self, window: &AppWindow, video_path: &Path, player_state: &PlayerState) {
         let mpv = self.inner.borrow().mpv;
-        load_file(&self.inner, mpv, video_path, player_state);
+        load_file(
+            &self.inner,
+            mpv,
+            video_path,
+            player_state,
+            &window.as_weak(),
+        );
     }
 }
 
-/// Issues mpv's `loadfile` for `video_path` and, in `SentenceBySentence`
-/// mode, arms `inner`'s `pending_start_seek` (see
-/// [`pause_and_arm_start_seek_if_sentence_mode`]) — shared by the very first
-/// load (`setup_render_context`) and later Open Video dialog loads
-/// (`VideoPlayer::load_video`).
+/// Issues mpv's `loadfile` for `video_path`, marks `window`'s `video-loaded`
+/// property `true` (via `slint::invoke_from_event_loop`, since this may run
+/// from the rendering notifier rather than the plain UI-thread path), and —
+/// in `SentenceBySentence` mode — arms `inner`'s `pending_start_seek` (see
+/// [`pause_and_arm_start_seek_if_sentence_mode`]). Shared by
+/// `setup_render_context`'s initial load (if `attach` was given a path) and
+/// `VideoPlayer::load_video`'s later ones.
 fn load_file(
     inner: &Rc<RefCell<VideoPlayerInner>>,
     mpv: &Mpv,
     video_path: &Path,
     player_state: &PlayerState,
+    window_weak: &Weak<AppWindow>,
 ) {
-    match video_path.to_str() {
-        Some(path_str) => {
-            if let Err(err) = mpv.command("loadfile", &[path_str, "replace"]) {
-                tracing::error!(%err, ?video_path, "failed to load video file");
-            } else {
-                inner.borrow_mut().pending_start_seek =
-                    pause_and_arm_start_seek_if_sentence_mode(mpv, player_state);
-            }
-        }
-        None => tracing::error!(?video_path, "video path is not valid UTF-8"),
+    let Some(path_str) = video_path.to_str() else {
+        tracing::error!(?video_path, "video path is not valid UTF-8");
+        return;
+    };
+    if let Err(err) = mpv.command("loadfile", &[path_str, "replace"]) {
+        tracing::error!(%err, ?video_path, "failed to load video file");
+        return;
     }
+    inner.borrow_mut().pending_start_seek =
+        pause_and_arm_start_seek_if_sentence_mode(mpv, player_state);
+
+    let loaded_window_weak = window_weak.clone();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(window) = loaded_window_weak.upgrade() {
+            window.set_video_loaded(true);
+        }
+    });
 }
 
 /// Pauses mpv once its `time-pos` reaches `inner`'s armed `pause_at` (set by
@@ -353,13 +381,15 @@ fn sync_current_sentence(
 }
 
 /// Creates the mpv render context using Slint's OpenGL loader, wires mpv's
-/// "a new frame is ready" callback to Slint's redraw scheduling, and kicks
-/// off loading `video_path`. Runs once, on the first `RenderingSetup`.
+/// "a new frame is ready" callback to Slint's redraw scheduling, and — if
+/// `video_path` is given (i.e. `attach` was called with one, see its doc
+/// comment) — kicks off loading it. Runs once, on the window's first-ever
+/// `RenderingSetup`.
 fn setup_render_context(
     inner: &Rc<RefCell<VideoPlayerInner>>,
     graphics_api: &GraphicsAPI,
     window_weak: &Weak<AppWindow>,
-    video_path: &Path,
+    video_path: Option<&Path>,
     player_state: &Rc<RefCell<PlayerState>>,
 ) {
     let GraphicsAPI::NativeOpenGL { get_proc_address } = graphics_api else {
@@ -415,14 +445,9 @@ fn setup_render_context(
 
     inner.borrow_mut().render_context = Some(render_context);
 
-    load_file(inner, mpv, video_path, &player_state.borrow());
-
-    let loaded_window_weak = window_weak.clone();
-    let _ = slint::invoke_from_event_loop(move || {
-        if let Some(window) = loaded_window_weak.upgrade() {
-            window.set_video_loaded(true);
-        }
-    });
+    if let Some(video_path) = video_path {
+        load_file(inner, mpv, video_path, &player_state.borrow(), window_weak);
+    }
 }
 
 /// Draws the current video frame into whichever framebuffer Slint currently

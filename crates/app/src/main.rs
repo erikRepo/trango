@@ -259,7 +259,7 @@ fn default_video_folder(args: &[String]) -> PathBuf {
 fn wire_open_video_dialog(
     window: &AppWindow,
     state: &Rc<RefCell<PlayerState>>,
-    video_player_slot: Rc<RefCell<Option<Rc<video_player::VideoPlayer>>>>,
+    video_player: Rc<video_player::VideoPlayer>,
     default_folder: PathBuf,
 ) {
     let entries: Rc<RefCell<Vec<open_video_dialog::FolderEntry>>> =
@@ -324,26 +324,24 @@ fn wire_open_video_dialog(
             return;
         };
         window.set_is_open_video_dialog_open(false);
-        open_selected_video(&window, &confirm_state, &video_player_slot, &video_path);
+        open_selected_video(&window, &confirm_state, &video_player, &video_path);
     });
 }
 
-/// Loads `video_path` into playback — reusing `video_player_slot`'s
-/// `VideoPlayer` if one is already attached (switching files mid-session),
-/// or attaching a fresh one (and wiring cue navigation for it) if this is
-/// the session's first video, e.g. when trango was started without a CLI
-/// video argument. Resolves a same-stem `.srt` first
+/// Loads `video_path` into `video_player` — always the same already-attached
+/// `VideoPlayer` (see `video_player::VideoPlayer::attach`'s doc comment for
+/// why it's attached once, unconditionally, at startup rather than lazily
+/// here). Resolves a same-stem `.srt` first
 /// (`open_video_dialog::matching_subtitle_path`) and loads it via
 /// `load_subtitles` if found, clearing any previously loaded cues
-/// otherwise — done before attaching/loading the video so that, in
-/// `SentenceBySentence` mode, the start-of-playback pause lands on the new
-/// video's first cue rather than a stale one from a previously opened
-/// video. Called by `wire_open_video_dialog`'s `confirm-open-video`
-/// handler.
+/// otherwise — done before `load_video` so that, in `SentenceBySentence`
+/// mode, the start-of-playback pause lands on the new video's first cue
+/// rather than a stale one from a previously opened video. Called by
+/// `wire_open_video_dialog`'s `confirm-open-video` handler.
 fn open_selected_video(
     window: &AppWindow,
     state: &Rc<RefCell<PlayerState>>,
-    video_player_slot: &Rc<RefCell<Option<Rc<video_player::VideoPlayer>>>>,
+    video_player: &video_player::VideoPlayer,
     video_path: &Path,
 ) {
     match open_video_dialog::matching_subtitle_path(video_path) {
@@ -361,18 +359,7 @@ fn open_selected_video(
         }
     }
 
-    let existing_player = video_player_slot.borrow().clone();
-    match existing_player {
-        Some(video_player) => video_player.load_video(video_path, &state.borrow()),
-        None => match video_player::VideoPlayer::attach(window, video_path, Rc::clone(state)) {
-            Ok(video_player) => {
-                let video_player = Rc::new(video_player);
-                wire_cue_navigation(window, state, Rc::clone(&video_player));
-                *video_player_slot.borrow_mut() = Some(video_player);
-            }
-            Err(err) => tracing::error!(%err, ?video_path, "failed to attach video player"),
-        },
-    }
+    video_player.load_video(window, video_path, &state.borrow());
 }
 
 fn main() -> anyhow::Result<()> {
@@ -397,26 +384,23 @@ fn main() -> anyhow::Result<()> {
         );
     }
 
-    let video_player_slot: Rc<RefCell<Option<Rc<video_player::VideoPlayer>>>> =
-        Rc::new(RefCell::new(None));
-    if let Some(video_path) = video_path_from_args(&args) {
-        let video_player = Rc::new(video_player::VideoPlayer::attach(
-            &window,
-            &video_path,
-            Rc::clone(&player_state),
-        )?);
-        wire_cue_navigation(&window, &player_state, Rc::clone(&video_player));
-        *video_player_slot.borrow_mut() = Some(video_player);
-    } else {
+    let video_path = video_path_from_args(&args);
+    if video_path.is_none() {
         tracing::info!(
             "no video path given; use the \"Open video…\" button or run as `trango <path/to/video>`"
         );
     }
+    let video_player = Rc::new(video_player::VideoPlayer::attach(
+        &window,
+        video_path.as_deref(),
+        Rc::clone(&player_state),
+    )?);
+    wire_cue_navigation(&window, &player_state, Rc::clone(&video_player));
 
     wire_open_video_dialog(
         &window,
         &player_state,
-        Rc::clone(&video_player_slot),
+        Rc::clone(&video_player),
         default_video_folder(&args),
     );
 

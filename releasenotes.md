@@ -9,6 +9,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.22] - 2026-07-15
+
+### Fixed
+- `crates/app/src/video_player.rs`: video opened via the Open Video dialog with no CLI video argument would show but then never respond to Right/Left/Space/sentence-list navigation (every seek logged `failed to seek mpv err=Raw(-12)`) — root cause was `VideoPlayer::attach` being called lazily, only once a video was actually picked, but Slint's `RenderingState::RenderingSetup` notification (needed to create mpv's render context and issue the initial `loadfile`) only ever fires once per window, on its very first rendered frame; by the time the dialog had been used, that frame had long since rendered, so `RenderingSetup` never fired for the newly-registered notifier and mpv's core stayed permanently idle. `VideoPlayer::attach` now always runs once, unconditionally, right after the window is created (with `video_path: Option<&Path>`, `None` when trango starts without a CLI video argument) — see `docs/src/architecture/video-playback.md` for the full explanation
+
+### Changed
+- `crates/app/src/video_player.rs`: `VideoPlayer::load_video` is now the only path a video is ever loaded through after `attach` (both the CLI-argument video, if any, and any later Open Video dialog pick) — `main.rs` no longer branches between "attach a fresh `VideoPlayer`" and "load into the existing one"; there's always exactly one, from startup. `load_file` (the shared `loadfile` + start-seek-arming helper) now also sets `video-loaded`, since that no longer always follows `setup_render_context`
+
 ## [0.1.21] - 2026-07-15
 
 ### Added

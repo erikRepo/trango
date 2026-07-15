@@ -87,14 +87,18 @@ describe its role. The product name shown in the UI is **TrangoPlayer**.
 version, and opens the Slint main window defined in
 `crates/app/ui/app-window.slint` (see `docs/src/technology/slint.md`) —
 window background and a full top bar (wordmark, segmented control, ghost
-buttons). If a video path is given as a CLI argument
-(`trango path/to/video.mp4`), `video_player::VideoPlayer::attach` embeds
-libmpv playback into the window (see
+buttons). `video_player::VideoPlayer::attach` always runs once, right
+after the window is created, embedding libmpv playback into it (see
 `docs/src/architecture/video-playback.md` and
-`docs/src/technology/libmpv2.md`) and starts a repeating timer that polls
-mpv's `time-pos`/`duration` properties to drive the scrub bar below the
-video frame; without a video path, the video area just shows the window
-background as a placeholder and the scrub bar stays at `00:00`.
+`docs/src/technology/libmpv2.md`) and starting a repeating timer that
+polls mpv's `time-pos`/`duration` properties to drive the scrub bar below
+the video frame — *even without a video path yet*, for reasons the linked
+architecture page explains in detail (a Slint API subtlety around when its
+rendering-setup notification fires). If a video path is given as a CLI
+argument (`trango path/to/video.mp4`), `attach` also starts loading it
+immediately; without one, the video area just shows the window background
+as a placeholder and the scrub bar stays at `00:00` until a video is
+picked another way.
 
 A video can also be picked in-app via the top bar's "Open video…" button
 (`TODO.md` Vaihe 18): `open_video_dialog::list_folder_entries` lists a
@@ -108,10 +112,10 @@ Video dialog: folder navigation") instead of selecting it — only `Video`
 rows are selectable. `wire_open_video_dialog` in `main.rs` wires the
 button, row navigation/selection, and the "Open" button's
 `open_selected_video`, which loads any auto-matched subtitle first (or
-clears stale cues if none match),
-then either attaches a fresh `VideoPlayer` (if trango was started without a
-CLI video argument) or calls the existing one's `VideoPlayer::load_video`
-(switching files mid-session) — see
+clears stale cues if none match), then calls the already-attached
+`VideoPlayer`'s `load_video` — the session's first video load if trango
+started with no CLI argument, or a later one if switching files
+mid-session; either way the same `VideoPlayer` from startup — see
 `docs/src/architecture/video-playback.md`.
 
 If a second CLI argument is given (`trango video.mp4 subs.srt`),

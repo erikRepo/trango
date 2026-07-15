@@ -189,31 +189,55 @@ finished), it issues the seek and clears `pending_start_seek`. Playback
 stays paused throughout — pausing happens up front, the seek only moves
 *where* it's paused once possible.
 
-## Switching videos: the Open Video dialog
+## `attach` always runs at startup — `RenderingSetup` only ever fires once
+
+`VideoPlayer::attach` is called exactly once, unconditionally, right after
+`AppWindow` is created in `main` — *even when trango is started without a
+CLI video argument*, in which case it's given `video_path: None` and mpv
+stays idle (no `loadfile`) until a video is actually picked. This looks
+redundant (why attach at all with nothing to play?) but it isn't: Slint's
+`RenderingState::RenderingSetup` notification — the only place the OpenGL
+loader `setup_render_context` needs is exposed — fires *once per window*,
+on its very first rendered frame, not once per `set_rendering_notifier`
+call.
+
+An earlier version of this code called `VideoPlayer::attach` lazily, only
+once the Open Video dialog (`TODO.md` Vaihe 18) had a file to load — which
+worked fine when a CLI video argument was given (that path attaches before
+`window.run()`, i.e. before any frame has rendered) but silently broke
+video loaded via the dialog with no CLI argument: by the time the user had
+clicked through the dialog, the window had already rendered several frames
+(the dialog's own UI), so `RenderingSetup` had already fired-and-gone for
+good. The render context (and the `loadfile` it would have issued) never
+got created; mpv's core stayed permanently idle; every subsequent seek
+(arrow keys, Space, sentence list clicks) failed with mpv error `Raw(-12)`
+forever, and the failure was silent to the user beyond an unresponsive
+sentence-by-sentence UI — the fix (attaching unconditionally at startup)
+landed in the same release as the folder-navigation feature that made the
+no-CLI-argument path actually reachable in practice, see `releasenotes.md`.
+
+## Loading a video: `attach`'s own path, or later via the Open Video dialog
 
 `VideoPlayer::attach`'s `loadfile` + sentence-by-sentence start-seek arming
-(the previous section) lives in a private `load_file` helper so it can be
-reused outside the very first load. The Open Video dialog (`TODO.md` Vaihe
-18, `crates/app/src/open_video_dialog.rs` + `main.rs`'s
-`wire_open_video_dialog`/`open_selected_video`) needs to load a video that
-may or may not be the session's first one:
+lives in a private `load_file` helper (also responsible for setting
+`video-loaded`, since that now depends on whether a load was ever actually
+requested rather than always following `attach`), reused by two call sites:
 
-- If trango was started without a CLI video argument, no `VideoPlayer`
-  exists yet — `open_selected_video` calls `VideoPlayer::attach` exactly as
-  `main` does for a CLI-given path, then stores it for reuse.
-- If a video is already attached (started via CLI, or a previous dialog
-  selection), `open_selected_video` calls the public
-  `VideoPlayer::load_video(video_path, player_state)` instead, which just
-  calls the shared `load_file` helper against the existing mpv core —
-  no new render context or polling timer needed, since those are already
-  running.
+- `setup_render_context`, once, on `RenderingSetup` — only if `attach` was
+  given a `Some(video_path)` (a CLI argument).
+- The public `VideoPlayer::load_video(window, video_path, player_state)`,
+  called by `main.rs`'s `open_selected_video` whenever the Open Video
+  dialog (`TODO.md` Vaihe 18) picks a file — the session's first video (if
+  trango started with no CLI argument) or a later one (switching files
+  mid-session). Either way the render context and polling timer from
+  `attach` already exist, so this is just the `loadfile` call itself.
 
 Either way, `open_selected_video` resolves (and loads) a same-stem `.srt`
 subtitle match — or clears any previously loaded cues if none is found —
-*before* attaching/loading the video, not after: `load_file`'s
-sentence-by-sentence start-pause reads `player_state.cues` to find the first
-cue to pause at, so loading the new video first would arm the pause against
-the *previous* video's (now stale) cues.
+*before* calling `load_video`, not after: `load_file`'s sentence-by-sentence
+start-pause reads `player_state.cues` to find the first cue to pause at, so
+loading the new video first would arm the pause against the *previous*
+video's (now stale) cues.
 
 ## Current limitation: no inset video area yet
 
