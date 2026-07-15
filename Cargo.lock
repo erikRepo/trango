@@ -3583,7 +3583,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "playback-state"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "subtitle",
 ]
@@ -4600,7 +4600,7 @@ dependencies = [
 
 [[package]]
 name = "subtitle"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "thiserror 2.0.18",
 ]
@@ -4967,7 +4967,7 @@ dependencies = [
 
 [[package]]
 name = "trango"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "slint",
  "slint-build",

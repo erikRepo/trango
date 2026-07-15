@@ -31,9 +31,17 @@ fn main() {
 ```
 
 `crates/app/ui/app-window.slint` defines the `AppWindow` component: the
-main window shell, `#1c1d22` background, and a 52px top bar (`#202127`)
-showing the "TrangoPlayer" wordmark and the app version. `main.rs` pulls
-in the generated bindings with `slint::include_modules!()`, then:
+main window shell (`#1c1d22` background) and a 52px top bar (`#202127`)
+in its full Vaihe 9 visual form — accent dot + "TrangoPlayer" wordmark,
+a Normal / Sentence by sentence segmented control, and two ghost buttons
+("Open video…", "Open subtitles…"). Colors follow README.md's Design
+Tokens as a `global Palette` block; the segmented control and ghost
+buttons are small local components (`SegmentButton`, `GhostButton`)
+reused for both instances. The app version is shown in the window title
+(`"TrangoPlayer v{version}"`) rather than in the top bar itself, to match
+the pixel reference (`sketch/design_reference.dc.html#1c`), which has no
+version text in that area. `main.rs` pulls in the generated bindings with
+`slint::include_modules!()`, then:
 
 ```rust
 let window = AppWindow::new()?;
@@ -41,8 +49,11 @@ window.set_version(env!("CARGO_PKG_VERSION").into());
 window.run()
 ```
 
-Further top bar content (segmented control, ghost buttons), the video
-column, and the sentence panel are added in later `TODO.md` steps.
+The segmented control only flips a local `sentence-mode-active` Slint
+property so far (`SegmentButton`'s `TouchArea` sets it directly) — wiring
+it to `playback-state::PlayerState::toggle_mode()` is `TODO.md` Vaihe 10.
+The ghost buttons are static; the video column, sentence panel, and
+bottom hint bar are added in later `TODO.md` steps.
 
 ## Pitfalls
 
@@ -51,10 +62,21 @@ column, and the sentence panel are added in later `TODO.md` steps.
   tool wired into `scripts/check.sh` yet).
 - `AppWindow::new()` can be constructed and its properties set/read
   without a visible window appearing (no `.show()`/`.run()` call), which
-  is what makes `test_window_version_property_reflects_cargo_version` in
-  `main.rs` possible without a display-dependent test harness. Displaying
-  a window still requires a windowing backend (winit, via
-  `i-slint-backend-winit`) and a display connection (X11/Wayland) — not
-  guaranteed in every CI environment, which is why `TODO.md` Vaihe 8's
-  test criterion is a manual `cargo run -p trango` check, not an
-  automated one.
+  is what makes `test_app_window_properties` in `main.rs` possible
+  without a display-dependent test harness. Displaying a window still
+  requires a windowing backend (winit, via `i-slint-backend-winit`) and a
+  display connection (X11/Wayland) — not guaranteed in every CI
+  environment, which is why `TODO.md` Vaihe 8/9's test criterion is a
+  manual `cargo run -p trango` check, not an automated one.
+- Slint's winit backend only allows **one** platform/event-loop
+  initialization per process, bound to the thread that created it. A
+  second `AppWindow::new()` call from a different thread (e.g. a second
+  `#[test]` function — `cargo test` runs each test on its own thread even
+  with `--test-threads=1`) fails with "platform was initialized in
+  another thread" / "EventLoop can't be recreated". All assertions that
+  need a real `AppWindow` must live in a single test function.
+- `font-family: "Inter"` / `"JetBrains Mono"` (used for the top bar text,
+  per README.md's Design Tokens) resolve to those fonts only if they are
+  installed as system fonts; Slint falls back to its default font
+  silently otherwise, no build/runtime error. No font files are bundled
+  with the app yet.

@@ -9,6 +9,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.8] - 2026-07-15
+
+### Added
+- `trango` top bar: accent dot + "TrangoPlayer" wordmark, Normal / Sentence by sentence segmented control (static — toggles a local `sentence-mode-active` Slint property only, not yet wired to `playback-state`), "Open video…" / "Open subtitles…" ghost buttons — pixel reference `sketch/design_reference.dc.html#1c`
+
+### Changed
+- App version moved from a top bar label to the window title (`"TrangoPlayer v{version}"`) to make room for the full top bar layout
+
 ## [0.1.7] - 2026-07-15
 
 ### Added
