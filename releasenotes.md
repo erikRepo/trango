@@ -9,6 +9,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.24] - 2026-07-15
+
+### Added
+- `crates/subtitle/src/generate.rs`: `SubtitleGenerator` trait (`fn generate(&self, video_path: &Path) -> Result<PathBuf, SubtitleError>`) plus `StubSubtitleGenerator`, a placeholder implementation that writes a single fixed-text cue to a same-stem `.srt` next to the video — no speech-to-text library added yet, that's a separate later step needing its own go-ahead (`TODO.md` Vaihe 20)
+- `app-window.slint`: `SubtitleGenerationStatus` enum (`Idle | Generating | Done | Error`, README's `subtitleGenerationStatus`) and `AppWindow::subtitle-generation-status` property; `OpenSubtitlesDialog`'s empty-state "Generate subtitles" button and label now reflect it ("Generating…" while running, "Generation failed" / "Try again" on error), and a new `Palette.error-text` token colors the error state
+- `crates/app/src/subtitle_generation.rs`: `generate` runs a `SubtitleGenerator` synchronously against the current video, mirroring `Idle -> Generating -> Done`/`Error` into the window and, on success, the dialog's original row (`open_subtitles_dialog::mark_original_linked`)
+
+### Changed
+- `crates/app/src/main.rs`: `wire_open_subtitles_dialog`'s `generate-subtitles-requested` handler is no longer a no-op stub — it runs `subtitle::StubSubtitleGenerator` via `subtitle_generation::generate` and, on success, loads the generated subtitle into the player and records it in `CurrentMedia`, the same as picking a translation already did
+- `crates/app/src/open_subtitles_dialog.rs`: `open_dialog` now resets `subtitle-generation-status` to `Idle` each time the dialog opens, so a previous video's Done/Error state doesn't leak into a newly scoped dialog
+
 ## [0.1.23] - 2026-07-15
 
 ### Added

@@ -18,7 +18,7 @@ use std::rc::Rc;
 
 use slint::VecModel;
 
-use crate::{AppWindow, FileListRow};
+use crate::{AppWindow, FileListRow, SubtitleGenerationStatus};
 
 /// The original-language and translation subtitle paths already linked to
 /// the video the Open Subtitles dialog is scoped to, if any.
@@ -38,6 +38,7 @@ pub fn open_dialog(window: &AppWindow, video_path: &Path, links: &SubtitleLinks)
     window.set_open_subtitles_title(format!("Subtitles for {}", file_name(video_path)).into());
     set_original(window, links.original_path.as_deref());
     set_translation(window, links.translation_path.as_deref());
+    window.set_subtitle_generation_status(SubtitleGenerationStatus::Idle);
     window.set_is_open_subtitles_dialog_open(true);
 }
 
@@ -61,6 +62,14 @@ fn set_translation(window: &AppWindow, path: Option<&Path>) {
 /// re-merges cues with the newly picked translation.
 pub fn mark_translation_linked(window: &AppWindow, path: &Path) {
     set_translation(window, Some(path));
+}
+
+/// Mirrors a just-generated original-language subtitle into the dialog's
+/// original row, without touching the translation section or the dialog's
+/// open state — called by `subtitle_generation::generate` after a
+/// successful `subtitle::SubtitleGenerator::generate` call.
+pub fn mark_original_linked(window: &AppWindow, path: &Path) {
+    set_original(window, Some(path));
 }
 
 /// `path`'s file name, or the full path rendered as a string if it has

@@ -8,6 +8,7 @@ mod open_subtitles_dialog;
 mod open_video_dialog;
 mod sentence_card;
 mod sentence_list;
+mod subtitle_generation;
 mod video_player;
 
 use std::cell::RefCell;
@@ -414,8 +415,12 @@ fn open_selected_video(
 /// `cancel`/`confirm-open-subtitles-dialog` (backdrop/✕/Cancel/Done) just
 /// close it: both sections are already live the moment they're linked, not
 /// deferred to "Done" (see `AppWindow`'s doc comment on those callbacks).
-/// `generate-subtitles-requested` is a stub (`TODO.md` Vaihe 20 wires it to
-/// real generation).
+/// `generate-subtitles-requested` (`TODO.md` Vaihe 20) runs
+/// `subtitle::StubSubtitleGenerator` via `subtitle_generation::generate`,
+/// which mirrors `Idle -> Generating -> Done`/`Error` into
+/// `subtitle-generation-status` and, on success, the dialog's original row;
+/// on success here the generated subtitle is also loaded into the player
+/// and recorded in `current_media`, same as a picked translation is below.
 ///
 /// `link-translation-requested` opens a nested `FileListDialog` picker
 /// (`open_subtitles_dialog::open_translation_picker`) over the video's
@@ -469,8 +474,25 @@ fn wire_open_subtitles_dialog(
         }
     });
 
-    window.on_generate_subtitles_requested(|| {
-        tracing::info!("subtitle generation requested (stub — see TODO.md Vaihe 20)");
+    let generate_window_weak = window.as_weak();
+    let generate_media = Rc::clone(&current_media);
+    let generate_state = Rc::clone(state);
+    window.on_generate_subtitles_requested(move || {
+        let Some(window) = generate_window_weak.upgrade() else {
+            return;
+        };
+        let Some(video_path) = generate_media.borrow().video_path.clone() else {
+            tracing::warn!("subtitle generation requested with no video open");
+            return;
+        };
+        let generator = subtitle::StubSubtitleGenerator;
+        let Some(subtitle_path) = subtitle_generation::generate(&window, &generator, &video_path)
+        else {
+            return;
+        };
+        if load_subtitles(&window, &generate_state, &subtitle_path, None) {
+            generate_media.borrow_mut().subtitle_path = Some(subtitle_path);
+        }
     });
 
     let link_entries: Rc<RefCell<Vec<PathBuf>>> = Rc::new(RefCell::new(Vec::new()));
@@ -947,5 +969,48 @@ mod tests {
         // Then:  it closes
         window.invoke_confirm_open_subtitles_dialog();
         assert!(!window.get_is_open_subtitles_dialog_open());
+
+        // When:  switching CurrentMedia to a video with no linked subtitle
+        //        (a fake, empty video file in a temp dir — StubSubtitleGenerator
+        //        only checks that the video path exists) and requesting the
+        //        Open Subtitles dialog again
+        // Then:  it opens showing the empty state, generation status Idle
+        let generate_dir = std::env::temp_dir().join("trango-test-generate-subtitles-flow");
+        let _ = std::fs::remove_dir_all(&generate_dir);
+        std::fs::create_dir_all(&generate_dir).expect("failed to create temp test dir");
+        let generate_video_path = generate_dir.join("no_subs.mp4");
+        std::fs::write(&generate_video_path, b"").expect("failed to write fixture video file");
+
+        *current_media.borrow_mut() = CurrentMedia {
+            video_path: Some(generate_video_path.clone()),
+            subtitle_path: None,
+            translation_path: None,
+        };
+        window.invoke_open_subtitles_dialog_requested();
+        assert!(!window.get_open_subtitles_original_linked());
+        assert_eq!(
+            window.get_subtitle_generation_status(),
+            SubtitleGenerationStatus::Idle
+        );
+
+        // When:  clicking "Generate subtitles", as the empty-state button does
+        // Then:  the stub generator runs synchronously, status ends at Done,
+        //        the dialog's original row reflects the generated file, the
+        //        player loads its one cue, and CurrentMedia tracks the new
+        //        subtitle path
+        window.invoke_generate_subtitles_requested();
+        assert_eq!(
+            window.get_subtitle_generation_status(),
+            SubtitleGenerationStatus::Done
+        );
+        assert!(window.get_open_subtitles_original_linked());
+        assert_eq!(window.get_open_subtitles_original_name(), "no_subs.srt");
+        assert_eq!(player_state.borrow().cues.len(), 1);
+        assert_eq!(
+            current_media.borrow().subtitle_path,
+            Some(generate_video_path.with_extension("srt"))
+        );
+
+        std::fs::remove_dir_all(&generate_dir).expect("failed to clean up temp test dir");
     }
 }

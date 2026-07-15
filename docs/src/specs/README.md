@@ -45,3 +45,26 @@ README's mock also labels the two subtitle sections "(DE)"/"(EN)" as
 language-code examples for that specific demo video; since trango doesn't
 track subtitle language, the dialog instead uses the generic labels
 "Original subtitle" / "Translation".
+
+## Subtitle generation: stub interface, no STT dependency yet
+
+`TODO.md` Vaihe 20 asks for the `subtitleGenerationStatus`
+(`Idle | Generating | Done | Error`) flow to be wired end-to-end before any
+speech-to-text library is added — adding one (e.g. a local Whisper binding)
+is a significant new dependency and needs a separate go-ahead. The
+`subtitle` crate's `SubtitleGenerator` trait (`crates/subtitle/src/generate.rs`)
+captures the shape a real backend will fill in later:
+`fn generate(&self, video_path: &Path) -> Result<PathBuf, SubtitleError>`.
+For now, `StubSubtitleGenerator` is the only implementation — it writes a
+single fixed placeholder cue to a same-stem `.srt` next to the video (the
+same naming convention `open_video_dialog::matching_subtitle_path` looks
+for), so a "generated" file is picked up as the video's linked original
+subtitle immediately, without a separate refresh step.
+
+`crates/app/src/subtitle_generation.rs`'s `generate` runs the generator
+synchronously on the UI thread and mirrors the result into
+`AppWindow::subtitle-generation-status` plus (on success) the Open
+Subtitles dialog's original row. That's fine for a stub that returns
+instantly; a real STT backend will likely need to move this off the UI
+thread (e.g. a background thread reporting back via
+`slint::invoke_from_event_loop`) in whatever later step wires it in.

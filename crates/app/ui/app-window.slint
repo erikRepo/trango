@@ -24,6 +24,18 @@ global Palette {
     out property <color> translation-text: #7fa6f0;
     out property <color> modal-bg: #22232a;
     out property <color> chip-muted: #4a4d59;
+    out property <color> error-text: #e5484d;
+}
+
+/// Subtitle generation status for the Open Subtitles dialog's "Generate
+/// subtitles" flow (`TODO.md` Vaihe 20, README's `subtitleGenerationStatus`).
+/// Driven from Rust (`crates/app/src/subtitle_generation.rs`) as
+/// `AppWindow::subtitle-generation-status`.
+export enum SubtitleGenerationStatus {
+    Idle,
+    Generating,
+    Done,
+    Error,
 }
 
 /// One pill in the top bar's Normal / Sentence-by-sentence segmented
@@ -769,9 +781,11 @@ component EmptyFileRow {
 /// `original-linked`/`original-name`/`translation-linked`/`translation-name`
 /// are set from Rust (`crates/app/src/open_subtitles_dialog.rs`) when the
 /// top bar's "Open subtitles…" button is clicked. The original-language
-/// section shows a `LinkedFileRow` if found on disk, else an
-/// `EmptyFileRow` + filled "Generate subtitles" button (a stub —
-/// `generate-subtitles` — until `TODO.md` Vaihe 20). The translation
+/// section shows a `LinkedFileRow` if found on disk, else an empty-state
+/// row whose text and "Generate subtitles"/"Generating…"/"Try again"
+/// button reflect `generation-status` (`TODO.md` Vaihe 20) — clicking it
+/// emits `generate-subtitles`, wired in `main.rs` to
+/// `subtitle_generation::generate`. The translation
 /// section always shows either state too, plus a small "link…" text below
 /// it — clicking either opens `main.rs`'s link-translation file picker
 /// (`link-translation`), since real OS drag-and-drop isn't available (see
@@ -784,6 +798,7 @@ component OpenSubtitlesDialog {
     in property <string> title;
     in property <bool> original-linked;
     in property <string> original-name;
+    in property <SubtitleGenerationStatus> generation-status: SubtitleGenerationStatus.Idle;
     in property <bool> translation-linked;
     in property <string> translation-name;
     callback generate-subtitles();
@@ -891,8 +906,14 @@ component OpenSubtitlesDialog {
                                 cross-axis-alignment: center;
 
                                 Text {
-                                    text: "No subtitle file found";
-                                    color: Palette.muted-text;
+                                    text: root.generation-status == SubtitleGenerationStatus.Generating
+                                        ? "Generating…"
+                                        : root.generation-status == SubtitleGenerationStatus.Error
+                                            ? "Generation failed"
+                                            : "No subtitle file found";
+                                    color: root.generation-status == SubtitleGenerationStatus.Error
+                                        ? Palette.error-text
+                                        : Palette.muted-text;
                                     font-family: "Inter";
                                     font-size: 13px;
                                     font-weight: 500;
@@ -902,6 +923,7 @@ component OpenSubtitlesDialog {
                                 Rectangle {
                                     border-radius: 6px;
                                     background: Palette.accent;
+                                    opacity: root.generation-status == SubtitleGenerationStatus.Generating ? 0.55 : 1.0;
 
                                     HorizontalLayout {
                                         padding-left: 14px;
@@ -910,7 +932,11 @@ component OpenSubtitlesDialog {
                                         padding-bottom: 8px;
 
                                         Text {
-                                            text: "Generate subtitles";
+                                            text: root.generation-status == SubtitleGenerationStatus.Generating
+                                                ? "Generating…"
+                                                : root.generation-status == SubtitleGenerationStatus.Error
+                                                    ? "Try again"
+                                                    : "Generate subtitles";
                                             color: white;
                                             font-family: "Inter";
                                             font-size: 12px;
@@ -920,6 +946,7 @@ component OpenSubtitlesDialog {
                                     }
 
                                     TouchArea {
+                                        enabled: root.generation-status != SubtitleGenerationStatus.Generating;
                                         clicked => { root.generate-subtitles(); }
                                     }
                                 }
@@ -1131,8 +1158,16 @@ export component AppWindow inherits Window {
     callback cancel-open-subtitles-dialog();
     callback confirm-open-subtitles-dialog();
     // Invoked by the original-language section's "Generate subtitles"
-    // button — a stub until TODO.md Vaihe 20 wires up real generation.
+    // button (TODO.md Vaihe 20) — wired in main.rs's
+    // wire_open_subtitles_dialog to subtitle_generation::generate, which
+    // mirrors Idle/Generating/Done/Error into subtitle-generation-status
+    // below and, on success, the original row via
+    // open_subtitles_dialog::mark_original_linked.
     callback generate-subtitles-requested();
+    // Idle/Generating/Done/Error for the flow above, set from Rust by
+    // crates/app/src/subtitle_generation.rs. Reset to Idle each time the
+    // Open Subtitles dialog opens (open_subtitles_dialog::open_dialog).
+    in property <SubtitleGenerationStatus> subtitle-generation-status: SubtitleGenerationStatus.Idle;
     // Invoked by the translation section's "click to link…" text. Opens
     // the link-translation file picker below rather than accepting an
     // OS-level file drop like the design mock: Slint 1.17.1's winit
@@ -1336,6 +1371,7 @@ export component AppWindow inherits Window {
             title: root.open-subtitles-title;
             original-linked: root.open-subtitles-original-linked;
             original-name: root.open-subtitles-original-name;
+            generation-status: root.subtitle-generation-status;
             translation-linked: root.open-subtitles-translation-linked;
             translation-name: root.open-subtitles-translation-name;
             generate-subtitles => { root.generate-subtitles-requested(); }
