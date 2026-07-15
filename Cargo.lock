@@ -43,7 +43,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "playback-state"
-version = "0.1.0"
+version = "0.1.2"
 
 [[package]]
 name = "proc-macro2"
@@ -80,7 +80,10 @@ checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 
 [[package]]
 name = "subtitle"
-version = "0.1.0"
+version = "0.1.2"
+dependencies = [
+ "thiserror",
+]
 
 [[package]]
 name = "syn"
@@ -91,6 +94,26 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "thiserror"
+version = "2.0.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4288b5bcbc7920c07a1149a35cf9590a2aa808e0bc1eafaade0b80947865fbc4"
+dependencies = [
+ "thiserror-impl",
+]
+
+[[package]]
+name = "thiserror-impl"
+version = "2.0.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ebc4ee7f67670e9b64d05fa4253e753e016c6c95ff35b89b7941d6b856dec1d5"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -161,7 +184,7 @@ dependencies = [
 
 [[package]]
 name = "trango"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "tracing",
  "tracing-subscriber",

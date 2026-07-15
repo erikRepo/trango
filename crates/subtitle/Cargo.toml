@@ -3,3 +3,6 @@ name = "subtitle"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+
+[dependencies]
+thiserror = "2.0.18"

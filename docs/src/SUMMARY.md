@@ -17,3 +17,4 @@
 # Technology
 
 - [tracing](technology/tracing.md)
+- [thiserror](technology/thiserror.md)

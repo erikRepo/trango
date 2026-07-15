@@ -5,11 +5,13 @@ three members:
 
 ## `crates/subtitle` (library, package `subtitle`)
 
-Currently an empty library — populated starting at Vaihe 3 in `TODO.md`.
+Holds the `Cue` data model (`index`, `start`, `end`, `text`) and
+`SubtitleError` (see `docs/src/technology/thiserror.md`). `Cue::new`
+validates that `start < end`. `.srt` parsing itself is not implemented
+yet — populated starting at Vaihe 4 in `TODO.md`.
 
-Intended to hold subtitle parsing and the `Cue` data model, with no
-dependency on Slint or libmpv, so it can be tested with fast, isolated unit
-tests against real `.srt` fixtures.
+No dependency on Slint or libmpv, so it can be tested with fast, isolated
+unit tests, later against real `.srt` fixtures.
 
 ## `crates/playback-state` (library, package `playback-state`)
 
