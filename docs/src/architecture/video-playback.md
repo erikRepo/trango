@@ -88,6 +88,43 @@ no mpv/Slint dependency, so it's unit-tested directly in
 integration around it needs a real mpv/Slint instance to exercise the same
 way frame rendering does (see below).
 
+## Keyboard navigation: Right/Left/Space → seek + play-to-end + pause
+
+`app-window.slint`'s root `Window` sets `forward-focus: nav-focus`, so a
+`FocusScope` (`nav-focus`) wrapping the whole window content always holds
+keyboard focus. Its `key-pressed` handler only acts while
+`sentence-mode-active` is `true`; it checks `event.text` against
+`Key.RightArrow`, `Key.LeftArrow`, and the literal `" "` (Space), and calls
+`next-cue()`, `previous-cue()`, or `repeat-cue()` respectively — otherwise
+it `reject`s the event, leaving Normal-mode key handling for a later step.
+
+`main.rs`'s `wire_cue_navigation` connects those three callbacks (via
+`cue_navigation_handler`) to the matching `PlayerState` method
+(`next_cue`/`previous_cue`/`repeat_current_cue`, see `crates.md`'s
+navigation section for their pure logic). Each handler:
+
+1. Runs the navigation method, producing an `Option<SeekCommand>`.
+2. Mirrors the resulting cue into the sentence card via
+   `sentence_card::update_sentence_card` regardless of whether a command
+   came back (e.g. `next_cue` at the last cue returns `None` but the
+   cursor hasn't moved, so re-rendering is harmless).
+3. If a `SeekCommand` was produced, hands it to
+   `VideoPlayer::apply_seek_command`.
+
+`apply_seek_command` issues mpv's `seek <start> absolute` command and sets
+`pause` to `false`, then — if `then_pause` is set — arms `pause_at =
+Some(command.end)` on `VideoPlayerInner`. There's no mpv command for "play
+until this timestamp, then pause", so the scrub bar's existing
+`SCRUB_BAR_POLL_INTERVAL` timer tick (already polling `time-pos` for the
+scrub bar and current-sentence sync) also calls `apply_pending_pause`,
+which pauses mpv and clears `pause_at` once `time-pos` reaches it — reusing
+the same poll cadence instead of adding a second timer.
+
+These callbacks are only wired when a video is attached (`wire_cue_navigation`
+runs from `main`'s `if let Some(video_player) = &video_player` branch), so
+pressing the keys with subtitles but no video loaded is a no-op rather than
+a panic.
+
 ## Current limitation: no inset video area yet
 
 mpv's render API always draws starting at `(0, 0)` of the framebuffer it's

@@ -29,7 +29,7 @@ use std::time::Duration;
 
 use libmpv2::render::{OpenGLInitParams, RenderContext, RenderParam, RenderParamApiType};
 use libmpv2::Mpv;
-use playback_state::{format_time, PlaybackMode, PlayerState};
+use playback_state::{format_time, PlaybackMode, PlayerState, SeekCommand};
 use slint::{ComponentHandle, GraphicsAPI, RenderingState, Timer, TimerMode, Weak};
 
 use gl_proc_address_bridge::{
@@ -62,16 +62,19 @@ struct VideoPlayerInner {
     /// Resolved `glGetIntegerv`, used to look up the currently bound
     /// framebuffer in [`render_frame`].
     gl_get_integerv: Option<unsafe extern "C" fn(u32, *mut i32)>,
+    /// Timestamp at which the scrub bar poll tick (see [`pause_at_reached`])
+    /// should pause mpv, armed by [`VideoPlayer::apply_seek_command`] for a
+    /// [`SeekCommand`] with `then_pause` set. Cleared once reached.
+    pause_at: Option<Duration>,
 }
 
 /// Owns an mpv core registered as a rendering underlay on an [`AppWindow`],
-/// plus the scrub bar's polling timer. Both the rendering notifier and the
-/// timer closures hold their own `Rc` clone of the shared state, so `inner`
-/// itself isn't read directly here — this handle just needs to outlive them.
-/// `scrub_bar_timer` must be kept alive too: dropping a `slint::Timer` stops
-/// it.
+/// plus the scrub bar's polling timer. The rendering notifier and timer
+/// closures hold their own `Rc` clone of `inner`; [`VideoPlayer::apply_seek_command`]
+/// uses this handle's own clone to drive mpv from `main.rs`'s cue navigation
+/// callbacks. `scrub_bar_timer` must be kept alive too: dropping a
+/// `slint::Timer` stops it.
 pub struct VideoPlayer {
-    #[allow(dead_code)]
     inner: Rc<RefCell<VideoPlayerInner>>,
     #[allow(dead_code)]
     scrub_bar_timer: Timer,
@@ -110,6 +113,7 @@ impl VideoPlayer {
             mpv,
             render_context: None,
             gl_get_integerv: None,
+            pause_at: None,
         }));
 
         let video_path = video_path.to_owned();
@@ -140,12 +144,52 @@ impl VideoPlayer {
         scrub_bar_timer.start(TimerMode::Repeated, SCRUB_BAR_POLL_INTERVAL, move || {
             poll_scrub_bar(&poll_inner, &poll_window_weak);
             sync_current_sentence(&poll_inner, &player_state, &poll_window_weak);
+            apply_pending_pause(&poll_inner);
         });
 
         Ok(Self {
             inner,
             scrub_bar_timer,
         })
+    }
+
+    /// Applies a `playback_state` navigation `SeekCommand`: seeks mpv to
+    /// `command.start`, resumes playback, and — if `command.then_pause` is
+    /// set — arms `pause_at` so the next scrub bar poll tick pauses once
+    /// `command.end` is reached (see [`apply_pending_pause`]). Called from
+    /// `main.rs`'s `next-cue`/`previous-cue`/`repeat-cue` callback handlers.
+    pub fn apply_seek_command(&self, command: SeekCommand) {
+        let mut inner = self.inner.borrow_mut();
+        let mpv = inner.mpv;
+        if let Err(err) = mpv.command(
+            "seek",
+            &[&command.start.as_secs_f64().to_string(), "absolute"],
+        ) {
+            tracing::error!(%err, "failed to seek mpv");
+        }
+        if let Err(err) = mpv.set_property("pause", false) {
+            tracing::error!(%err, "failed to resume mpv playback after seek");
+        }
+        inner.pause_at = command.then_pause.then_some(command.end);
+    }
+}
+
+/// Pauses mpv once its `time-pos` reaches `inner`'s armed `pause_at` (set by
+/// [`VideoPlayer::apply_seek_command`]), then clears it. A no-op if nothing
+/// is armed. Called on every `SCRUB_BAR_POLL_INTERVAL` tick.
+fn apply_pending_pause(inner: &Rc<RefCell<VideoPlayerInner>>) {
+    let mut inner = inner.borrow_mut();
+    let Some(pause_at) = inner.pause_at else {
+        return;
+    };
+    let Ok(time_pos) = inner.mpv.get_property::<f64>("time-pos") else {
+        return;
+    };
+    if time_pos >= pause_at.as_secs_f64() {
+        if let Err(err) = inner.mpv.set_property("pause", true) {
+            tracing::error!(%err, "failed to pause mpv at cue end");
+        }
+        inner.pause_at = None;
     }
 }
 

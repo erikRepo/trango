@@ -11,7 +11,7 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use playback_state::{PlaybackMode, PlayerState};
+use playback_state::{PlaybackMode, PlayerState, SeekCommand};
 
 slint::include_modules!();
 
@@ -43,6 +43,62 @@ fn wire_player_state(window: &AppWindow) -> Rc<RefCell<PlayerState>> {
     });
 
     state
+}
+
+/// Wires the window's `next-cue`, `previous-cue`, and `repeat-cue`
+/// callbacks — invoked by `app-window.slint`'s `key-pressed` handler for
+/// Right/Left/Space while in `SentenceBySentence` mode — to `PlayerState`'s
+/// matching navigation methods, mirroring the resulting cue into the
+/// sentence card and handing any produced `SeekCommand` to `video_player` to
+/// drive mpv (seek + play-to-end + pause, see
+/// `video_player::VideoPlayer::apply_seek_command`).
+fn wire_cue_navigation(
+    window: &AppWindow,
+    state: &Rc<RefCell<PlayerState>>,
+    video_player: Rc<video_player::VideoPlayer>,
+) {
+    window.on_next_cue(cue_navigation_handler(
+        window,
+        state,
+        &video_player,
+        PlayerState::next_cue,
+    ));
+    window.on_previous_cue(cue_navigation_handler(
+        window,
+        state,
+        &video_player,
+        PlayerState::previous_cue,
+    ));
+    window.on_repeat_cue(cue_navigation_handler(
+        window,
+        state,
+        &video_player,
+        |state| state.repeat_current_cue(),
+    ));
+}
+
+/// Builds the closure behind one `wire_cue_navigation` callback: runs
+/// `navigate` against the shared `PlayerState`, mirrors the resulting cue
+/// into the sentence card, and — if a `SeekCommand` was produced — hands it
+/// to `video_player`.
+fn cue_navigation_handler(
+    window: &AppWindow,
+    state: &Rc<RefCell<PlayerState>>,
+    video_player: &Rc<video_player::VideoPlayer>,
+    navigate: impl Fn(&mut PlayerState) -> Option<SeekCommand> + 'static,
+) -> impl FnMut() + 'static {
+    let state = Rc::clone(state);
+    let window_weak = window.as_weak();
+    let video_player = Rc::clone(video_player);
+    move || {
+        let command = navigate(&mut state.borrow_mut());
+        if let Some(window) = window_weak.upgrade() {
+            sentence_card::update_sentence_card(&window, &state.borrow());
+        }
+        if let Some(command) = command {
+            video_player.apply_seek_command(command);
+        }
+    }
 }
 
 /// Reads the video path to play (if any) from CLI arguments, as used by
@@ -101,17 +157,20 @@ fn main() -> anyhow::Result<()> {
         load_subtitles(&window, &player_state, &subtitle_path);
     }
 
-    let _video_player = match video_path_from_args(&args) {
-        Some(video_path) => Some(video_player::VideoPlayer::attach(
+    let video_player = match video_path_from_args(&args) {
+        Some(video_path) => Some(Rc::new(video_player::VideoPlayer::attach(
             &window,
             &video_path,
             Rc::clone(&player_state),
-        )?),
+        )?)),
         None => {
             tracing::info!("no video path given; run as `trango <path/to/video>` to play one");
             None
         }
     };
+    if let Some(video_player) = &video_player {
+        wire_cue_navigation(&window, &player_state, Rc::clone(video_player));
+    }
 
     window.run()?;
     Ok(())

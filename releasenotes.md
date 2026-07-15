@@ -9,6 +9,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.15] - 2026-07-15
+
+### Added
+- `app-window.slint`: `AppWindow` gains a `nav-focus` `FocusScope` (held via `forward-focus`) whose `key-pressed` handler, while `sentence-mode-active`, maps Right/Left/Space to new `next-cue`/`previous-cue`/`repeat-cue` callbacks
+- `app-window.slint`: `HintBar` component — "← previous sentence", "space · repeat sentence", "→ next sentence" — instantiated only in `SentenceBySentence` mode via an `if` guard
+- `crates/app/src/main.rs`: `wire_cue_navigation`/`cue_navigation_handler` connect `next-cue`/`previous-cue`/`repeat-cue` to `PlayerState::next_cue`/`previous_cue`/`repeat_current_cue`, refresh the sentence card, and hand any produced `SeekCommand` to `VideoPlayer::apply_seek_command`
+- `video_player.rs`: `VideoPlayer::apply_seek_command(SeekCommand)` seeks mpv to the command's start and resumes playback; `apply_pending_pause`, run on the existing scrub bar poll timer, pauses mpv once `time-pos` reaches an armed `pause_at` (so Right/Space play through a cue's span and stop at its end, per README)
+
+### Changed
+- `video_player::VideoPlayer::attach` now returns a `VideoPlayer` usable from `main.rs` (wrapped in `Rc`) to drive mpv from the cue navigation callbacks, not just to keep its rendering notifier/timer alive
+
 ## [0.1.14] - 2026-07-15
 
 ### Added

@@ -136,6 +136,54 @@ component CurrentSentenceCard {
     }
 }
 
+/// Bottom hint bar shown only in `SentenceBySentence` mode (see the `if`
+/// guard where it's instantiated in `AppWindow`), listing the Right/Left/
+/// Space keyboard shortcuts. Those keys are handled by `AppWindow`'s
+/// `key-pressed` callback and drive `next-cue`/`previous-cue`/`repeat-cue`,
+/// wired to `playback-state` navigation and mpv seeking in
+/// `crates/app/src/main.rs` and `video_player.rs`.
+component HintBar {
+    height: 34px;
+
+    Rectangle {
+        background: Palette.window-bg;
+        border-width: 1px;
+        border-color: Palette.border;
+
+        HorizontalLayout {
+            alignment: center;
+            spacing: 24px;
+
+            Text {
+                text: "← previous sentence";
+                color: Palette.muted-text;
+                font-family: "JetBrains Mono";
+                font-size: 11px;
+                font-weight: 500;
+                vertical-alignment: center;
+            }
+
+            Text {
+                text: "space · repeat sentence";
+                color: Palette.muted-text;
+                font-family: "JetBrains Mono";
+                font-size: 11px;
+                font-weight: 500;
+                vertical-alignment: center;
+            }
+
+            Text {
+                text: "→ next sentence";
+                color: Palette.muted-text;
+                font-family: "JetBrains Mono";
+                font-size: 11px;
+                font-weight: 500;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
 /// Time / progress control below the video frame: current time (mono,
 /// muted) — 4px track with accent-filled progress and a white circular
 /// thumb — total time (mono, muted). `current-time-label`/`duration-label`
@@ -218,122 +266,150 @@ export component AppWindow inherits Window {
     in property <string> sentence-text: "No sentence loaded.";
     in property <bool> has-current-sentence: false;
     callback toggle-mode();
+    // Sentence-by-sentence navigation, invoked by `nav-focus`'s key-pressed
+    // handler below for Right/Left/Space respectively — see
+    // `crates/app/src/main.rs` for how they drive `playback-state` and mpv.
+    callback next-cue();
+    callback previous-cue();
+    callback repeat-cue();
 
     title: "TrangoPlayer v" + version;
     width: 960px;
     height: 600px;
+    forward-focus: nav-focus;
 
-    VerticalLayout {
-        Rectangle {
-            height: 52px;
-            background: Palette.panel-bg;
-            border-width: 1px;
-            border-color: Palette.border;
-
-            HorizontalLayout {
-                padding-left: 16px;
-                padding-right: 16px;
-                alignment: space-between;
-                cross-axis-alignment: center;
-
-                HorizontalLayout {
-                    spacing: 10px;
-
-                    Rectangle {
-                        width: 8px;
-                        height: 8px;
-                        border-radius: 4px;
-                        background: Palette.accent;
-                        y: (parent.height - self.height) / 2;
-                    }
-
-                    Text {
-                        text: "TrangoPlayer";
-                        color: Palette.primary-text;
-                        font-family: "Inter";
-                        font-size: 14px;
-                        font-weight: 600;
-                        vertical-alignment: center;
-                    }
-                }
-
-                Rectangle {
-                    background: Palette.segmented-bg;
-                    border-radius: 7px;
-
-                    HorizontalLayout {
-                        padding: 3px;
-                        spacing: 2px;
-
-                        SegmentButton {
-                            label: "Normal";
-                            active: !root.sentence-mode-active;
-                            clicked => {
-                                if (root.sentence-mode-active) {
-                                    root.toggle-mode();
-                                }
-                            }
-                        }
-
-                        SegmentButton {
-                            label: "Sentence by sentence";
-                            active: root.sentence-mode-active;
-                            clicked => {
-                                if (!root.sentence-mode-active) {
-                                    root.toggle-mode();
-                                }
-                            }
-                        }
-                    }
-                }
-
-                HorizontalLayout {
-                    spacing: 8px;
-
-                    GhostButton {
-                        label: "Open video…";
-                    }
-
-                    GhostButton {
-                        label: "Open subtitles…";
-                    }
-                }
+    nav-focus := FocusScope {
+        key-pressed(event) => {
+            if (!root.sentence-mode-active) {
+                reject
+            } else if (event.text == Key.RightArrow) {
+                root.next-cue();
+                accept
+            } else if (event.text == Key.LeftArrow) {
+                root.previous-cue();
+                accept
+            } else if (event.text == " ") {
+                root.repeat-cue();
+                accept
+            } else {
+                reject
             }
         }
 
-        HorizontalLayout {
-            padding: 16px;
-            spacing: 16px;
+        VerticalLayout {
+            Rectangle {
+                height: 52px;
+                background: Palette.panel-bg;
+                border-width: 1px;
+                border-color: Palette.border;
 
-            VerticalLayout {
-                spacing: 8px;
+                HorizontalLayout {
+                    padding-left: 16px;
+                    padding-right: 16px;
+                    alignment: space-between;
+                    cross-axis-alignment: center;
 
-                Rectangle {
-                    // Video frame area, filling the remaining column height.
-                    // Transparent while a video is loaded so the mpv underlay
-                    // shows through (see `video-loaded` above); otherwise
-                    // filled with the window background color as a
-                    // placeholder. Precise rounded corners land in a later
-                    // TODO.md step.
-                    background: root.video-loaded ? transparent : Palette.window-bg;
-                }
+                    HorizontalLayout {
+                        spacing: 10px;
 
-                ScrubBar {
-                    current-time-label: root.current-time-label;
-                    duration-label: root.duration-label;
-                    progress: root.scrub-progress;
+                        Rectangle {
+                            width: 8px;
+                            height: 8px;
+                            border-radius: 4px;
+                            background: Palette.accent;
+                            y: (parent.height - self.height) / 2;
+                        }
+
+                        Text {
+                            text: "TrangoPlayer";
+                            color: Palette.primary-text;
+                            font-family: "Inter";
+                            font-size: 14px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    Rectangle {
+                        background: Palette.segmented-bg;
+                        border-radius: 7px;
+
+                        HorizontalLayout {
+                            padding: 3px;
+                            spacing: 2px;
+
+                            SegmentButton {
+                                label: "Normal";
+                                active: !root.sentence-mode-active;
+                                clicked => {
+                                    if (root.sentence-mode-active) {
+                                        root.toggle-mode();
+                                    }
+                                }
+                            }
+
+                            SegmentButton {
+                                label: "Sentence by sentence";
+                                active: root.sentence-mode-active;
+                                clicked => {
+                                    if (!root.sentence-mode-active) {
+                                        root.toggle-mode();
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 8px;
+
+                        GhostButton {
+                            label: "Open video…";
+                        }
+
+                        GhostButton {
+                            label: "Open subtitles…";
+                        }
+                    }
                 }
             }
 
-            VerticalLayout {
-                width: 320px;
+            HorizontalLayout {
+                padding: 16px;
+                spacing: 16px;
 
-                CurrentSentenceCard {
-                    sentence-label: root.sentence-label;
-                    sentence-text: root.sentence-text;
-                    has-sentence: root.has-current-sentence;
+                VerticalLayout {
+                    spacing: 8px;
+
+                    Rectangle {
+                        // Video frame area, filling the remaining column height.
+                        // Transparent while a video is loaded so the mpv underlay
+                        // shows through (see `video-loaded` above); otherwise
+                        // filled with the window background color as a
+                        // placeholder. Precise rounded corners land in a later
+                        // TODO.md step.
+                        background: root.video-loaded ? transparent : Palette.window-bg;
+                    }
+
+                    ScrubBar {
+                        current-time-label: root.current-time-label;
+                        duration-label: root.duration-label;
+                        progress: root.scrub-progress;
+                    }
+                }
+
+                VerticalLayout {
+                    width: 320px;
+
+                    CurrentSentenceCard {
+                        sentence-label: root.sentence-label;
+                        sentence-text: root.sentence-text;
+                        has-sentence: root.has-current-sentence;
+                    }
                 }
             }
+
+            if root.sentence-mode-active : HintBar {}
         }
     }
 }
