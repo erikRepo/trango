@@ -9,6 +9,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.28] - 2026-07-15
+
+### Fixed
+- `crates/app/src/main.rs`: cue-navigation seeking (arrow keys / sentence list) could break after "Generate subtitles" finished for the video already open and playing — generation can take long enough that a short video reaches EOF and idles mpv's core while it runs, and a seek issued to an idle core fails outright (mpv error `Raw(-12)`). `wire_open_subtitles_dialog`'s `subtitle-generated` handler now reloads the video (the same way opening it fresh does) once the newly generated subtitle is loaded, re-arming the sentence-by-sentence start-of-playback seek and recovering a normal, seekable state
+
+### Changed
+- `crates/app/src/main.rs`: `wire_open_subtitles_dialog` takes a `reload_video: impl Fn(&AppWindow, &Path, &PlayerState)` closure instead of needing a `Rc<video_player::VideoPlayer>` directly, so it stays testable without a real mpv render context (which `VideoPlayer::attach` needs and this module's tests don't have)
+
 ## [0.1.27] - 2026-07-15
 
 ### Added

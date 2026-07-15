@@ -272,3 +272,44 @@ was the concrete case that prompted this) degrades much more on small
 models than it does for English. `docs/src/usage/` recommends `medium` or
 `large-v3` for anything other than English as a result — this is
 documentation/guidance only, trango doesn't enforce or check it.
+
+## Generating subtitles for an already-open video reloads it
+
+Found through real end-to-end testing: generating subtitles for a video
+that's already open and playing (not just freshly opened) can leave
+cue-navigation (arrow keys / sentence list) permanently broken afterward
+— every seek fails with mpv error `Raw(-12)`. The cause: real
+transcription can take anywhere from seconds to minutes, and if the
+video is short, it can easily finish playing and reach EOF *during* that
+wait — mpv's core goes idle at EOF, and issuing a `seek` command to an
+idle core fails outright (this exact failure mode, and the same error
+code, is already documented on `video_player.rs`'s
+`apply_pending_start_seek`, which exists specifically to avoid it for the
+*initial* start-of-playback seek by polling until `time-pos` becomes
+readable rather than seeking immediately after `loadfile`).
+
+The `subtitle-generated` handler (`main.rs`'s `wire_open_subtitles_dialog`)
+didn't have an equivalent recovery step, since it doesn't call
+`load_video`/`loadfile` at all — it only updates `PlayerState`'s cues and
+`CurrentMedia`. The fix: after successfully loading the newly generated
+subtitle, it now also reloads the video via `video_player::VideoPlayer::load_video`
+(the same call `open_selected_video` makes when a video is first opened),
+which re-issues `loadfile` and re-arms the sentence-by-sentence
+start-of-playback seek through the already-correct, already-tested
+`apply_pending_start_seek` machinery — recovering a normal, seekable
+mpv core regardless of whether it had drifted to EOF during generation.
+
+This introduced a testability wrinkle: `wire_open_subtitles_dialog` now
+needs *some* way to trigger a video reload, but a real
+`video_player::VideoPlayer` can't be constructed in `main.rs`'s tests
+(`VideoPlayer::attach` needs a real mpv render context, which only comes
+alive once `window.run()` is actually driving the event loop, and this
+test suite's single shared `AppWindow` never calls it — see that test's
+own comment on why). So `wire_open_subtitles_dialog` takes a
+`reload_video: impl Fn(&AppWindow, &Path, &PlayerState)` closure instead
+of a `Rc<video_player::VideoPlayer>` directly: `main`'s real caller wraps
+`VideoPlayer::load_video`, while the test passes a closure that just
+records its arguments into a `Vec`, letting the test assert
+`wire_open_subtitles_dialog`'s own wiring (that a reload is triggered,
+with the correct video path) without needing a working mpv instance at
+all.

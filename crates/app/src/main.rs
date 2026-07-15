@@ -438,7 +438,18 @@ fn open_selected_video(
 /// as a picked translation is below. No model selected yet is a clear
 /// `Error` rather than an attempted run — the button is also disabled in
 /// that state (`AppWindow::whisper-model-selected`), this is the defensive
-/// fallback.
+/// fallback. `reload_video` is then called with the video's path — a
+/// generation run can take long enough (seconds to minutes) that a short
+/// video left playing may have already reached EOF and idled mpv's core by
+/// the time it finishes, which fails any subsequent cue-navigation seek
+/// outright (mpv error `Raw(-12)`, see `video_player.rs`'s
+/// `apply_pending_start_seek` doc comment); reloading the video the same
+/// way opening it fresh does recovers a normal, seekable state. Taking a
+/// plain closure here rather than a `Rc<video_player::VideoPlayer>`
+/// directly keeps this function testable without a real mpv render
+/// context, which `VideoPlayer::attach` needs and this module's tests
+/// don't have (see `main`'s caller for the real
+/// `VideoPlayer::load_video`-backed closure).
 ///
 /// `link-translation-requested` opens a nested `FileListDialog` picker
 /// (`open_subtitles_dialog::open_translation_picker`) over the video's
@@ -491,6 +502,7 @@ fn whisper_cli_generator(model_path: PathBuf) -> subtitle::WhisperCliGenerator {
 fn wire_open_subtitles_dialog(
     window: &AppWindow,
     state: &Rc<RefCell<PlayerState>>,
+    reload_video: impl Fn(&AppWindow, &Path, &PlayerState) + 'static,
     current_media: Rc<RefCell<CurrentMedia>>,
     selected_model: Rc<RefCell<Option<PathBuf>>>,
 ) {
@@ -543,6 +555,18 @@ fn wire_open_subtitles_dialog(
         let subtitle_path = PathBuf::from(subtitle_path.as_str());
         if load_subtitles(&window, &generated_state, &subtitle_path, None) {
             generated_media.borrow_mut().subtitle_path = Some(subtitle_path);
+            // Generation can take seconds to minutes (TODO.md Vaihe 21.5),
+            // during which the still-playing video may well have reached
+            // EOF and left mpv's core idle — a seek issued to an idle core
+            // fails outright (mpv error Raw(-12), see video_player.rs's
+            // apply_pending_start_seek doc comment). Reloading the video
+            // now, the same way opening it fresh does, re-arms the
+            // sentence-by-sentence start-of-playback seek onto the
+            // newly-loaded first cue and leaves mpv in a normal, seekable
+            // state again.
+            if let Some(video_path) = generated_media.borrow().video_path.clone() {
+                reload_video(&window, &video_path, &generated_state.borrow());
+            }
         }
     });
 
@@ -831,7 +855,14 @@ fn main() -> anyhow::Result<()> {
         window.set_whisper_model_name(model_picker::display_name(&model_path).into());
     }
     wire_model_picker(&window, Rc::clone(&selected_model));
-    wire_open_subtitles_dialog(&window, &player_state, current_media, selected_model);
+    let reload_video_player = Rc::clone(&video_player);
+    wire_open_subtitles_dialog(
+        &window,
+        &player_state,
+        move |window, video_path, state| reload_video_player.load_video(window, video_path, state),
+        current_media,
+        selected_model,
+    );
 
     window.run()?;
     Ok(())
@@ -1128,9 +1159,24 @@ mod tests {
             translation_path: None,
         }));
         let selected_model: Rc<RefCell<Option<PathBuf>>> = Rc::new(RefCell::new(None));
+        // wire_open_subtitles_dialog can't be given a real
+        // video_player::VideoPlayer here — VideoPlayer::attach needs a
+        // real render context that only exists once window.run() is
+        // driving the event loop, which this test never does (see this
+        // test's own comment on why). reload_calls instead records each
+        // call's video_path, standing in for a real VideoPlayer::load_video
+        // just well enough to verify wire_open_subtitles_dialog invokes it
+        // with the right argument (TODO.md Vaihe 21.6 bugfix below).
+        let reload_calls: Rc<RefCell<Vec<PathBuf>>> = Rc::new(RefCell::new(Vec::new()));
+        let reload_calls_for_closure = Rc::clone(&reload_calls);
         wire_open_subtitles_dialog(
             &window,
             &player_state,
+            move |_window, video_path, _state| {
+                reload_calls_for_closure
+                    .borrow_mut()
+                    .push(video_path.to_path_buf());
+            },
             Rc::clone(&current_media),
             Rc::clone(&selected_model),
         );
@@ -1244,11 +1290,30 @@ mod tests {
             &generated_path,
             None
         ));
-        current_media.borrow_mut().subtitle_path = Some(generated_path);
+        current_media.borrow_mut().subtitle_path = Some(generated_path.clone());
         assert_eq!(player_state.borrow().cues.len(), 1);
         assert_eq!(
             current_media.borrow().subtitle_path,
             Some(generate_video_path.with_extension("srt"))
+        );
+
+        // When:  the AppWindow::subtitle-generated signal fires (as the
+        //        real background-thread completion callback's
+        //        slint::invoke_from_event_loop closure invokes it, once
+        //        back on the UI thread — see wire_open_subtitles_dialog's
+        //        doc comment) with the generated path
+        // Then:  reload_video is called with the still-open video's path
+        //        (TODO.md Vaihe 21.6 bugfix: generation can take long
+        //        enough for the video to reach EOF and leave mpv's core
+        //        idle, so subsequent cue-navigation seeks need a fresh
+        //        loadfile — done by reloading the video here — to recover)
+        let subtitle_str = generated_path
+            .to_str()
+            .expect("fixture path should be valid UTF-8");
+        window.invoke_subtitle_generated(subtitle_str.into());
+        assert_eq!(
+            reload_calls.borrow().as_slice(),
+            std::slice::from_ref(&generate_video_path)
         );
 
         // When:  clicking the real "Generate subtitles" button
