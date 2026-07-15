@@ -9,6 +9,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.27] - 2026-07-15
+
+### Added
+- `subtitle::WhisperCliGenerator`: new `ffmpeg_path` field — `generate` now always extracts the video's audio to a temporary 16kHz mono WAV file with `ffmpeg` before handing it to `whisper-cli`, since whisper-cli only reads raw audio formats (`flac`/`mp3`/`ogg`/`wav`), not video containers, and previously exited 0 even when it silently failed to read one, surfacing as a misleading generic "no subtitle file was found" error (found via real end-to-end testing, see `docs/src/specs/`)
+- `crates/subtitle/src/generate.rs`: `run_command` retries briefly on a transient `ExecutableFileBusy` (`ETXTBSY`) — a race hit occasionally when running a binary immediately after writing it (this crate's own tests do exactly that against fake ffmpeg/whisper-cli scripts)
+- `tracing` added to the `subtitle` crate (`crates/subtitle/Cargo.toml`) for logging around the extraction/transcription steps; more `info!` logging around model selection and generation start in `crates/app/src/main.rs`
+- `docs/src/usage/`: `ffmpeg` install/requirement note and `TRANGO_FFMPEG_PATH`; `docs/src/specs/`: the audio-extraction bug/fix writeup and the test-design split (`extract_audio`/`run_whisper_cli` as separately testable private methods)
+
+### Changed
+- `crates/subtitle/src/generate.rs`: `WhisperCliGenerator::generate` is now a thin wrapper delegating to `extract_audio` + `run_whisper_cli`; existing whisper-cli tests moved to call `run_whisper_cli` directly (they were never testing audio extraction) and gained a new end-to-end test proving the two steps are actually wired together
+
 ## [0.1.26] - 2026-07-15
 
 ### Added

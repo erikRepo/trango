@@ -107,6 +107,57 @@ transcription. These tests are `#[cfg(unix)]`-only (the fake scripts need
 a POSIX shell and `chmod +x`); the "binary not found" and "video file
 missing" cases are platform-independent and run everywhere.
 
+### Audio extraction via ffmpeg — whisper-cli can't read most video containers
+
+Not caught by the fake-binary tests above (they never exercise real
+audio decoding) and only found once a real `whisper-cli` and a real
+video were tried together: `whisper-cli` only reads a handful of raw
+audio formats (its own `--help` says `flac, mp3, ogg, wav`) — not
+`.mp4`/`.mkv`/other video containers at all. Worse, when given an
+unsupported file it prints an error to stderr but still **exits 0**, so
+the original implementation's `output.status.success()` check reported
+success while `-osrt` never wrote anything — surfacing only as trango's
+generic "no subtitle file was found" `Error` message, with no indication
+of the real cause.
+
+The fix: `WhisperCliGenerator::generate` now always extracts the video's
+audio to a temporary 16kHz mono PCM WAV file with `ffmpeg` first
+(`extract_audio`, matching whisper.cpp's own examples' recommended
+format), then runs `whisper-cli` against that WAV file instead of the
+original video (`run_whisper_cli`, taking an `audio_path` parameter
+distinct from `video_path`). This is a second external process, `ffmpeg`
+— also not a Cargo dependency, same reasoning as `whisper-cli` itself,
+and about as close to universally preinstalled as an external tool gets.
+The temp WAV lives in `std::env::temp_dir()` under a process-and-call
+-unique name (`temp_audio_path`, a monotonic counter rather than
+wall-clock time, so back-to-back calls never collide) and is deleted
+after `generate` returns, success or failure.
+
+Splitting `generate` into `extract_audio` and `run_whisper_cli` (both
+private methods) also solved a test-design problem: the temp audio
+path's exact name can't be predicted from outside (by design, so
+concurrent generations never collide), so a test driving the public
+`generate` entry point can't assert on it directly. Most tests instead
+call `run_whisper_cli` directly with an arbitrary, test-chosen "audio"
+fixture path (standing in for whatever `extract_audio` would have
+produced) to check whisper-cli's own argument handling in isolation, and
+`extract_audio` gets its own tests the same way with a fake `ffmpeg`
+script. One further test (`test_generate_extracts_audio_before_running_whisper_cli`)
+proves the two are actually wired together correctly *without* needing
+to predict the temp path: the fake `ffmpeg` writes a fixed marker string
+as its "audio" output, and the fake `whisper-cli` refuses to proceed
+unless the file it receives via `-f` contains exactly that marker.
+
+One more thing found while testing this for real: writing a fresh fake
+binary and executing it milliseconds later occasionally raced with
+ETXTBSY ("text file busy") in the sandboxed environment these tests were
+developed in — the write's file handle not always visibly closed to a
+following `exec` yet. `run_command` (wrapping every `Command::output()`
+call in both `extract_audio` and `run_whisper_cli`) retries briefly on
+that specific error rather than the test suite intermittently failing;
+it's a generically reasonable thing for any external-process call to do
+regardless of environment, not just a test-only workaround.
+
 ### Background thread, not the UI thread
 
 Real transcription can take seconds to minutes, unlike the stub, so

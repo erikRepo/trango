@@ -452,21 +452,37 @@ fn open_selected_video(
 /// `select-whisper-model-requested` opens a second nested `FileListDialog`,
 /// wired by `wire_model_picker` — see its doc comment.
 ///
-/// Builds a `subtitle::WhisperCliGenerator` for `video_path` from
-/// `binary_path` (see `wire_model_picker`'s doc comment for why the model
-/// itself isn't read from an environment variable, unlike the binary) and
-/// `model_path`'s language (`model_picker::language_flag`).
+/// Builds a `subtitle::WhisperCliGenerator` for `model_path` (see
+/// `wire_model_picker`'s doc comment for why the model itself isn't read
+/// from an environment variable, unlike the binary paths below) and its
+/// inferred language (`model_picker::language_flag`).
 ///
 /// - `TRANGO_WHISPER_CLI_PATH` env var: path or bare name of the
 ///   `whisper-cli` binary. Defaults to `"whisper-cli"`, resolved via
 ///   `PATH` — see `docs/src/usage` for installing it.
+/// - `TRANGO_FFMPEG_PATH` env var: path or bare name of the `ffmpeg`
+///   binary `WhisperCliGenerator` uses to extract audio before handing it
+///   to `whisper-cli` (which can't read most video containers directly —
+///   see `WhisperCliGenerator`'s doc comment). Defaults to `"ffmpeg"`,
+///   resolved via `PATH`.
 fn whisper_cli_generator(model_path: PathBuf) -> subtitle::WhisperCliGenerator {
     let binary_path = std::env::var_os("TRANGO_WHISPER_CLI_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("whisper-cli"));
+    let ffmpeg_path = std::env::var_os("TRANGO_FFMPEG_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("ffmpeg"));
     let language = model_picker::language_flag(&model_path).to_string();
+    tracing::info!(
+        ?binary_path,
+        ?ffmpeg_path,
+        ?model_path,
+        %language,
+        "configured whisper-cli generator"
+    );
     subtitle::WhisperCliGenerator {
         binary_path,
+        ffmpeg_path,
         model_path: Some(model_path),
         language: Some(language),
     }
@@ -550,6 +566,7 @@ fn wire_open_subtitles_dialog(
             window.set_subtitle_generation_error_message("Select a whisper model first.".into());
             return;
         };
+        tracing::info!(?video_path, ?model_path, "subtitle generation requested");
         window.set_subtitle_generation_status(SubtitleGenerationStatus::Generating);
 
         // Only Send data may cross into the background thread and back via
@@ -739,6 +756,7 @@ fn wire_model_picker(window: &AppWindow, selected_model: Rc<RefCell<Option<PathB
         let Some(model) = model else {
             return;
         };
+        tracing::info!(model_path = ?model.path, model_name = %model.name, "whisper model selected");
         window.set_is_model_picker_dialog_open(false);
         window.set_whisper_model_selected(true);
         window.set_whisper_model_name(model.name.clone().into());

@@ -24,6 +24,18 @@ bundle or link against whisper.cpp itself (see `docs/src/specs/`'s
 **not** the `openai-whisper` Python package (its CLI is `whisper`, with
 different flags) — it specifically means whisper.cpp's own C++ binary.
 
+**`ffmpeg` is also required.** `whisper-cli` only reads a handful of raw
+audio formats (`flac`/`mp3`/`ogg`/`wav`) — not video containers like
+`.mp4`/`.mkv` at all, and it exits *successfully* even when it silently
+failed to read an unsupported file, which looked like a mysterious
+"no subtitle file was found" error before this was diagnosed. trango
+works around this by extracting the video's audio to a temporary WAV file
+with `ffmpeg` before handing it to `whisper-cli` — this is automatic, but
+`ffmpeg` needs to be installed and on `PATH` (or pointed at via
+`TRANGO_FFMPEG_PATH`, see below). It's extremely commonly preinstalled or
+a one-line install (`sudo apt install ffmpeg` / `brew install ffmpeg` /
+the [official builds](https://ffmpeg.org/download.html) for Windows).
+
 ### Installing whisper-cli
 
 **Linux:** Debian/Ubuntu ship a `whisper.cpp` package with `apt`:
@@ -84,11 +96,14 @@ without any manual navigation.
 
 ### Configuring trango
 
-**The whisper-cli binary** is configured through an environment
-variable, since it's a one-time system install path that rarely changes:
+**The whisper-cli and ffmpeg binaries** are configured through
+environment variables, since they're one-time system install paths that
+rarely change:
 
 - `TRANGO_WHISPER_CLI_PATH`: path (or bare name) of the `whisper-cli`
   binary to run. Defaults to `"whisper-cli"`, resolved via `PATH`.
+- `TRANGO_FFMPEG_PATH`: path (or bare name) of the `ffmpeg` binary used
+  for audio extraction. Defaults to `"ffmpeg"`, resolved via `PATH`.
 
 **The model**, on the other hand, is picked from inside the app — the
 Open Subtitles dialog's "select a whisper model…" row opens an in-app
