@@ -46,8 +46,9 @@ untouched.
 Unlike frame rendering, the scrub bar (current time / total time / progress
 fill + thumb) doesn't need to run inside the render loop — it just needs
 mpv's `time-pos` and `duration` properties on a steady cadence. `attach`
-starts a repeating `slint::Timer` (`SCRUB_BAR_POLL_INTERVAL`, 200ms) that
-calls `poll_scrub_bar`: it reads both properties with `Mpv::get_property`,
+starts a repeating `slint::Timer` (`SCRUB_BAR_POLL_INTERVAL`, 33ms — roughly
+display refresh rate) that calls `poll_scrub_bar`: it reads both properties
+with `Mpv::get_property`,
 formats them with `playback_state::format_time` (`MM:SS`, or `H:MM:SS` past
 the one-hour mark), and writes `current-time-label`, `duration-label`, and
 `scrub-progress` (a `0.0`–`1.0` fraction) on the `AppWindow`, which

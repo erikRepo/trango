@@ -9,6 +9,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.12] - 2026-07-15
+
+### Fixed
+- Scrub bar thumb visibly stepped/jumped forward instead of gliding, especially on short clips — `SCRUB_BAR_POLL_INTERVAL` dropped from 200ms to 33ms (mpv's `get_property` is an in-process read, cheap enough to poll near display refresh rate)
+
 ## [0.1.11] - 2026-07-15
 
 ### Added

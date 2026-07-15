@@ -39,9 +39,12 @@ use gl_proc_address_bridge::{
 use crate::AppWindow;
 
 /// How often the scrub bar's `Timer` re-reads mpv's `time-pos`/`duration`
-/// properties. Frequent enough for smooth-looking thumb/progress motion,
-/// without polling on every rendered frame.
-const SCRUB_BAR_POLL_INTERVAL: Duration = Duration::from_millis(200);
+/// properties. `Mpv::get_property` is an in-process read off mpv's own
+/// core state (no IPC, no disk I/O), so polling at roughly display refresh
+/// rate is cheap; 200ms made the thumb visibly step/jump forward instead of
+/// gliding, especially on short, sentence-length clips where each tick
+/// covers a larger fraction of the total duration.
+const SCRUB_BAR_POLL_INTERVAL: Duration = Duration::from_millis(33);
 
 /// `GL_DRAW_FRAMEBUFFER_BINDING` (== `GL_FRAMEBUFFER_BINDING`, same value in
 /// desktop GL and GLES) — queried each frame in [`render_frame`] rather than
