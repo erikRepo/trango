@@ -89,3 +89,21 @@ bottom hint bar are added in later `TODO.md` steps.
   sizing. The top bar's row sets `cross-axis-alignment: center;` so the
   segmented control and ghost buttons size to their own padding instead
   of filling the whole 52px bar.
+- No dashed-border support (`border-width`/`border-color` are solid-only)
+  — `EmptyFileRow` (`crates/app/src/open_subtitles_dialog.rs`'s empty
+  states) approximates the design mock's dashed empty-state rows with a
+  solid muted border instead.
+- **`DropArea`/`DragArea` (drag-and-drop, since 1.6ish) don't relay
+  external file drops from the OS.** `DropArea`'s `dropped` callback only
+  ever fires for drags started by an in-app `DragArea` — checked by
+  grepping `i-slint-backend-winit` 1.17.1's source for
+  `WindowEvent::DroppedFile`/`HoveredFile` handling: there is none. A file
+  dragged in from a file manager (Nautilus, Finder, Explorer) never
+  reaches `DropArea` at all on this backend. `DataTransfer`
+  (`event.data` in a `dropped` callback) is also currently limited to
+  plain text and images — no file/path payload type exists yet even for
+  the in-app case (see Slint's [drag-and-drop tracking
+  issue](https://github.com/slint-ui/slint/issues/1967)). This is why the
+  Open Subtitles dialog's translation-link feature (`TODO.md` Vaihe 19)
+  uses a small in-app file picker instead of README's drag-and-drop mock —
+  see `docs/src/specs/README.md`'s "Open Subtitles dialog" section.

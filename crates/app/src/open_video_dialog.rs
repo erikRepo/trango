@@ -9,7 +9,7 @@ use std::rc::Rc;
 
 use slint::VecModel;
 
-use crate::{AppWindow, OpenVideoRow};
+use crate::{AppWindow, FileListRow};
 
 /// Video file extensions recognized when listing a folder. README doesn't
 /// scope this further, so this covers the common containers a language
@@ -189,24 +189,24 @@ pub fn mark_selected(window: &AppWindow, entries: &[FolderEntry], selected_index
 /// navigable rows (no size label, never selected — clicking them navigates
 /// instead, handled in `main.rs`); the `Video` entry at `selected_index` (if
 /// any) is marked selected.
-fn dialog_rows(entries: &[FolderEntry], selected_index: i32) -> Vec<OpenVideoRow> {
+fn dialog_rows(entries: &[FolderEntry], selected_index: i32) -> Vec<FileListRow> {
     entries
         .iter()
         .enumerate()
         .map(|(index, entry)| match entry {
-            FolderEntry::Up(_) => OpenVideoRow {
+            FolderEntry::Up(_) => FileListRow {
                 name: "⬆ .. (up)".into(),
                 size_label: "".into(),
                 is_selected: false,
                 is_navigable: true,
             },
-            FolderEntry::Folder { name, .. } => OpenVideoRow {
+            FolderEntry::Folder { name, .. } => FileListRow {
                 name: format!("{name}/").into(),
                 size_label: "".into(),
                 is_selected: false,
                 is_navigable: true,
             },
-            FolderEntry::Video(video) => OpenVideoRow {
+            FolderEntry::Video(video) => FileListRow {
                 name: video.name.clone().into(),
                 size_label: video.size_label.clone().into(),
                 is_selected: usize::try_from(selected_index).ok() == Some(index),

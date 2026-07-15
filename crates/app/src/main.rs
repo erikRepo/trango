@@ -4,6 +4,7 @@
 //! `ui/app-window.slint`). libmpv integration and the rest of the UI are
 //! wired in later development steps (see `TODO.md`).
 
+mod open_subtitles_dialog;
 mod open_video_dialog;
 mod sentence_card;
 mod sentence_list;
@@ -204,19 +205,23 @@ fn parse_subtitle_file(path: &Path) -> Option<Vec<subtitle::Cue>> {
 /// Reads and parses `subtitle_path` into cues, merges in `translation_path`'s
 /// cues if given (via `subtitle::merge_translation`), loads the result into
 /// `state`, and mirrors the resulting current cue into the window's
-/// sentence card and sentence list. Leaves `state` untouched if
-/// `subtitle_path` can't be read or parsed, since a bad subtitle path
-/// shouldn't prevent the video from playing. A `translation_path` that
-/// can't be read or parsed is logged and simply skipped — the original
-/// cues still load, just without translations.
+/// sentence card and sentence list. Leaves `state` untouched and returns
+/// `false` if `subtitle_path` can't be read or parsed, since a bad
+/// subtitle path shouldn't prevent the video from playing — callers use
+/// the return value to decide whether to record `subtitle_path` as the
+/// video's linked original subtitle (see `main`'s and
+/// `open_selected_video`'s `CurrentMedia` tracking). A `translation_path`
+/// that can't be read or parsed is logged and simply skipped — the
+/// original cues still load, just without translations, and `true` is
+/// still returned since the original subtitle itself loaded fine.
 fn load_subtitles(
     window: &AppWindow,
     state: &Rc<RefCell<PlayerState>>,
     subtitle_path: &Path,
     translation_path: Option<&Path>,
-) {
+) -> bool {
     let Some(mut cues) = parse_subtitle_file(subtitle_path) else {
-        return;
+        return false;
     };
     if let Some(translation_path) = translation_path {
         if let Some(translation_cues) = parse_subtitle_file(translation_path) {
@@ -227,6 +232,26 @@ fn load_subtitles(
     state.borrow_mut().set_cues(cues);
     sentence_card::update_sentence_card(window, &state.borrow());
     sentence_list::update_sentence_list(window, &state.borrow());
+    true
+}
+
+/// Tracks the paths behind the currently open video/subtitle/translation.
+/// Nothing here drives playback directly (that's `PlayerState`/
+/// `video_player::VideoPlayer`) — it exists so the Open Subtitles dialog
+/// (Vaihe 19) knows what video it's scoped to and what's already linked,
+/// without re-deriving it from disk on every open. That matters because a
+/// CLI-loaded subtitle (`trango video.mp4 custom-name.srt`) may not share
+/// the video's filename stem, unlike an auto-matched one
+/// (`open_video_dialog::matching_subtitle_path`) — so "what's linked" isn't
+/// always re-derivable by searching disk alone.
+#[derive(Debug, Clone, Default)]
+struct CurrentMedia {
+    /// The currently open video's path, if any.
+    video_path: Option<PathBuf>,
+    /// The currently linked original-language subtitle's path, if any.
+    subtitle_path: Option<PathBuf>,
+    /// The currently linked translation subtitle's path, if any.
+    translation_path: Option<PathBuf>,
 }
 
 /// Resolves the folder the Open Video dialog lists by default: the CLI
@@ -261,6 +286,7 @@ fn wire_open_video_dialog(
     state: &Rc<RefCell<PlayerState>>,
     video_player: Rc<video_player::VideoPlayer>,
     default_folder: PathBuf,
+    current_media: Rc<RefCell<CurrentMedia>>,
 ) {
     let entries: Rc<RefCell<Vec<open_video_dialog::FolderEntry>>> =
         Rc::new(RefCell::new(Vec::new()));
@@ -309,6 +335,7 @@ fn wire_open_video_dialog(
     let confirm_window_weak = window.as_weak();
     let confirm_entries = Rc::clone(&entries);
     let confirm_state = Rc::clone(state);
+    let confirm_media = Rc::clone(&current_media);
     window.on_confirm_open_video(move || {
         let Some(window) = confirm_window_weak.upgrade() else {
             return;
@@ -324,7 +351,13 @@ fn wire_open_video_dialog(
             return;
         };
         window.set_is_open_video_dialog_open(false);
-        open_selected_video(&window, &confirm_state, &video_player, &video_path);
+        open_selected_video(
+            &window,
+            &confirm_state,
+            &video_player,
+            &video_path,
+            &confirm_media,
+        );
     });
 }
 
@@ -337,29 +370,181 @@ fn wire_open_video_dialog(
 /// otherwise — done before `load_video` so that, in `SentenceBySentence`
 /// mode, the start-of-playback pause lands on the new video's first cue
 /// rather than a stale one from a previously opened video. Called by
-/// `wire_open_video_dialog`'s `confirm-open-video` handler.
+/// `wire_open_video_dialog`'s `confirm-open-video` handler. Also resets
+/// `current_media` to the new video (clearing any translation link from a
+/// previously opened video), so the Open Subtitles dialog (Vaihe 19)
+/// reflects the newly opened video the next time it's shown.
 fn open_selected_video(
     window: &AppWindow,
     state: &Rc<RefCell<PlayerState>>,
     video_player: &video_player::VideoPlayer,
     video_path: &Path,
+    current_media: &Rc<RefCell<CurrentMedia>>,
 ) {
-    match open_video_dialog::matching_subtitle_path(video_path) {
-        Some(subtitle_path) => {
-            tracing::info!(
-                ?subtitle_path,
-                "auto-matched subtitle file for opened video"
-            );
-            load_subtitles(window, state, &subtitle_path, None);
-        }
-        None => {
-            state.borrow_mut().set_cues(Vec::new());
-            sentence_card::update_sentence_card(window, &state.borrow());
-            sentence_list::update_sentence_list(window, &state.borrow());
-        }
+    let subtitle_path = open_video_dialog::matching_subtitle_path(video_path);
+    let mut subtitle_loaded = false;
+    if let Some(subtitle_path) = &subtitle_path {
+        tracing::info!(
+            ?subtitle_path,
+            "auto-matched subtitle file for opened video"
+        );
+        subtitle_loaded = load_subtitles(window, state, subtitle_path, None);
+    }
+    if !subtitle_loaded {
+        state.borrow_mut().set_cues(Vec::new());
+        sentence_card::update_sentence_card(window, &state.borrow());
+        sentence_list::update_sentence_list(window, &state.borrow());
     }
 
+    *current_media.borrow_mut() = CurrentMedia {
+        video_path: Some(video_path.to_path_buf()),
+        subtitle_path: subtitle_loaded.then_some(subtitle_path).flatten(),
+        translation_path: None,
+    };
+
     video_player.load_video(window, video_path, &state.borrow());
+}
+
+/// Wires the Open Subtitles dialog (Vaihe 19): the top bar's
+/// `open-subtitles-dialog-requested` callback resolves the current video's
+/// original-language subtitle — `current_media`'s tracked path, falling
+/// back to a same-stem `.srt` search (`open_video_dialog::matching_subtitle_path`)
+/// for the case a CLI-loaded subtitle didn't get tracked with a matching
+/// name — and opens the modal (`open_subtitles_dialog::open_dialog`).
+/// `cancel`/`confirm-open-subtitles-dialog` (backdrop/✕/Cancel/Done) just
+/// close it: both sections are already live the moment they're linked, not
+/// deferred to "Done" (see `AppWindow`'s doc comment on those callbacks).
+/// `generate-subtitles-requested` is a stub (`TODO.md` Vaihe 20 wires it to
+/// real generation).
+///
+/// `link-translation-requested` opens a nested `FileListDialog` picker
+/// (`open_subtitles_dialog::open_translation_picker`) over the video's
+/// folder's `.srt` files — real OS drag-and-drop isn't available with
+/// Slint 1.17.1's winit backend, see `open_subtitles_dialog`'s module doc.
+/// Picking a row there and confirming re-merges cues with the new
+/// translation via `load_subtitles`, updates `current_media`, and mirrors
+/// the pick back into the (still-open) Open Subtitles dialog's translation
+/// row (`open_subtitles_dialog::mark_translation_linked`).
+fn wire_open_subtitles_dialog(
+    window: &AppWindow,
+    state: &Rc<RefCell<PlayerState>>,
+    current_media: Rc<RefCell<CurrentMedia>>,
+) {
+    let request_window_weak = window.as_weak();
+    let request_media = Rc::clone(&current_media);
+    window.on_open_subtitles_dialog_requested(move || {
+        let Some(window) = request_window_weak.upgrade() else {
+            return;
+        };
+        let media = request_media.borrow();
+        let Some(video_path) = media.video_path.clone() else {
+            tracing::warn!("Open subtitles requested with no video open");
+            return;
+        };
+        let original_path = media
+            .subtitle_path
+            .clone()
+            .or_else(|| open_video_dialog::matching_subtitle_path(&video_path));
+        open_subtitles_dialog::open_dialog(
+            &window,
+            &video_path,
+            &open_subtitles_dialog::SubtitleLinks {
+                original_path,
+                translation_path: media.translation_path.clone(),
+            },
+        );
+    });
+
+    let cancel_window_weak = window.as_weak();
+    window.on_cancel_open_subtitles_dialog(move || {
+        if let Some(window) = cancel_window_weak.upgrade() {
+            window.set_is_open_subtitles_dialog_open(false);
+        }
+    });
+
+    let confirm_window_weak = window.as_weak();
+    window.on_confirm_open_subtitles_dialog(move || {
+        if let Some(window) = confirm_window_weak.upgrade() {
+            window.set_is_open_subtitles_dialog_open(false);
+        }
+    });
+
+    window.on_generate_subtitles_requested(|| {
+        tracing::info!("subtitle generation requested (stub — see TODO.md Vaihe 20)");
+    });
+
+    let link_entries: Rc<RefCell<Vec<PathBuf>>> = Rc::new(RefCell::new(Vec::new()));
+
+    let link_window_weak = window.as_weak();
+    let link_media = Rc::clone(&current_media);
+    let link_request_entries = Rc::clone(&link_entries);
+    window.on_link_translation_requested(move || {
+        let Some(window) = link_window_weak.upgrade() else {
+            return;
+        };
+        let Some(video_path) = link_media.borrow().video_path.clone() else {
+            return;
+        };
+        let Some(folder) = video_path.parent().map(Path::to_path_buf) else {
+            return;
+        };
+        let entries = open_subtitles_dialog::list_srt_files(&folder);
+        open_subtitles_dialog::open_translation_picker(&window, &folder, &entries);
+        *link_request_entries.borrow_mut() = entries;
+    });
+
+    let link_select_window_weak = window.as_weak();
+    let link_select_entries = Rc::clone(&link_entries);
+    window.on_select_link_translation_row(move |index| {
+        let Some(window) = link_select_window_weak.upgrade() else {
+            return;
+        };
+        window.set_link_translation_selected_index(index);
+        open_subtitles_dialog::mark_translation_selected(
+            &window,
+            &link_select_entries.borrow(),
+            index,
+        );
+    });
+
+    let link_cancel_window_weak = window.as_weak();
+    window.on_cancel_link_translation_dialog(move || {
+        if let Some(window) = link_cancel_window_weak.upgrade() {
+            window.set_is_link_translation_dialog_open(false);
+        }
+    });
+
+    let link_confirm_window_weak = window.as_weak();
+    let link_confirm_entries = Rc::clone(&link_entries);
+    let link_confirm_state = Rc::clone(state);
+    let link_confirm_media = Rc::clone(&current_media);
+    window.on_confirm_link_translation(move || {
+        let Some(window) = link_confirm_window_weak.upgrade() else {
+            return;
+        };
+        let translation_path = usize::try_from(window.get_link_translation_selected_index())
+            .ok()
+            .and_then(|index| link_confirm_entries.borrow().get(index).cloned());
+        let Some(translation_path) = translation_path else {
+            return;
+        };
+        window.set_is_link_translation_dialog_open(false);
+
+        let original_path = link_confirm_media.borrow().subtitle_path.clone();
+        let Some(original_path) = original_path else {
+            tracing::warn!("cannot link a translation without an original subtitle loaded");
+            return;
+        };
+        if load_subtitles(
+            &window,
+            &link_confirm_state,
+            &original_path,
+            Some(&translation_path),
+        ) {
+            link_confirm_media.borrow_mut().translation_path = Some(translation_path.clone());
+            open_subtitles_dialog::mark_translation_linked(&window, &translation_path);
+        }
+    });
 }
 
 fn main() -> anyhow::Result<()> {
@@ -373,15 +558,22 @@ fn main() -> anyhow::Result<()> {
     sentence_card::update_sentence_card(&window, &player_state.borrow());
     sentence_list::update_sentence_list(&window, &player_state.borrow());
 
+    let current_media = Rc::new(RefCell::new(CurrentMedia::default()));
+
     let args: Vec<String> = std::env::args().collect();
     if let Some(subtitle_path) = subtitle_path_from_args(&args) {
         let translation_path = translation_path_from_args(&args);
-        load_subtitles(
+        let loaded = load_subtitles(
             &window,
             &player_state,
             &subtitle_path,
             translation_path.as_deref(),
         );
+        if loaded {
+            let mut media = current_media.borrow_mut();
+            media.subtitle_path = Some(subtitle_path);
+            media.translation_path = translation_path;
+        }
     }
 
     let video_path = video_path_from_args(&args);
@@ -390,6 +582,7 @@ fn main() -> anyhow::Result<()> {
             "no video path given; use the \"Open video…\" button or run as `trango <path/to/video>`"
         );
     }
+    current_media.borrow_mut().video_path = video_path.clone();
     let video_player = Rc::new(video_player::VideoPlayer::attach(
         &window,
         video_path.as_deref(),
@@ -402,7 +595,9 @@ fn main() -> anyhow::Result<()> {
         &player_state,
         Rc::clone(&video_player),
         default_video_folder(&args),
+        Rc::clone(&current_media),
     );
+    wire_open_subtitles_dialog(&window, &player_state, current_media);
 
     window.run()?;
     Ok(())
@@ -684,5 +879,73 @@ mod tests {
         // Then:  the dialog closes
         window.set_is_open_video_dialog_open(false);
         assert!(!window.get_is_open_video_dialog_open());
+
+        // When:  wiring the Open Subtitles dialog (Vaihe 19) for a video
+        //        whose original subtitle is already tracked as linked, and
+        //        requesting it via the top bar's "Open subtitles…" button
+        // Then:  the modal opens titled after the video, with the original
+        //        section linked and the translation section still empty
+        //        (no translation tracked yet)
+        let sample_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../test-media/sample");
+        let current_media = Rc::new(RefCell::new(CurrentMedia {
+            video_path: Some(sample_dir.join("sample.mp4")),
+            subtitle_path: Some(subtitle_path.clone()),
+            translation_path: None,
+        }));
+        wire_open_subtitles_dialog(&window, &player_state, Rc::clone(&current_media));
+
+        window.invoke_open_subtitles_dialog_requested();
+        assert!(window.get_is_open_subtitles_dialog_open());
+        assert_eq!(
+            window.get_open_subtitles_title(),
+            "Subtitles for sample.mp4"
+        );
+        assert!(window.get_open_subtitles_original_linked());
+        assert_eq!(window.get_open_subtitles_original_name(), "sample.srt");
+        assert!(!window.get_open_subtitles_translation_linked());
+
+        // When:  requesting the translation-link file picker (replacing
+        //        README's OS drag-and-drop — see open_subtitles_dialog's
+        //        module doc for why)
+        // Then:  it lists both .srt files next to the video, sorted by name
+        window.invoke_link_translation_requested();
+        assert!(window.get_is_link_translation_dialog_open());
+        let picker_rows = window.get_link_translation_rows();
+        assert_eq!(picker_rows.row_count(), 2);
+        assert_eq!(
+            picker_rows.row_data(0).expect("row 0 exists").name,
+            "sample.fi.srt"
+        );
+        assert_eq!(
+            picker_rows.row_data(1).expect("row 1 exists").name,
+            "sample.srt"
+        );
+
+        // When:  selecting sample.fi.srt and confirming, as a row
+        //        click + the picker's "Link" button do
+        // Then:  the picker closes, cues re-merge with the picked
+        //        translation, and the Open Subtitles dialog's translation
+        //        row reflects the new link
+        window.invoke_select_link_translation_row(0);
+        window.invoke_confirm_link_translation();
+        assert!(!window.get_is_link_translation_dialog_open());
+        assert_eq!(
+            window.get_translation_text(),
+            "Tervetuloa Trango Playeriin."
+        );
+        assert!(window.get_open_subtitles_translation_linked());
+        assert_eq!(
+            window.get_open_subtitles_translation_name(),
+            "sample.fi.srt"
+        );
+        assert_eq!(
+            current_media.borrow().translation_path,
+            Some(sample_dir.join("sample.fi.srt"))
+        );
+
+        // When:  closing the Open Subtitles dialog, as footer "Done" does
+        // Then:  it closes
+        window.invoke_confirm_open_subtitles_dialog();
+        assert!(!window.get_is_open_subtitles_dialog_open());
     }
 }

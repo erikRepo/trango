@@ -97,8 +97,9 @@ component ToggleSwitch {
 }
 
 /// A bordered, no-fill "Open video…" / "Open subtitles…" top bar button.
-/// "Open video…" is wired to the Open Video dialog (Vaihe 18, see
-/// `OpenVideoDialog` below); "Open subtitles…" stays static until Vaihe 19.
+/// "Open video…" is wired to the Open Video dialog (Vaihe 18); "Open
+/// subtitles…" to the Open Subtitles dialog (Vaihe 19) — both are
+/// `FileListDialog` instances, see below.
 component GhostButton {
     in property <string> label;
     callback clicked;
@@ -310,37 +311,43 @@ component SentenceListCard inherits Rectangle {
     }
 }
 
-/// One row in the Open Video dialog's listing: either a navigable row (the
+/// One row in a `FileListDialog` listing: either a navigable row (the
 /// "‥ Up" row or a subfolder — `is-navigable`, no `size-label`, never
 /// `is-selected`; clicking it navigates the dialog to a different folder)
-/// or a selectable video file (`is-selected` driving the accent-tinted
+/// or a selectable file (`is-selected` driving the accent-tinted
 /// background/chip color). Set from Rust in
-/// `crates/app/src/open_video_dialog.rs`.
-struct OpenVideoRow {
+/// `crates/app/src/open_video_dialog.rs` (video files, with folder
+/// navigation) and `crates/app/src/open_subtitles_dialog.rs` (translation
+/// `.srt` files, flat — see `FileListDialog`'s doc comment on why the same
+/// row shape covers both).
+struct FileListRow {
     name: string,
     size-label: string,
     is-selected: bool,
     is-navigable: bool,
 }
 
-/// The Open Video dialog (`TODO.md` Vaihe 18): a modal overlay listing a
-/// folder's video files and subfolders — pixel reference
-/// `sketch/design_reference.dc.html#2a`, left mock (extended here with
-/// in-dialog folder navigation, not shown in that static mock) — no
-/// OS-native file/folder picker, an in-app list instead.
-/// `folder-label`/`rows`/`selected-index` are set from Rust
-/// (`crates/app/src/open_video_dialog.rs`) when the top bar's "Open
-/// video…" button is clicked, and again whenever a navigable row changes
-/// the listed folder. Clicking a row emits `row-clicked` with its index —
-/// `main.rs` decides whether that navigates (an `Up`/`Folder` row) or
-/// selects (a video row); the backdrop, header "✕", and footer "Cancel"
-/// all emit `cancel`; footer "Open" emits `confirm` (a no-op while nothing
-/// is selected) — `main.rs`'s `wire_open_video_dialog` wires all three to
-/// `AppWindow`'s matching callbacks, `confirm` also loading the selected
-/// file.
-component OpenVideoDialog {
+/// A generic file-picker modal: header (`title` + "✕"), a scrollable list
+/// of `rows` under `folder-label`, and a footer with "Cancel" + a filled
+/// `confirm-label` button. Used for both the Open Video dialog (`TODO.md`
+/// Vaihe 18 — pixel reference `sketch/design_reference.dc.html#2a`, left
+/// mock, extended here with in-dialog folder navigation not shown in that
+/// static mock) and the Open Subtitles dialog's translation-link picker
+/// (Vaihe 19, see `OpenSubtitlesDialog` below) — both are "browse a
+/// folder's files and pick one", just scoped to different extensions and
+/// (for the video dialog only) with subfolder navigation.
+/// `folder-label`/`rows`/`selected-index` are set from Rust when the
+/// dialog opens and again whenever a navigable row changes the listed
+/// folder. Clicking a row emits `row-clicked` with its index — the Rust
+/// side decides whether that navigates (an `Up`/`Folder` row) or selects
+/// (a file row); the backdrop, header "✕", and footer "Cancel" all emit
+/// `cancel`; footer `confirm-label` emits `confirm` (a no-op while nothing
+/// is selected).
+component FileListDialog {
+    in property <string> title;
+    in property <string> confirm-label;
     in property <string> folder-label;
-    in property <[OpenVideoRow]> rows: [];
+    in property <[FileListRow]> rows: [];
     in property <int> selected-index: -1;
     callback row-clicked(int);
     callback cancel();
@@ -387,7 +394,7 @@ component OpenVideoDialog {
                         cross-axis-alignment: center;
 
                         Text {
-                            text: "Open video file";
+                            text: root.title;
                             color: Palette.primary-text;
                             font-family: "Inter";
                             font-size: 15px;
@@ -531,7 +538,7 @@ component OpenVideoDialog {
                                 padding-bottom: 8px;
 
                                 Text {
-                                    text: "Open";
+                                    text: root.confirm-label;
                                     color: white;
                                     font-family: "Inter";
                                     font-size: 12px;
@@ -677,6 +684,372 @@ component ScrubBar {
     }
 }
 
+/// A subtitle file already linked to the video: small accent chip + name +
+/// muted "linked" tag. Used by `OpenSubtitlesDialog` for both the
+/// original-language and translation sections once a file is set — per
+/// README, both get "the same visual treatment" once linked.
+component LinkedFileRow {
+    in property <string> file-name;
+
+    Rectangle {
+        border-radius: 7px;
+        background: Palette.accent.with-alpha(0.14);
+
+        HorizontalLayout {
+            padding-left: 12px;
+            padding-right: 12px;
+            padding-top: 10px;
+            padding-bottom: 10px;
+            spacing: 10px;
+            cross-axis-alignment: center;
+
+            Rectangle {
+                width: 24px;
+                height: 18px;
+                border-radius: 3px;
+                background: Palette.accent;
+            }
+
+            Text {
+                text: root.file-name;
+                color: Palette.primary-text;
+                font-family: "Inter";
+                font-size: 13px;
+                font-weight: 500;
+                horizontal-stretch: 1;
+                overflow: elide;
+            }
+
+            Text {
+                text: "linked";
+                color: Palette.muted-text;
+                font-family: "JetBrains Mono";
+                font-size: 11px;
+                font-weight: 500;
+            }
+        }
+    }
+}
+
+/// An unlinked-file placeholder row: muted border, `label` text — used by
+/// `OpenSubtitlesDialog`'s original section (no subtitle found) and
+/// translation section (nothing linked yet). Pixel reference
+/// `sketch/design_reference.dc.html#2a`'s dashed empty state; Slint has no
+/// dashed-border support, so this approximates it with a solid muted
+/// border instead.
+component EmptyFileRow {
+    in property <string> label;
+
+    Rectangle {
+        border-width: 1.5px;
+        border-radius: 7px;
+        border-color: Palette.chip-muted;
+
+        HorizontalLayout {
+            padding-left: 14px;
+            padding-right: 14px;
+            padding-top: 12px;
+            padding-bottom: 12px;
+
+            Text {
+                text: root.label;
+                color: Palette.muted-text;
+                font-family: "Inter";
+                font-size: 13px;
+                font-weight: 500;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
+/// The Open Subtitles dialog (`TODO.md` Vaihe 19): a modal scoped to the
+/// currently open video — pixel reference
+/// `sketch/design_reference.dc.html#2a`, right mock. `title`/
+/// `original-linked`/`original-name`/`translation-linked`/`translation-name`
+/// are set from Rust (`crates/app/src/open_subtitles_dialog.rs`) when the
+/// top bar's "Open subtitles…" button is clicked. The original-language
+/// section shows a `LinkedFileRow` if found on disk, else an
+/// `EmptyFileRow` + filled "Generate subtitles" button (a stub —
+/// `generate-subtitles` — until `TODO.md` Vaihe 20). The translation
+/// section always shows either state too, plus a small "link…" text below
+/// it — clicking either opens `main.rs`'s link-translation file picker
+/// (`link-translation`), since real OS drag-and-drop isn't available (see
+/// `AppWindow`'s `link-translation-requested` doc comment). Backdrop,
+/// header "✕", and footer "Cancel" all emit `cancel`; footer "Done" emits
+/// `confirm` — both just close the modal, see `AppWindow`'s
+/// `cancel-open-subtitles-dialog`/`confirm-open-subtitles-dialog` doc
+/// comment for why nothing more needs to happen on "Done".
+component OpenSubtitlesDialog {
+    in property <string> title;
+    in property <bool> original-linked;
+    in property <string> original-name;
+    in property <bool> translation-linked;
+    in property <string> translation-name;
+    callback generate-subtitles();
+    callback link-translation();
+    callback cancel();
+    callback confirm();
+
+    Rectangle {
+        background: rgba(0, 0, 0, 0.55);
+
+        TouchArea {
+            clicked => { root.cancel(); }
+        }
+
+        Rectangle {
+            width: 640px;
+            height: 420px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: Palette.modal-bg;
+            border-width: 1px;
+            border-radius: 12px;
+            border-color: Palette.border;
+            drop-shadow-color: rgba(0, 0, 0, 0.6);
+            drop-shadow-blur: 40px;
+            drop-shadow-offset-y: 16px;
+            clip: true;
+
+            TouchArea {
+                // Swallows clicks inside the card so they don't fall
+                // through to the backdrop's cancel handler above.
+            }
+
+            VerticalLayout {
+                Rectangle {
+                    height: 52px;
+                    border-width: 1px;
+                    border-color: Palette.border;
+
+                    HorizontalLayout {
+                        padding-left: 20px;
+                        padding-right: 20px;
+                        alignment: space-between;
+                        cross-axis-alignment: center;
+
+                        Text {
+                            text: root.title;
+                            color: Palette.primary-text;
+                            font-family: "Inter";
+                            font-size: 15px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+
+                        TouchArea {
+                            width: 20px;
+                            height: 20px;
+                            clicked => { root.cancel(); }
+
+                            Text {
+                                text: "✕";
+                                color: Palette.muted-text;
+                                font-family: "Inter";
+                                font-size: 16px;
+                                font-weight: 600;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    vertical-stretch: 1;
+                    padding: 20px;
+                    spacing: 16px;
+
+                    VerticalLayout {
+                        spacing: 8px;
+
+                        Text {
+                            text: "Original subtitle";
+                            color: Palette.muted-text;
+                            font-family: "JetBrains Mono";
+                            font-size: 10px;
+                            font-weight: 600;
+                            letter-spacing: 0.8px;
+                        }
+
+                        if root.original-linked : LinkedFileRow {
+                            file-name: root.original-name;
+                        }
+
+                        if !root.original-linked : Rectangle {
+                            border-width: 1.5px;
+                            border-radius: 7px;
+                            border-color: Palette.chip-muted;
+
+                            HorizontalLayout {
+                                padding-left: 14px;
+                                padding-right: 14px;
+                                padding-top: 10px;
+                                padding-bottom: 10px;
+                                alignment: space-between;
+                                cross-axis-alignment: center;
+
+                                Text {
+                                    text: "No subtitle file found";
+                                    color: Palette.muted-text;
+                                    font-family: "Inter";
+                                    font-size: 13px;
+                                    font-weight: 500;
+                                    vertical-alignment: center;
+                                }
+
+                                Rectangle {
+                                    border-radius: 6px;
+                                    background: Palette.accent;
+
+                                    HorizontalLayout {
+                                        padding-left: 14px;
+                                        padding-right: 14px;
+                                        padding-top: 8px;
+                                        padding-bottom: 8px;
+
+                                        Text {
+                                            text: "Generate subtitles";
+                                            color: white;
+                                            font-family: "Inter";
+                                            font-size: 12px;
+                                            font-weight: 600;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+
+                                    TouchArea {
+                                        clicked => { root.generate-subtitles(); }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    VerticalLayout {
+                        spacing: 6px;
+
+                        Text {
+                            text: "Translation";
+                            color: Palette.muted-text;
+                            font-family: "JetBrains Mono";
+                            font-size: 10px;
+                            font-weight: 600;
+                            letter-spacing: 0.8px;
+                        }
+
+                        if root.translation-linked : LinkedFileRow {
+                            file-name: root.translation-name;
+                        }
+
+                        if !root.translation-linked : EmptyFileRow {
+                            label: "No translation linked";
+                        }
+
+                        Rectangle {
+                            HorizontalLayout {
+                                Text {
+                                    text: root.translation-linked
+                                        ? "change linked translation file…"
+                                        : "click to link a translation .srt file";
+                                    color: Palette.accent;
+                                    font-family: "Inter";
+                                    font-size: 11px;
+                                    font-weight: 500;
+                                }
+                            }
+
+                            TouchArea {
+                                clicked => { root.link-translation(); }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        height: 1px;
+                        background: Palette.border;
+                    }
+
+                    Text {
+                        text: "Generating uses on-device speech recognition — no upload.";
+                        color: Palette.muted-text;
+                        font-family: "Inter";
+                        font-size: 12px;
+                        font-weight: 500;
+                        wrap: word-wrap;
+                    }
+                }
+
+                Rectangle {
+                    height: 60px;
+                    border-width: 1px;
+                    border-color: Palette.border;
+
+                    HorizontalLayout {
+                        padding-left: 20px;
+                        padding-right: 20px;
+                        alignment: end;
+                        spacing: 10px;
+                        cross-axis-alignment: center;
+
+                        Rectangle {
+                            border-width: 1px;
+                            border-radius: 6px;
+                            border-color: Palette.border;
+
+                            HorizontalLayout {
+                                padding-left: 16px;
+                                padding-right: 16px;
+                                padding-top: 8px;
+                                padding-bottom: 8px;
+
+                                Text {
+                                    text: "Cancel";
+                                    color: Palette.ghost-text;
+                                    font-family: "Inter";
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            TouchArea {
+                                clicked => { root.cancel(); }
+                            }
+                        }
+
+                        Rectangle {
+                            border-radius: 6px;
+                            background: Palette.accent;
+
+                            HorizontalLayout {
+                                padding-left: 16px;
+                                padding-right: 16px;
+                                padding-top: 8px;
+                                padding-bottom: 8px;
+
+                                Text {
+                                    text: "Done";
+                                    color: white;
+                                    font-family: "Inter";
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            TouchArea {
+                                clicked => { root.confirm(); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 export component AppWindow inherits Window {
     in property <string> version;
     in property <bool> sentence-mode-active: false;
@@ -723,10 +1096,10 @@ export component AppWindow inherits Window {
     // same navigation call arrow keys drive.
     callback jump-to-cue(int);
     // Open Video dialog state (TODO.md Vaihe 18), set from Rust by
-    // crates/app/src/open_video_dialog.rs — see OpenVideoDialog above.
+    // crates/app/src/open_video_dialog.rs — see FileListDialog above.
     in property <bool> is-open-video-dialog-open: false;
     in property <string> open-video-folder-label: "";
-    in property <[OpenVideoRow]> open-video-rows: [];
+    in property <[FileListRow]> open-video-rows: [];
     in property <int> open-video-selected-index: -1;
     // Invoked by the top bar's "Open video…" GhostButton; wired in main.rs's
     // wire_open_video_dialog to list the default folder's video files and
@@ -739,6 +1112,43 @@ export component AppWindow inherits Window {
     callback select-open-video-row(int);
     // Invoked by the dialog's "Open" button — loads the selected file.
     callback confirm-open-video();
+    // Open Subtitles dialog state (TODO.md Vaihe 19), set from Rust by
+    // crates/app/src/open_subtitles_dialog.rs — see OpenSubtitlesDialog
+    // below.
+    in property <bool> is-open-subtitles-dialog-open: false;
+    in property <string> open-subtitles-title: "";
+    in property <bool> open-subtitles-original-linked: false;
+    in property <string> open-subtitles-original-name: "";
+    in property <bool> open-subtitles-translation-linked: false;
+    in property <string> open-subtitles-translation-name: "";
+    // Invoked by the top bar's "Open subtitles…" GhostButton.
+    callback open-subtitles-dialog-requested();
+    // Invoked by the dialog's backdrop click / "✕" / "Cancel" / "Done" —
+    // all just close it: the original subtitle (if found) is already
+    // loaded by the time the dialog opens, and a linked translation is
+    // applied immediately when picked (see link-translation-requested
+    // below), so there's nothing left to apply on "Done".
+    callback cancel-open-subtitles-dialog();
+    callback confirm-open-subtitles-dialog();
+    // Invoked by the original-language section's "Generate subtitles"
+    // button — a stub until TODO.md Vaihe 20 wires up real generation.
+    callback generate-subtitles-requested();
+    // Invoked by the translation section's "click to link…" text. Opens
+    // the link-translation file picker below rather than accepting an
+    // OS-level file drop like the design mock: Slint 1.17.1's winit
+    // backend doesn't relay external file drops to `DropArea`, only
+    // in-app `DragArea` sources, of which this dialog has none.
+    callback link-translation-requested();
+    // The translation-link file picker (a FileListDialog scoped to the
+    // video's folder's .srt files), set from Rust by
+    // crates/app/src/open_subtitles_dialog.rs.
+    in property <bool> is-link-translation-dialog-open: false;
+    in property <string> link-translation-folder-label: "";
+    in property <[FileListRow]> link-translation-rows: [];
+    in property <int> link-translation-selected-index: -1;
+    callback select-link-translation-row(int);
+    callback cancel-link-translation-dialog();
+    callback confirm-link-translation();
 
     title: "TrangoPlayer v" + version;
     width: 960px;
@@ -851,6 +1261,7 @@ export component AppWindow inherits Window {
 
                         GhostButton {
                             label: "Open subtitles…";
+                            clicked => { root.open-subtitles-dialog-requested(); }
                         }
                     }
                 }
@@ -906,15 +1317,47 @@ export component AppWindow inherits Window {
             if root.sentence-mode-active : HintBar {}
         }
 
-        if root.is-open-video-dialog-open : OpenVideoDialog {
+        if root.is-open-video-dialog-open : FileListDialog {
             width: parent.width;
             height: parent.height;
+            title: "Open video file";
+            confirm-label: "Open";
             folder-label: root.open-video-folder-label;
             rows: root.open-video-rows;
             selected-index: root.open-video-selected-index;
             row-clicked(index) => { root.select-open-video-row(index); }
             cancel => { root.cancel-open-video-dialog(); }
             confirm => { root.confirm-open-video(); }
+        }
+
+        if root.is-open-subtitles-dialog-open : OpenSubtitlesDialog {
+            width: parent.width;
+            height: parent.height;
+            title: root.open-subtitles-title;
+            original-linked: root.open-subtitles-original-linked;
+            original-name: root.open-subtitles-original-name;
+            translation-linked: root.open-subtitles-translation-linked;
+            translation-name: root.open-subtitles-translation-name;
+            generate-subtitles => { root.generate-subtitles-requested(); }
+            link-translation => { root.link-translation-requested(); }
+            cancel => { root.cancel-open-subtitles-dialog(); }
+            confirm => { root.confirm-open-subtitles-dialog(); }
+        }
+
+        // Rendered after OpenSubtitlesDialog so it layers on top when both
+        // are open — the translation-link picker is reached from inside
+        // the already-open Open Subtitles dialog.
+        if root.is-link-translation-dialog-open : FileListDialog {
+            width: parent.width;
+            height: parent.height;
+            title: "Link translation subtitle";
+            confirm-label: "Link";
+            folder-label: root.link-translation-folder-label;
+            rows: root.link-translation-rows;
+            selected-index: root.link-translation-selected-index;
+            row-clicked(index) => { root.select-link-translation-row(index); }
+            cancel => { root.cancel-link-translation-dialog(); }
+            confirm => { root.confirm-link-translation(); }
         }
     }
 }

@@ -9,6 +9,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.23] - 2026-07-15
+
+### Added
+- `crates/app/src/open_subtitles_dialog.rs`: Open Subtitles dialog (`TODO.md` Vaihe 19) — `open_dialog` shows the video's original-language subtitle as a linked row if found (or the empty "No subtitle file found" state + a stub "Generate subtitles" button, real generation lands in Vaihe 20) and its translation the same way; `list_srt_files` lists a folder's `.srt` files for the translation-link file picker. README specs linking the translation via OS drag-and-drop, but Slint 1.17.1's winit backend doesn't relay external file drops to `DropArea` (only in-app `DragArea` sources, of which this dialog has none) — linking instead goes through a small in-app picker reusing the Open Video dialog's file-list chrome
+- `app-window.slint`: `OpenVideoDialog` generalized into `FileListDialog` (`title`/`confirm-label` properties), reused by both the Open Video dialog and the new translation-link picker; `OpenVideoRow` renamed `FileListRow` to match. New `OpenSubtitlesDialog` component (pixel reference `sketch/design_reference.dc.html#2a`, right mock) plus `LinkedFileRow`/`EmptyFileRow` sub-components — dashed borders in the mock are approximated with a solid muted border since Slint has no dashed-border support
+- `crates/app/src/main.rs`: `CurrentMedia` tracks the currently open video/subtitle/translation paths so the dialog knows what it's scoped to without re-deriving it from disk (a CLI-loaded subtitle may not share the video's filename stem); `wire_open_subtitles_dialog` wires the dialog, the translation-link picker, and the "Generate subtitles" stub. `load_subtitles` now returns whether it actually loaded, used to decide whether to record a path in `CurrentMedia`
+
+### Changed
+- `crates/app/src/main.rs`: `open_selected_video`/`wire_open_video_dialog` thread `CurrentMedia` through, resetting it (clearing any previous translation link) whenever a new video is opened
+
 ## [0.1.22] - 2026-07-15
 
 ### Fixed
