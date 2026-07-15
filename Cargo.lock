@@ -4989,6 +4989,7 @@ dependencies = [
  "playback-state",
  "slint",
  "slint-build",
+ "subtitle",
  "tracing",
  "tracing-subscriber",
 ]

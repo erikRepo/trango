@@ -9,6 +9,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.13] - 2026-07-15
+
+### Added
+- `crates/app/tests/e2e_sentence_navigation.rs`: first E2E test — parses the real `test-media/sample/sample.srt` fixture and drives `playback-state` cue navigation (`next_cue`/`previous_cue`/`repeat_current_cue`) forward and back across all five real cues, plus a sanity check that the paired `sample.mp4` fixture exists on disk and is non-empty
+- `docs/src/architecture/testing.md`: documents what the E2E suite covers (subtitle parsing + cue navigation against real fixtures) and what it deliberately doesn't (libmpv rendering/decoding — see `docs/src/architecture/video-playback.md` — and pixel-level UI screenshot testing)
+
+### Changed
+- `trango` (`crates/app`) gains a dev-dependency on `subtitle`, used only by the new E2E test
+
 ## [0.1.12] - 2026-07-15
 
 ### Fixed

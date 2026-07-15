@@ -10,6 +10,7 @@
 
 - [Crates](architecture/crates.md)
 - [Video playback](architecture/video-playback.md)
+- [Testing](architecture/testing.md)
 
 # Specs
 
