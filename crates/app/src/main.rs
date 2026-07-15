@@ -4,6 +4,7 @@
 //! `ui/app-window.slint`). libmpv integration and the rest of the UI are
 //! wired in later development steps (see `TODO.md`).
 
+mod open_video_dialog;
 mod sentence_card;
 mod sentence_list;
 mod video_player;
@@ -157,8 +158,9 @@ fn apply_navigation_result(
 
 /// Reads the video path to play (if any) from CLI arguments, as used by
 /// `main`. `args` is expected to include the program name at index 0 (i.e.
-/// `std::env::args()`), matching Vaihe 11's `trango <path/to/video>` usage —
-/// the Open Video dialog for picking a file in-app arrives in a later step.
+/// `std::env::args()`), matching Vaihe 11's `trango <path/to/video>` usage.
+/// A video can also be picked in-app via the top bar's "Open video…" button
+/// (see `wire_open_video_dialog`) instead of a CLI argument.
 fn video_path_from_args(args: &[String]) -> Option<PathBuf> {
     args.get(1).map(PathBuf::from)
 }
@@ -227,6 +229,133 @@ fn load_subtitles(
     sentence_list::update_sentence_list(window, &state.borrow());
 }
 
+/// Resolves the folder the Open Video dialog lists by default: the CLI
+/// video path's parent directory if one was given (Vaihe 11's
+/// `trango <path/to/video>` usage — likely where the user keeps other
+/// videos too), otherwise the current working directory. An in-dialog
+/// folder switcher is out of scope for Vaihe 18 — see
+/// `docs/src/specs/README.md`.
+fn default_video_folder(args: &[String]) -> PathBuf {
+    video_path_from_args(args)
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| {
+            std::env::current_dir().unwrap_or_else(|err| {
+                tracing::warn!(%err, "failed to read current directory; falling back to \".\"");
+                PathBuf::from(".")
+            })
+        })
+}
+
+/// Wires the Open Video dialog (Vaihe 18): the top bar's
+/// `open-video-dialog-requested` callback lists `default_folder`'s video
+/// files and opens the modal (`open_video_dialog::open_dialog`);
+/// `select-open-video-row` updates which row is highlighted
+/// (`open_video_dialog::mark_selected`); `confirm-open-video` loads the
+/// selected file (see `open_selected_video`); `cancel-open-video-dialog`
+/// (backdrop/✕/Cancel) just closes it.
+fn wire_open_video_dialog(
+    window: &AppWindow,
+    state: &Rc<RefCell<PlayerState>>,
+    video_player_slot: Rc<RefCell<Option<Rc<video_player::VideoPlayer>>>>,
+    default_folder: PathBuf,
+) {
+    let entries: Rc<RefCell<Vec<open_video_dialog::VideoFileEntry>>> =
+        Rc::new(RefCell::new(Vec::new()));
+
+    let request_window_weak = window.as_weak();
+    let request_entries = Rc::clone(&entries);
+    window.on_open_video_dialog_requested(move || {
+        let Some(window) = request_window_weak.upgrade() else {
+            return;
+        };
+        let files = open_video_dialog::list_video_files(&default_folder);
+        open_video_dialog::open_dialog(&window, &default_folder, &files);
+        *request_entries.borrow_mut() = files;
+    });
+
+    let cancel_window_weak = window.as_weak();
+    window.on_cancel_open_video_dialog(move || {
+        if let Some(window) = cancel_window_weak.upgrade() {
+            window.set_is_open_video_dialog_open(false);
+        }
+    });
+
+    let select_window_weak = window.as_weak();
+    let select_entries = Rc::clone(&entries);
+    window.on_select_open_video_row(move |index| {
+        let Some(window) = select_window_weak.upgrade() else {
+            return;
+        };
+        window.set_open_video_selected_index(index);
+        open_video_dialog::mark_selected(&window, &select_entries.borrow(), index);
+    });
+
+    let confirm_window_weak = window.as_weak();
+    let confirm_entries = Rc::clone(&entries);
+    let confirm_state = Rc::clone(state);
+    window.on_confirm_open_video(move || {
+        let Some(window) = confirm_window_weak.upgrade() else {
+            return;
+        };
+        let Ok(index) = usize::try_from(window.get_open_video_selected_index()) else {
+            return;
+        };
+        let Some(entry) = confirm_entries.borrow().get(index).cloned() else {
+            return;
+        };
+        window.set_is_open_video_dialog_open(false);
+        open_selected_video(&window, &confirm_state, &video_player_slot, &entry.path);
+    });
+}
+
+/// Loads `video_path` into playback — reusing `video_player_slot`'s
+/// `VideoPlayer` if one is already attached (switching files mid-session),
+/// or attaching a fresh one (and wiring cue navigation for it) if this is
+/// the session's first video, e.g. when trango was started without a CLI
+/// video argument. Resolves a same-stem `.srt` first
+/// (`open_video_dialog::matching_subtitle_path`) and loads it via
+/// `load_subtitles` if found, clearing any previously loaded cues
+/// otherwise — done before attaching/loading the video so that, in
+/// `SentenceBySentence` mode, the start-of-playback pause lands on the new
+/// video's first cue rather than a stale one from a previously opened
+/// video. Called by `wire_open_video_dialog`'s `confirm-open-video`
+/// handler.
+fn open_selected_video(
+    window: &AppWindow,
+    state: &Rc<RefCell<PlayerState>>,
+    video_player_slot: &Rc<RefCell<Option<Rc<video_player::VideoPlayer>>>>,
+    video_path: &Path,
+) {
+    match open_video_dialog::matching_subtitle_path(video_path) {
+        Some(subtitle_path) => {
+            tracing::info!(
+                ?subtitle_path,
+                "auto-matched subtitle file for opened video"
+            );
+            load_subtitles(window, state, &subtitle_path, None);
+        }
+        None => {
+            state.borrow_mut().set_cues(Vec::new());
+            sentence_card::update_sentence_card(window, &state.borrow());
+            sentence_list::update_sentence_list(window, &state.borrow());
+        }
+    }
+
+    let existing_player = video_player_slot.borrow().clone();
+    match existing_player {
+        Some(video_player) => video_player.load_video(video_path, &state.borrow()),
+        None => match video_player::VideoPlayer::attach(window, video_path, Rc::clone(state)) {
+            Ok(video_player) => {
+                let video_player = Rc::new(video_player);
+                wire_cue_navigation(window, state, Rc::clone(&video_player));
+                *video_player_slot.borrow_mut() = Some(video_player);
+            }
+            Err(err) => tracing::error!(%err, ?video_path, "failed to attach video player"),
+        },
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
     tracing::info!("trango starting");
@@ -249,20 +378,28 @@ fn main() -> anyhow::Result<()> {
         );
     }
 
-    let video_player = match video_path_from_args(&args) {
-        Some(video_path) => Some(Rc::new(video_player::VideoPlayer::attach(
+    let video_player_slot: Rc<RefCell<Option<Rc<video_player::VideoPlayer>>>> =
+        Rc::new(RefCell::new(None));
+    if let Some(video_path) = video_path_from_args(&args) {
+        let video_player = Rc::new(video_player::VideoPlayer::attach(
             &window,
             &video_path,
             Rc::clone(&player_state),
-        )?)),
-        None => {
-            tracing::info!("no video path given; run as `trango <path/to/video>` to play one");
-            None
-        }
-    };
-    if let Some(video_player) = &video_player {
-        wire_cue_navigation(&window, &player_state, Rc::clone(video_player));
+        )?);
+        wire_cue_navigation(&window, &player_state, Rc::clone(&video_player));
+        *video_player_slot.borrow_mut() = Some(video_player);
+    } else {
+        tracing::info!(
+            "no video path given; use the \"Open video…\" button or run as `trango <path/to/video>`"
+        );
     }
+
+    wire_open_video_dialog(
+        &window,
+        &player_state,
+        Rc::clone(&video_player_slot),
+        default_video_folder(&args),
+    );
 
     window.run()?;
     Ok(())
@@ -364,6 +501,44 @@ mod tests {
         assert_eq!(translation_path_from_args(&args), None);
     }
 
+    #[test]
+    fn test_default_video_folder_with_cli_video_path() {
+        // Given: argv with a video path that has a parent directory
+        let args = vec!["trango".to_string(), "some/folder/video.mp4".to_string()];
+
+        // When:  resolving the default Open Video dialog folder
+        // Then:  it's that video's parent directory
+        assert_eq!(default_video_folder(&args), PathBuf::from("some/folder"));
+    }
+
+    #[test]
+    fn test_default_video_folder_without_cli_video_path() {
+        // Given: argv with no video path
+        let args = vec!["trango".to_string()];
+
+        // When:  resolving the default Open Video dialog folder
+        // Then:  it falls back to the current working directory
+        assert_eq!(
+            default_video_folder(&args),
+            std::env::current_dir().expect("failed to read current directory")
+        );
+    }
+
+    #[test]
+    fn test_default_video_folder_with_bare_filename_falls_back_to_cwd() {
+        // Given: argv with a video path that has no parent directory
+        //        component (a bare filename)
+        let args = vec!["trango".to_string(), "video.mp4".to_string()];
+
+        // When:  resolving the default Open Video dialog folder
+        // Then:  it falls back to the current working directory, since
+        //        "video.mp4"'s parent is the empty path, not a real folder
+        assert_eq!(
+            default_video_folder(&args),
+            std::env::current_dir().expect("failed to read current directory")
+        );
+    }
+
     // Slint's winit backend can only be initialized once per process (and
     // stays bound to the thread that created it), so every assertion that
     // needs a real `AppWindow` lives in this single test instead of one
@@ -461,5 +636,41 @@ mod tests {
         window.invoke_toggle_translation();
         assert!(!player_state.borrow().show_translation);
         assert!(!window.get_show_translation());
+
+        // When:  opening the Open Video dialog with two file entries
+        // Then:  it opens with the folder label mirrored, one row per
+        //        entry, and the first row pre-selected
+        let entries = vec![
+            open_video_dialog::VideoFileEntry {
+                path: PathBuf::from("/videos/a.mp4"),
+                name: "a.mp4".to_string(),
+                size_label: "10 MB".to_string(),
+            },
+            open_video_dialog::VideoFileEntry {
+                path: PathBuf::from("/videos/b.mkv"),
+                name: "b.mkv".to_string(),
+                size_label: "20 MB".to_string(),
+            },
+        ];
+        open_video_dialog::open_dialog(&window, Path::new("/videos"), &entries);
+        assert!(window.get_is_open_video_dialog_open());
+        assert_eq!(window.get_open_video_folder_label(), "/videos");
+        assert_eq!(window.get_open_video_selected_index(), 0);
+        let dialog_rows = window.get_open_video_rows();
+        assert_eq!(dialog_rows.row_count(), 2);
+        assert!(dialog_rows.row_data(0).expect("row 0 exists").is_selected);
+        assert!(!dialog_rows.row_data(1).expect("row 1 exists").is_selected);
+
+        // When:  selecting the second row, as a row click does
+        // Then:  the row model reflects the new selection
+        open_video_dialog::mark_selected(&window, &entries, 1);
+        let dialog_rows = window.get_open_video_rows();
+        assert!(!dialog_rows.row_data(0).expect("row 0 exists").is_selected);
+        assert!(dialog_rows.row_data(1).expect("row 1 exists").is_selected);
+
+        // When:  cancelling, as the backdrop/✕/Cancel button does
+        // Then:  the dialog closes
+        window.set_is_open_video_dialog_open(false);
+        assert!(!window.get_is_open_video_dialog_open());
     }
 }

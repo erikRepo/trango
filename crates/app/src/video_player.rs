@@ -188,6 +188,42 @@ impl VideoPlayer {
         }
         inner.pause_at = command.then_pause.then_some(command.end);
     }
+
+    /// Loads `video_path` into this already-attached `VideoPlayer`, e.g.
+    /// when the Open Video dialog (`TODO.md` Vaihe 18) picks a new file
+    /// mid-session — as opposed to `attach`'s first-ever load. Re-arms the
+    /// sentence-by-sentence start pause/seek for the new file exactly like
+    /// the first load does (see [`load_file`]); `player_state` should
+    /// already reflect the new file's cues (or be cleared) by the time this
+    /// is called, since that's what the armed start seek reads.
+    pub fn load_video(&self, video_path: &Path, player_state: &PlayerState) {
+        let mpv = self.inner.borrow().mpv;
+        load_file(&self.inner, mpv, video_path, player_state);
+    }
+}
+
+/// Issues mpv's `loadfile` for `video_path` and, in `SentenceBySentence`
+/// mode, arms `inner`'s `pending_start_seek` (see
+/// [`pause_and_arm_start_seek_if_sentence_mode`]) — shared by the very first
+/// load (`setup_render_context`) and later Open Video dialog loads
+/// (`VideoPlayer::load_video`).
+fn load_file(
+    inner: &Rc<RefCell<VideoPlayerInner>>,
+    mpv: &Mpv,
+    video_path: &Path,
+    player_state: &PlayerState,
+) {
+    match video_path.to_str() {
+        Some(path_str) => {
+            if let Err(err) = mpv.command("loadfile", &[path_str, "replace"]) {
+                tracing::error!(%err, ?video_path, "failed to load video file");
+            } else {
+                inner.borrow_mut().pending_start_seek =
+                    pause_and_arm_start_seek_if_sentence_mode(mpv, player_state);
+            }
+        }
+        None => tracing::error!(?video_path, "video path is not valid UTF-8"),
+    }
 }
 
 /// Pauses mpv once its `time-pos` reaches `inner`'s armed `pause_at` (set by
@@ -379,17 +415,7 @@ fn setup_render_context(
 
     inner.borrow_mut().render_context = Some(render_context);
 
-    match video_path.to_str() {
-        Some(video_path) => {
-            if let Err(err) = mpv.command("loadfile", &[video_path, "replace"]) {
-                tracing::error!(%err, "failed to load video file");
-            } else {
-                inner.borrow_mut().pending_start_seek =
-                    pause_and_arm_start_seek_if_sentence_mode(mpv, &player_state.borrow());
-            }
-        }
-        None => tracing::error!(?video_path, "video path is not valid UTF-8"),
-    }
+    load_file(inner, mpv, video_path, &player_state.borrow());
 
     let loaded_window_weak = window_weak.clone();
     let _ = slint::invoke_from_event_loop(move || {

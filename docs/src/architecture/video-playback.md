@@ -189,6 +189,32 @@ finished), it issues the seek and clears `pending_start_seek`. Playback
 stays paused throughout — pausing happens up front, the seek only moves
 *where* it's paused once possible.
 
+## Switching videos: the Open Video dialog
+
+`VideoPlayer::attach`'s `loadfile` + sentence-by-sentence start-seek arming
+(the previous section) lives in a private `load_file` helper so it can be
+reused outside the very first load. The Open Video dialog (`TODO.md` Vaihe
+18, `crates/app/src/open_video_dialog.rs` + `main.rs`'s
+`wire_open_video_dialog`/`open_selected_video`) needs to load a video that
+may or may not be the session's first one:
+
+- If trango was started without a CLI video argument, no `VideoPlayer`
+  exists yet — `open_selected_video` calls `VideoPlayer::attach` exactly as
+  `main` does for a CLI-given path, then stores it for reuse.
+- If a video is already attached (started via CLI, or a previous dialog
+  selection), `open_selected_video` calls the public
+  `VideoPlayer::load_video(video_path, player_state)` instead, which just
+  calls the shared `load_file` helper against the existing mpv core —
+  no new render context or polling timer needed, since those are already
+  running.
+
+Either way, `open_selected_video` resolves (and loads) a same-stem `.srt`
+subtitle match — or clears any previously loaded cues if none is found —
+*before* attaching/loading the video, not after: `load_file`'s
+sentence-by-sentence start-pause reads `player_state.cues` to find the first
+cue to pause at, so loading the new video first would arm the pause against
+the *previous* video's (now stale) cues.
+
 ## Current limitation: no inset video area yet
 
 mpv's render API always draws starting at `(0, 0)` of the framebuffer it's

@@ -22,6 +22,8 @@ global Palette {
     out property <color> ghost-text: #b4b7c0;
     out property <color> segmented-bg: #2a2c33;
     out property <color> translation-text: #7fa6f0;
+    out property <color> modal-bg: #22232a;
+    out property <color> chip-muted: #4a4d59;
 }
 
 /// One pill in the top bar's Normal / Sentence-by-sentence segmented
@@ -95,9 +97,11 @@ component ToggleSwitch {
 }
 
 /// A bordered, no-fill "Open video…" / "Open subtitles…" top bar button.
-/// Static in Vaihe 9 — no click behavior wired up yet.
+/// "Open video…" is wired to the Open Video dialog (Vaihe 18, see
+/// `OpenVideoDialog` below); "Open subtitles…" stays static until Vaihe 19.
 component GhostButton {
     in property <string> label;
+    callback clicked;
 
     min-width: layout.min-width;
     min-height: layout.min-height;
@@ -121,6 +125,10 @@ component GhostButton {
                 font-weight: 500;
                 vertical-alignment: center;
             }
+        }
+
+        TouchArea {
+            clicked => { root.clicked(); }
         }
     }
 }
@@ -302,6 +310,244 @@ component SentenceListCard inherits Rectangle {
     }
 }
 
+/// One row in the Open Video dialog's file list: filename and formatted
+/// size, with `is-selected` driving the accent-tinted background/chip color
+/// (see `OpenVideoDialog`). Set from Rust in
+/// `crates/app/src/open_video_dialog.rs`.
+struct OpenVideoFileRow {
+    name: string,
+    size-label: string,
+    is-selected: bool,
+}
+
+/// The Open Video dialog (`TODO.md` Vaihe 18): a modal overlay listing video
+/// files from a folder — pixel reference
+/// `sketch/design_reference.dc.html#2a`, left mock — no OS-native file
+/// picker, an in-app list instead. `folder-label`/`rows`/`selected-index`
+/// are set from Rust (`crates/app/src/open_video_dialog.rs`) when the top
+/// bar's "Open video…" button is clicked. Clicking a row emits
+/// `row-clicked` with its index; the backdrop, header "✕", and footer
+/// "Cancel" all emit `cancel`; footer "Open" emits `confirm` (a no-op
+/// while nothing is selected) — `main.rs`'s `wire_open_video_dialog` wires
+/// all three to `AppWindow`'s matching callbacks, `confirm` also loading
+/// the selected file.
+component OpenVideoDialog {
+    in property <string> folder-label;
+    in property <[OpenVideoFileRow]> rows: [];
+    in property <int> selected-index: -1;
+    callback row-clicked(int);
+    callback cancel();
+    callback confirm();
+
+    Rectangle {
+        background: rgba(0, 0, 0, 0.55);
+
+        TouchArea {
+            // Clicking the dimmed backdrop cancels, same as the header's
+            // close button and footer's Cancel button.
+            clicked => { root.cancel(); }
+        }
+
+        Rectangle {
+            width: 640px;
+            height: 420px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: Palette.modal-bg;
+            border-width: 1px;
+            border-radius: 12px;
+            border-color: Palette.border;
+            drop-shadow-color: rgba(0, 0, 0, 0.6);
+            drop-shadow-blur: 40px;
+            drop-shadow-offset-y: 16px;
+            clip: true;
+
+            TouchArea {
+                // Swallows clicks inside the card so they don't fall
+                // through to the backdrop's cancel handler above.
+            }
+
+            VerticalLayout {
+                Rectangle {
+                    height: 52px;
+                    border-width: 1px;
+                    border-color: Palette.border;
+
+                    HorizontalLayout {
+                        padding-left: 20px;
+                        padding-right: 20px;
+                        alignment: space-between;
+                        cross-axis-alignment: center;
+
+                        Text {
+                            text: "Open video file";
+                            color: Palette.primary-text;
+                            font-family: "Inter";
+                            font-size: 15px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+
+                        TouchArea {
+                            width: 20px;
+                            height: 20px;
+                            clicked => { root.cancel(); }
+
+                            Text {
+                                text: "✕";
+                                color: Palette.muted-text;
+                                font-family: "Inter";
+                                font-size: 16px;
+                                font-weight: 600;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    vertical-stretch: 1;
+                    padding: 16px;
+                    spacing: 6px;
+
+                    Text {
+                        text: root.folder-label;
+                        color: Palette.muted-text;
+                        font-family: "JetBrains Mono";
+                        font-size: 10px;
+                        font-weight: 600;
+                        letter-spacing: 0.8px;
+                    }
+
+                    if root.rows.length == 0 : Text {
+                        text: "No video files found in this folder.";
+                        color: Palette.muted-text;
+                        font-family: "Inter";
+                        font-size: 13px;
+                    }
+
+                    ListView {
+                        for row[index] in root.rows : Rectangle {
+                            height: 44px;
+                            border-radius: 7px;
+                            background: row.is-selected ? Palette.accent.with-alpha(0.22) : transparent;
+
+                            HorizontalLayout {
+                                padding-left: 12px;
+                                padding-right: 12px;
+                                spacing: 10px;
+                                cross-axis-alignment: center;
+
+                                Rectangle {
+                                    width: 28px;
+                                    height: 20px;
+                                    border-radius: 3px;
+                                    background: row.is-selected ? Palette.accent : Palette.chip-muted;
+                                }
+
+                                VerticalLayout {
+                                    alignment: center;
+
+                                    Text {
+                                        text: row.name;
+                                        color: row.is-selected ? Palette.primary-text : Palette.ghost-text;
+                                        font-family: "Inter";
+                                        font-size: 13px;
+                                        font-weight: 500;
+                                        overflow: elide;
+                                    }
+
+                                    Text {
+                                        text: row.size-label;
+                                        color: Palette.muted-text;
+                                        font-family: "JetBrains Mono";
+                                        font-size: 11px;
+                                    }
+                                }
+                            }
+
+                            TouchArea {
+                                clicked => { root.row-clicked(index); }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    height: 60px;
+                    border-width: 1px;
+                    border-color: Palette.border;
+
+                    HorizontalLayout {
+                        padding-left: 20px;
+                        padding-right: 20px;
+                        alignment: end;
+                        spacing: 10px;
+                        cross-axis-alignment: center;
+
+                        Rectangle {
+                            border-width: 1px;
+                            border-radius: 6px;
+                            border-color: Palette.border;
+
+                            HorizontalLayout {
+                                padding-left: 16px;
+                                padding-right: 16px;
+                                padding-top: 8px;
+                                padding-bottom: 8px;
+
+                                Text {
+                                    text: "Cancel";
+                                    color: Palette.ghost-text;
+                                    font-family: "Inter";
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            TouchArea {
+                                clicked => { root.cancel(); }
+                            }
+                        }
+
+                        Rectangle {
+                            border-radius: 6px;
+                            background: Palette.accent;
+                            opacity: root.selected-index >= 0 ? 1.0 : 0.5;
+
+                            HorizontalLayout {
+                                padding-left: 16px;
+                                padding-right: 16px;
+                                padding-top: 8px;
+                                padding-bottom: 8px;
+
+                                Text {
+                                    text: "Open";
+                                    color: white;
+                                    font-family: "Inter";
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            TouchArea {
+                                clicked => {
+                                    if (root.selected-index >= 0) {
+                                        root.confirm();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Bottom hint bar shown only in `SentenceBySentence` mode (see the `if`
 /// guard where it's instantiated in `AppWindow`), listing the Right/Left/
 /// Space keyboard shortcuts plus Ctrl+T. Right/Left/Space are handled by
@@ -469,6 +715,23 @@ export component AppWindow inherits Window {
     // row's index — wired in main.rs to playback_state::jump_to_cue, the
     // same navigation call arrow keys drive.
     callback jump-to-cue(int);
+    // Open Video dialog state (TODO.md Vaihe 18), set from Rust by
+    // crates/app/src/open_video_dialog.rs — see OpenVideoDialog above.
+    in property <bool> is-open-video-dialog-open: false;
+    in property <string> open-video-folder-label: "";
+    in property <[OpenVideoFileRow]> open-video-rows: [];
+    in property <int> open-video-selected-index: -1;
+    // Invoked by the top bar's "Open video…" GhostButton; wired in main.rs's
+    // wire_open_video_dialog to list the default folder's video files and
+    // open the dialog.
+    callback open-video-dialog-requested();
+    // Invoked by the dialog's backdrop click / "✕" / "Cancel" — closes it.
+    callback cancel-open-video-dialog();
+    // Invoked by a dialog row click, with that row's index — marks it
+    // selected.
+    callback select-open-video-row(int);
+    // Invoked by the dialog's "Open" button — loads the selected file.
+    callback confirm-open-video();
 
     title: "TrangoPlayer v" + version;
     width: 960px;
@@ -576,6 +839,7 @@ export component AppWindow inherits Window {
 
                         GhostButton {
                             label: "Open video…";
+                            clicked => { root.open-video-dialog-requested(); }
                         }
 
                         GhostButton {
@@ -633,6 +897,17 @@ export component AppWindow inherits Window {
             }
 
             if root.sentence-mode-active : HintBar {}
+        }
+
+        if root.is-open-video-dialog-open : OpenVideoDialog {
+            width: parent.width;
+            height: parent.height;
+            folder-label: root.open-video-folder-label;
+            rows: root.open-video-rows;
+            selected-index: root.open-video-selected-index;
+            row-clicked(index) => { root.select-open-video-row(index); }
+            cancel => { root.cancel-open-video-dialog(); }
+            confirm => { root.confirm-open-video(); }
         }
     }
 }

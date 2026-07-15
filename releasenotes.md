@@ -9,6 +9,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.20] - 2026-07-15
+
+### Added
+- `crates/app/src/open_video_dialog.rs`: Open Video dialog (`TODO.md` Vaihe 18) — `list_video_files` lists a folder's video files (`.mp4`/`.mkv`/`.webm`/`.mov`/`.avi`, case-insensitive) sorted by name, with a formatted size label (`format_file_size`, e.g. "340 MB") read via `std::fs::metadata`; duration is deferred to a later iteration since it would need decoding the file with libmpv/ffprobe rather than a cheap metadata read. `matching_subtitle_path` looks for a same-stem `.srt` next to a video, backing the "attempts to auto-match a same-name subtitle file" part of README's Open Video spec
+- `app-window.slint`: `OpenVideoFileRow` struct and `OpenVideoDialog` component — modal backdrop + card matching `sketch/design_reference.dc.html#2a` (left mock): header with title + "✕", scrollable file-type-chip/name/size rows (selected row accent-tinted), footer Cancel/Open buttons. `GhostButton` gained a `clicked` callback, wired on the top bar's "Open video…" button (`Palette` gained `modal-bg`/`chip-muted` tokens for it) — "Open subtitles…" stays static until Vaihe 19
+- `crates/app/src/main.rs`: `default_video_folder` resolves the dialog's default folder — the CLI video path's parent directory if one was given, otherwise the current working directory. `wire_open_video_dialog` lists that folder and opens the dialog on "Open video…", tracks row selection, and on "Open" calls the new `open_selected_video`, which auto-matches and loads a subtitle file (or clears stale cues if none match) before loading the video — attaching a fresh `VideoPlayer` if trango was started without a CLI video argument, or telling the existing one to load the new file via `VideoPlayer::load_video` otherwise
+- `crates/app/src/video_player.rs`: `VideoPlayer::load_video(&self, video_path, player_state)` loads a new file into an already-attached mpv core, re-arming the sentence-by-sentence start pause/seek for it — used by the Open Video dialog when a video was already playing
+
+### Changed
+- `crates/app/src/video_player.rs`: the `loadfile` + sentence-by-sentence start-seek arming logic in `setup_render_context`'s tail was extracted into a shared `load_file` helper, now reused by both the very first video load and `VideoPlayer::load_video`
+- `crates/app/src/main.rs`: `main` now holds the attached `VideoPlayer` behind `Rc<RefCell<Option<Rc<VideoPlayer>>>>` instead of a plain `Option`, so the Open Video dialog can attach one lazily (no CLI video argument given) or reuse the existing one (switching videos mid-session)
+
 ## [0.1.19] - 2026-07-15
 
 ### Added

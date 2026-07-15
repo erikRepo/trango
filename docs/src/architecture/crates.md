@@ -94,8 +94,20 @@ libmpv playback into the window (see
 `docs/src/technology/libmpv2.md`) and starts a repeating timer that polls
 mpv's `time-pos`/`duration` properties to drive the scrub bar below the
 video frame; without a video path, the video area just shows the window
-background as a placeholder and the scrub bar stays at `00:00`. Picking a
-file from an in-app dialog is a later `TODO.md` step.
+background as a placeholder and the scrub bar stays at `00:00`.
+
+A video can also be picked in-app via the top bar's "Open video…" button
+(`TODO.md` Vaihe 18): `open_video_dialog::list_video_files` lists a
+folder's video files (by extension, with a `std::fs::metadata`-based size
+label — duration is deferred, since it would need decoding the file) and
+`open_video_dialog::matching_subtitle_path` looks for a same-stem `.srt`
+next to the chosen file. `wire_open_video_dialog` in `main.rs` wires the
+button, row selection, and the "Open" button's `open_selected_video`, which
+loads any auto-matched subtitle first (or clears stale cues if none match),
+then either attaches a fresh `VideoPlayer` (if trango was started without a
+CLI video argument) or calls the existing one's `VideoPlayer::load_video`
+(switching files mid-session) — see
+`docs/src/architecture/video-playback.md`.
 
 If a second CLI argument is given (`trango video.mp4 subs.srt`),
 `load_subtitles` reads and parses it (via the shared `parse_subtitle_file`
