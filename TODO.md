@@ -335,6 +335,43 @@ käytöksen tekijän päätettäväksi — dokumentoi valinta `docs/src/specs/`)
 
 ---
 
+## Vaihe 21.5 — Oikea subtitle-generointi: whisper-cli ulkoisena työkaluna
+
+**Tavoite:** Vaihe 20:n stub-`SubtitleGenerator`:n rinnalle oikea toteutus,
+joka kutsuu whisper.cpp:n `whisper-cli`-binääriä ulkoisena prosessina
+(`std::process::Command`) — **ei uutta Cargo-riippuvuutta**, koska työkalu
+ei linkity trangoon vaan ajetaan erillisenä komentona käyttäjän itse
+asentamana (päätetty keskustellen — ks. `docs/src/specs/`, vertailtiin
+`whisper-rs`-sidontaan ja muihin STT-vaihtoehtoihin). Whisper.cpp tukee
+`-osrt`-lippua, joka kirjoittaa `.srt`-tiedoston suoraan — ei tarvitse
+parsia raakatekstiä itse.
+
+Huom: `whisper-cli` **ei ole asennettuna** kehityskoneelle tätä TODO-kohtaa
+kirjattaessa (ei PATH:issa, ei pip/apt/snap-asennuksena) — asennus tehdään
+vasta kun tämä vaihe otetaan käsittelyyn.
+
+- Uusi `SubtitleGenerator`-toteutus, esim. `WhisperCliGenerator`, joka
+  rakentaa ja ajaa `whisper-cli`-komennon (binäärin polku/nimi
+  konfiguroitavissa, oletus PATH-haku)
+- Ajo taustasäikeessä (`std::thread` + `slint::invoke_from_event_loop`
+  tuloksen palauttamiseen), koska oikea transkriptio kestää sekunneista
+  minuutteihin — UI ei saa jäätyä (`subtitleGenerationStatus` pysyy
+  `Generating`-tilassa ajon ajan)
+- Binäärin puuttuminen näkyy selkeänä `Error`-tilana + ymmärrettävänä
+  viestinä ("asenna whisper.cpp, ks. ohje"), ei geneerisenä virheenä
+- Mallitiedoston (ggml/gguf) polku samoin konfiguroitavissa; lataus/hankinta
+  jää käyttäjän vastuulle — dokumentoi asennus-/mallinhankintaohje
+  `docs/src/usage/`
+- Windows/Linux: `Command::new` toimii molemmilla samalla tavalla, ainoa ero
+  on binäärin nimi/asennustapa — dokumentoi molemmat `docs/`
+
+**Voit ajaa/testata:** `cargo run -p trango -- video.mp4` (ilman valmista
+subtitlea) — "Generate subtitles" ajaa oikean whisper-cli-transkription
+taustalla, tila näkyy `Generating`→`Done`, syntynyt `.srt` latautuu
+soittimeen; jos `whisper-cli` puuttuu, tila päätyy `Error`+selkeä viesti.
+
+---
+
 ## Vaihe 22 — Design-tarkennus (pikselintarkkuus mockiin)
 
 **Tavoite:** Käy koko UI läpi `sketch/design_reference.dc.html`:ää vasten —
