@@ -9,6 +9,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.1] - 2026-07-15
+
+### Added
+- `docs/` mdbook scaffold (`usage/`, `architecture/`, `specs/`, `technology/`)
+- `docs/src/architecture/crates.md` describing the Vaihe 1 crate split
+- `docs/src/technology/tracing.md`
+
 ## [0.1.0] - 2026-07-15
 
 ### Added

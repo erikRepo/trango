@@ -1,0 +1,9 @@
+[book]
+title = "trango"
+description = "TrangoPlayer developer documentation"
+authors = ["trango contributors"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
