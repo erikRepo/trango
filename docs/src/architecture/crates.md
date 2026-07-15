@@ -63,9 +63,11 @@ together. The package name is `trango` (`[package] name = "trango"`), so
 the compiled binary is `trango`; the directory is named `crates/app` to
 describe its role. The product name shown in the UI is **TrangoPlayer**.
 
-At this point in development, `crates/app/src/main.rs` only initializes
-`tracing` logging and prints the crate version — no Slint UI or libmpv
-integration yet (see `TODO.md` for the current step).
+`crates/app/src/main.rs` initializes `tracing` logging, prints the crate
+version, and opens the Slint main window defined in
+`crates/app/ui/app-window.slint` (see `docs/src/technology/slint.md`) —
+window background and a top bar showing the version, nothing else yet. No
+libmpv integration yet (see `TODO.md` for the current step).
 
 ## Why three crates instead of one
 

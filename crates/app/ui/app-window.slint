@@ -1,0 +1,48 @@
+// TrangoPlayer main window shell.
+//
+// Vaihe 8 scope only: window background + top bar placeholder showing the
+// app version. Wordmark styling, segmented control, and the rest of the top
+// bar arrive in later steps (see TODO.md Vaihe 9+).
+export component AppWindow inherits Window {
+    in property <string> version;
+
+    title: "TrangoPlayer";
+    background: #1c1d22;
+    width: 960px;
+    height: 600px;
+
+    VerticalLayout {
+        Rectangle {
+            height: 52px;
+            background: #202127;
+            border-width: 1px;
+            border-color: #3a3c45;
+
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                alignment: space-between;
+
+                Text {
+                    text: "TrangoPlayer";
+                    color: #e7e8ec;
+                    font-size: 14px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+
+                Text {
+                    text: "v" + version;
+                    color: #8a8d99;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        Rectangle {
+            // Placeholder body; video column and sentence panel land in
+            // later TODO.md steps.
+        }
+    }
+}

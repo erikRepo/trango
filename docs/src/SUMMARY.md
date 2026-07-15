@@ -18,3 +18,4 @@
 
 - [tracing](technology/tracing.md)
 - [thiserror](technology/thiserror.md)
+- [slint](technology/slint.md)
