@@ -25,4 +25,13 @@ pub enum SubtitleError {
         /// The cue's end time.
         end: Duration,
     },
+
+    /// Running an external speech-to-text tool (e.g. `whisper-cli`, see
+    /// `WhisperCliGenerator`) failed — covers the binary not being found,
+    /// the process exiting with an error, or it finishing without
+    /// producing the expected output file. The message is meant to be
+    /// shown to the user as-is, so it should already explain what went
+    /// wrong and, where possible, how to fix it.
+    #[error("{0}")]
+    GenerationFailed(String),
 }

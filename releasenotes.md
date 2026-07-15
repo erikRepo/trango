@@ -9,6 +9,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.25] - 2026-07-15
+
+### Added
+- `crates/subtitle/src/generate.rs`: `WhisperCliGenerator`, a real `SubtitleGenerator` (`TODO.md` Vaihe 21.5) that runs whisper.cpp's `whisper-cli` binary as an external process (no new Cargo dependency — see `docs/src/specs/`) via `-f`/`-m`/`-of`/`-osrt`, writing the same same-stem `.srt` convention `StubSubtitleGenerator` uses; `binary_path`/`model_path` are configurable, defaulting to a `PATH` lookup and whisper-cli's own default model lookup respectively
+- `crates/subtitle/src/error.rs`: `SubtitleError::GenerationFailed(String)` for whisper-cli failures (binary not found, non-zero exit, missing output file), with a message meant to be shown to the user as-is
+- `crates/app/src/subtitle_generation.rs`: `spawn_generate` runs a generator on a background thread, since real transcription can take seconds to minutes and would freeze the UI thread if run synchronously; `apply_result` mirrors a finished generation's outcome into the window
+- `app-window.slint`: `AppWindow::subtitle-generation-error-message`, shown under the empty-state row in the `Error` status instead of always saying "Generation failed"; `AppWindow::subtitle-generated(string)`, an internal signal (not tied to any UI element) letting the background-thread completion handler — which may only carry `Send` data across the thread boundary — hand a generated subtitle's path to UI-thread code that holds the `Rc`-based player/media state needed to load it
+- `docs/src/usage/`: `whisper-cli` install instructions for Linux/Windows, model download, and the `TRANGO_WHISPER_CLI_PATH`/`TRANGO_WHISPER_MODEL_PATH` environment variables; `docs/src/specs/`: the whisper.cpp-as-external-process decision and the background-thread/`Send`-boundary architecture
+
+### Changed
+- `crates/app/src/main.rs`: `wire_open_subtitles_dialog`'s `generate-subtitles-requested` handler now runs `subtitle::WhisperCliGenerator` (configured from environment variables via `whisper_cli_generator_from_env`) on a background thread instead of `subtitle::StubSubtitleGenerator` synchronously
+
 ## [0.1.24] - 2026-07-15
 
 ### Added

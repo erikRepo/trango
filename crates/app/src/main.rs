@@ -415,12 +415,23 @@ fn open_selected_video(
 /// `cancel`/`confirm-open-subtitles-dialog` (backdrop/✕/Cancel/Done) just
 /// close it: both sections are already live the moment they're linked, not
 /// deferred to "Done" (see `AppWindow`'s doc comment on those callbacks).
-/// `generate-subtitles-requested` (`TODO.md` Vaihe 20) runs
-/// `subtitle::StubSubtitleGenerator` via `subtitle_generation::generate`,
-/// which mirrors `Idle -> Generating -> Done`/`Error` into
-/// `subtitle-generation-status` and, on success, the dialog's original row;
-/// on success here the generated subtitle is also loaded into the player
-/// and recorded in `current_media`, same as a picked translation is below.
+/// `generate-subtitles-requested` (`TODO.md` Vaihe 20/21.5) runs
+/// `subtitle::WhisperCliGenerator` (configured by
+/// `whisper_cli_generator_from_env`) on a background thread via
+/// `subtitle_generation::spawn_generate` — real transcription can take
+/// seconds to minutes, so running it on the UI thread would freeze the
+/// whole app. Its result is posted back to the UI thread with
+/// `slint::invoke_from_event_loop` (same pattern as `video_player.rs`'s
+/// `load_file`) and applied with `subtitle_generation::apply_result`, which
+/// mirrors `Idle -> Generating -> Done`/`Error` into
+/// `subtitle-generation-status`/`-error-message` and, on success, the
+/// dialog's original row. That callback may only carry `Send` data across
+/// the thread boundary (a `Weak<AppWindow>` and the owned `Result`), so on
+/// success it hands off to `AppWindow::subtitle-generated` — invoked with
+/// just the new path, handled by a separate closure set up here that does
+/// hold the `Rc<RefCell<PlayerState>>`/`Rc<RefCell<CurrentMedia>>` needed to
+/// load the subtitle into the player and record it in `current_media`, same
+/// as a picked translation is below.
 ///
 /// `link-translation-requested` opens a nested `FileListDialog` picker
 /// (`open_subtitles_dialog::open_translation_picker`) over the video's
@@ -430,6 +441,26 @@ fn open_selected_video(
 /// translation via `load_subtitles`, updates `current_media`, and mirrors
 /// the pick back into the (still-open) Open Subtitles dialog's translation
 /// row (`open_subtitles_dialog::mark_translation_linked`).
+///
+/// Builds a `subtitle::WhisperCliGenerator` configured from environment
+/// variables (`TODO.md` Vaihe 21.5's "binäärin polku/nimi konfiguroitavissa"
+/// / "mallitiedoston polku samoin konfiguroitavissa"), so the binary and
+/// model don't need to live at fixed paths:
+/// - `TRANGO_WHISPER_CLI_PATH`: path or bare name of the `whisper-cli`
+///   binary. Defaults to `"whisper-cli"`, resolved via `PATH` — see
+///   `docs/src/usage` for installing it.
+/// - `TRANGO_WHISPER_MODEL_PATH`: path to a ggml/gguf model file. If unset,
+///   the `-m` flag is omitted and `whisper-cli` falls back to its own
+///   default model lookup.
+fn whisper_cli_generator_from_env() -> subtitle::WhisperCliGenerator {
+    let mut generator = subtitle::WhisperCliGenerator::default();
+    if let Some(binary_path) = std::env::var_os("TRANGO_WHISPER_CLI_PATH") {
+        generator.binary_path = PathBuf::from(binary_path);
+    }
+    generator.model_path = std::env::var_os("TRANGO_WHISPER_MODEL_PATH").map(PathBuf::from);
+    generator
+}
+
 fn wire_open_subtitles_dialog(
     window: &AppWindow,
     state: &Rc<RefCell<PlayerState>>,
@@ -474,9 +505,21 @@ fn wire_open_subtitles_dialog(
         }
     });
 
+    let generated_window_weak = window.as_weak();
+    let generated_media = Rc::clone(&current_media);
+    let generated_state = Rc::clone(state);
+    window.on_subtitle_generated(move |subtitle_path| {
+        let Some(window) = generated_window_weak.upgrade() else {
+            return;
+        };
+        let subtitle_path = PathBuf::from(subtitle_path.as_str());
+        if load_subtitles(&window, &generated_state, &subtitle_path, None) {
+            generated_media.borrow_mut().subtitle_path = Some(subtitle_path);
+        }
+    });
+
     let generate_window_weak = window.as_weak();
     let generate_media = Rc::clone(&current_media);
-    let generate_state = Rc::clone(state);
     window.on_generate_subtitles_requested(move || {
         let Some(window) = generate_window_weak.upgrade() else {
             return;
@@ -485,14 +528,38 @@ fn wire_open_subtitles_dialog(
             tracing::warn!("subtitle generation requested with no video open");
             return;
         };
-        let generator = subtitle::StubSubtitleGenerator;
-        let Some(subtitle_path) = subtitle_generation::generate(&window, &generator, &video_path)
-        else {
-            return;
-        };
-        if load_subtitles(&window, &generate_state, &subtitle_path, None) {
-            generate_media.borrow_mut().subtitle_path = Some(subtitle_path);
-        }
+        window.set_subtitle_generation_status(SubtitleGenerationStatus::Generating);
+
+        // Only Send data may cross into the background thread and back via
+        // slint::invoke_from_event_loop below — a Weak<AppWindow> and the
+        // owned generation Result, not the Rc<RefCell<...>> state above.
+        // Loading the result into the player happens back on the UI thread
+        // via on_subtitle_generated (wired just above), which does have
+        // that state.
+        let callback_window_weak = generate_window_weak.clone();
+        subtitle_generation::spawn_generate(
+            whisper_cli_generator_from_env(),
+            video_path,
+            move |result| {
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(window) = callback_window_weak.upgrade() else {
+                        return;
+                    };
+                    let Some(subtitle_path) = subtitle_generation::apply_result(&window, result)
+                    else {
+                        return;
+                    };
+                    let Some(subtitle_path) = subtitle_path.to_str() else {
+                        tracing::error!(
+                            ?subtitle_path,
+                            "generated subtitle path is not valid UTF-8"
+                        );
+                        return;
+                    };
+                    window.invoke_subtitle_generated(subtitle_path.into());
+                });
+            },
+        );
     });
 
     let link_entries: Rc<RefCell<Vec<PathBuf>>> = Rc::new(RefCell::new(Vec::new()));
@@ -628,6 +695,7 @@ fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use slint::Model;
+    use subtitle::SubtitleGenerator;
 
     use super::*;
 
@@ -993,24 +1061,78 @@ mod tests {
             SubtitleGenerationStatus::Idle
         );
 
-        // When:  clicking "Generate subtitles", as the empty-state button does
-        // Then:  the stub generator runs synchronously, status ends at Done,
-        //        the dialog's original row reflects the generated file, the
-        //        player loads its one cue, and CurrentMedia tracks the new
-        //        subtitle path
-        window.invoke_generate_subtitles_requested();
+        // When:  generating a subtitle with StubSubtitleGenerator directly
+        //        and mirroring it via subtitle_generation::apply_result —
+        //        the same UI-thread step the real button's background-
+        //        thread callback performs once whisper-cli finishes (see
+        //        below), just without the thread hop, since a stub
+        //        generator returns instantly
+        // Then:  status ends at Done and the dialog's original row reflects
+        //        the generated file; loading it into the player and
+        //        CurrentMedia the way the button's callback does confirms
+        //        the generated .srt is a real, loadable subtitle
+        window.set_subtitle_generation_status(SubtitleGenerationStatus::Generating);
+        let generated_path = subtitle_generation::apply_result(
+            &window,
+            subtitle::StubSubtitleGenerator.generate(&generate_video_path),
+        );
         assert_eq!(
             window.get_subtitle_generation_status(),
             SubtitleGenerationStatus::Done
         );
         assert!(window.get_open_subtitles_original_linked());
         assert_eq!(window.get_open_subtitles_original_name(), "no_subs.srt");
+        assert_eq!(
+            generated_path,
+            Some(generate_video_path.with_extension("srt"))
+        );
+        let generated_path = generated_path.expect("stub generator should have produced a path");
+        assert!(load_subtitles(
+            &window,
+            &player_state,
+            &generated_path,
+            None
+        ));
+        current_media.borrow_mut().subtitle_path = Some(generated_path);
         assert_eq!(player_state.borrow().cues.len(), 1);
         assert_eq!(
             current_media.borrow().subtitle_path,
             Some(generate_video_path.with_extension("srt"))
         );
 
+        // When:  clicking the real "Generate subtitles" button
+        //        (window.invoke_generate_subtitles_requested, wired in
+        //        wire_open_subtitles_dialog to subtitle::WhisperCliGenerator
+        //        via subtitle_generation::spawn_generate) for a fresh video
+        //        with no linked subtitle
+        // Then:  it returns immediately with status Generating rather than
+        //        blocking the calling thread until a background whisper-cli
+        //        process finishes — real transcription can take minutes
+        //        (TODO.md Vaihe 21.5), so a click must never freeze the UI
+        //        thread. The eventual Done/Error transition is delivered
+        //        via slint::invoke_from_event_loop, which needs a running
+        //        event loop to process queued closures; this test never
+        //        calls AppWindow::run(), so that transition isn't
+        //        observable here (see subtitle_generation.rs's own tests
+        //        for the background-thread handoff itself)
+        let async_dir = std::env::temp_dir().join("trango-test-generate-subtitles-async");
+        let _ = std::fs::remove_dir_all(&async_dir);
+        std::fs::create_dir_all(&async_dir).expect("failed to create temp test dir");
+        let async_video_path = async_dir.join("no_subs_async.mp4");
+        std::fs::write(&async_video_path, b"").expect("failed to write fixture video file");
+        *current_media.borrow_mut() = CurrentMedia {
+            video_path: Some(async_video_path),
+            subtitle_path: None,
+            translation_path: None,
+        };
+
+        window.invoke_generate_subtitles_requested();
+        assert_eq!(
+            window.get_subtitle_generation_status(),
+            SubtitleGenerationStatus::Generating
+        );
+
         std::fs::remove_dir_all(&generate_dir).expect("failed to clean up temp test dir");
+        std::fs::remove_dir_all(&async_dir).expect("failed to clean up temp test dir");
     }
 }

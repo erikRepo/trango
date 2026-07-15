@@ -799,6 +799,7 @@ component OpenSubtitlesDialog {
     in property <bool> original-linked;
     in property <string> original-name;
     in property <SubtitleGenerationStatus> generation-status: SubtitleGenerationStatus.Idle;
+    in property <string> generation-error-message: "";
     in property <bool> translation-linked;
     in property <string> translation-name;
     callback generate-subtitles();
@@ -951,6 +952,14 @@ component OpenSubtitlesDialog {
                                     }
                                 }
                             }
+                        }
+
+                        if root.generation-status == SubtitleGenerationStatus.Error && root.generation-error-message != "" : Text {
+                            text: root.generation-error-message;
+                            color: Palette.error-text;
+                            font-family: "Inter";
+                            font-size: 12px;
+                            wrap: word-wrap;
                         }
                     }
 
@@ -1158,16 +1167,33 @@ export component AppWindow inherits Window {
     callback cancel-open-subtitles-dialog();
     callback confirm-open-subtitles-dialog();
     // Invoked by the original-language section's "Generate subtitles"
-    // button (TODO.md Vaihe 20) — wired in main.rs's
-    // wire_open_subtitles_dialog to subtitle_generation::generate, which
-    // mirrors Idle/Generating/Done/Error into subtitle-generation-status
-    // below and, on success, the original row via
-    // open_subtitles_dialog::mark_original_linked.
+    // button (TODO.md Vaihe 20/21.5) — wired in main.rs's
+    // wire_open_subtitles_dialog to subtitle::WhisperCliGenerator, run on a
+    // background thread (real transcription can take minutes) via
+    // subtitle_generation::spawn_generate. Its result is mirrored back into
+    // subtitle-generation-status/-error-message below and, on success, the
+    // original row via open_subtitles_dialog::mark_original_linked.
     callback generate-subtitles-requested();
     // Idle/Generating/Done/Error for the flow above, set from Rust by
     // crates/app/src/subtitle_generation.rs. Reset to Idle each time the
     // Open Subtitles dialog opens (open_subtitles_dialog::open_dialog).
     in property <SubtitleGenerationStatus> subtitle-generation-status: SubtitleGenerationStatus.Idle;
+    // Human-readable failure reason for the Error state above (e.g.
+    // "whisper-cli not found (looked for ...) — install whisper.cpp..."),
+    // shown in place of a generic "Generation failed" message. Empty
+    // outside the Error state; reset alongside subtitle-generation-status.
+    in property <string> subtitle-generation-error-message: "";
+    // Internal signal, not tied to any UI element: invoked from Rust
+    // (main.rs's generate-subtitles-requested handler) once a background
+    // whisper-cli run finishes successfully, carrying the new subtitle's
+    // path. Exists because the handler's `slint::invoke_from_event_loop`
+    // callback (dispatched from a background thread, so it may only
+    // capture `Send` data — a `Weak<AppWindow>` plus this path string) has
+    // no way to reach the `Rc<RefCell<PlayerState>>`/`Rc<RefCell<CurrentMedia>>`
+    // that loading the subtitle into the player needs; invoking this
+    // callback hands off to a handler set up once on the UI thread
+    // (`wire_open_subtitles_dialog`) that does have them.
+    callback subtitle-generated(string);
     // Invoked by the translation section's "click to link…" text. Opens
     // the link-translation file picker below rather than accepting an
     // OS-level file drop like the design mock: Slint 1.17.1's winit
@@ -1372,6 +1398,7 @@ export component AppWindow inherits Window {
             original-linked: root.open-subtitles-original-linked;
             original-name: root.open-subtitles-original-name;
             generation-status: root.subtitle-generation-status;
+            generation-error-message: root.subtitle-generation-error-message;
             translation-linked: root.open-subtitles-translation-linked;
             translation-name: root.open-subtitles-translation-name;
             generate-subtitles => { root.generate-subtitles-requested(); }

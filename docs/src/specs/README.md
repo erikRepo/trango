@@ -61,10 +61,102 @@ same naming convention `open_video_dialog::matching_subtitle_path` looks
 for), so a "generated" file is picked up as the video's linked original
 subtitle immediately, without a separate refresh step.
 
-`crates/app/src/subtitle_generation.rs`'s `generate` runs the generator
-synchronously on the UI thread and mirrors the result into
+At this stage, `crates/app/src/subtitle_generation.rs`'s `generate` ran the
+generator synchronously on the UI thread and mirrored the result into
 `AppWindow::subtitle-generation-status` plus (on success) the Open
-Subtitles dialog's original row. That's fine for a stub that returns
-instantly; a real STT backend will likely need to move this off the UI
-thread (e.g. a background thread reporting back via
-`slint::invoke_from_event_loop`) in whatever later step wires it in.
+Subtitles dialog's original row. That was fine for a stub that returns
+instantly; see "Subtitle generation: whisper-cli as an external process"
+below for the real backend that replaced it and moved this off the UI
+thread.
+
+## Subtitle generation: whisper-cli as an external process
+
+`TODO.md` Vaihe 21.5 adds the real speech-to-text backend the previous
+section deferred. Two implementation options were discussed: a Rust
+binding to whisper.cpp (e.g. the `whisper-rs` crate) versus driving
+whisper.cpp's own `whisper-cli` binary as an external process via
+`std::process::Command`. The external-process route won, for two reasons:
+it needs **no new Cargo dependency** (`whisper-cli` isn't linked into
+trango at all — the user installs it separately, see
+`docs/src/usage/`), and whisper.cpp already ships an `-osrt` flag that
+writes a ready-made `.srt` file directly, so trango doesn't need to parse
+raw transcript text or timestamps itself. The tradeoff is that generation
+now depends on an external tool being installed and discoverable, which
+`WhisperCliGenerator`'s `Error` status message (see below) is written to
+make legible rather than a generic failure.
+
+`subtitle::WhisperCliGenerator` (`crates/subtitle/src/generate.rs`) runs
+`whisper-cli -f <video> [-m <model>] -of <video-stem> -osrt`. The `-of`
+flag matters: it must be given the output path *without* an extension,
+because `whisper-cli` appends `.srt` itself when `-osrt` is set. Passing
+`video_path` with its extension stripped there makes the final output land
+at `video_path.with_extension("srt")` — the exact same same-stem
+convention `StubSubtitleGenerator` and
+`open_video_dialog::matching_subtitle_path` already use — without trango
+needing to rename or move whisper-cli's output afterward.
+
+Since `whisper-cli` isn't installed on the machine this was implemented
+on (noted in `TODO.md` Vaihe 21.5 itself), `WhisperCliGenerator`'s
+automated tests (`crates/subtitle/src/generate.rs`) don't exercise the
+real binary. Instead they write small POSIX shell scripts that mimic its
+`-of`/`-osrt` contract (writing `<-of value>.srt`, or exiting non-zero
+with a stderr message) and point `binary_path` at those — real `Command`
+plumbing (argument passing, exit status, stdout/stderr capture) is still
+exercised end-to-end, just against a stand-in binary rather than a real
+transcription. These tests are `#[cfg(unix)]`-only (the fake scripts need
+a POSIX shell and `chmod +x`); the "binary not found" and "video file
+missing" cases are platform-independent and run everywhere.
+
+### Background thread, not the UI thread
+
+Real transcription can take seconds to minutes, unlike the stub, so
+running it synchronously (the earlier stub-era `generate` function) would
+freeze the whole app. `crates/app/src/subtitle_generation.rs::spawn_generate`
+runs the generator on a `std::thread::spawn`-ed background thread instead,
+reporting its result to a caller-supplied `on_done` callback.
+
+The tricky part: `on_done` runs on the background thread, but updating
+`AppWindow` properties and the app's `Rc<RefCell<PlayerState>>`/
+`Rc<RefCell<CurrentMedia>>` state must happen on the UI thread, and
+`Rc`/`RefCell` aren't `Send` — they can't cross the thread boundary at
+all, even transiently through a closure capture. `main.rs`'s
+`wire_open_subtitles_dialog` handles this in two hops:
+
+1. `on_done` (background thread) calls `slint::invoke_from_event_loop`
+   with a closure that captures only `Send` data — a `Weak<AppWindow>`
+   and the owned `Result<PathBuf, SubtitleError>` — mirroring
+   `video_player.rs`'s `load_file` pattern for the same reason. That
+   closure runs `subtitle_generation::apply_result`, which needs only
+   `&AppWindow` to update `subtitle-generation-status`/`-error-message`
+   and (on success) the dialog's original row.
+2. On success, that same closure invokes a second, UI-thread-only signal:
+   `AppWindow::subtitle-generated(string)`. This callback isn't tied to
+   any UI element — it exists purely so a *separate* handler, set up once
+   in `wire_open_subtitles_dialog` and holding the `Rc`-based state
+   directly (no thread crossing involved, since both the `invoke_*` call
+   and the handler run on the UI thread), can load the generated subtitle
+   into the player and record it in `CurrentMedia`.
+
+This keeps the background thread's payload to genuinely `Send`-safe data
+without reaching for `unsafe impl Send` wrappers or switching
+`PlayerState`/`CurrentMedia` to `Arc<Mutex<...>>` throughout the app just
+for this one feature.
+
+Because `slint::invoke_from_event_loop` only *queues* its closure — it
+runs the next time the event loop actually polls — this whole path can't
+be driven end-to-end in an automated test the way most of the app's
+`AppWindow`-touching code is: `crates/app/src/main.rs`'s tests construct
+a real `AppWindow` but never call `AppWindow::run()` (see that test
+module's own comment on why only one such window can exist per test
+process), so a queued event loop closure never actually executes there.
+The test suite instead covers each layer separately: `spawn_generate`'s
+thread-spawn-and-callback plumbing is tested directly with a plain
+`mpsc` channel (no `AppWindow` involved,
+`crates/app/src/subtitle_generation.rs`), `apply_result`'s window-mirroring
+is tested against a real `AppWindow` by calling it directly with an
+already-resolved `Result`, and the real button wiring
+(`window.invoke_generate_subtitles_requested()`) is asserted to return
+immediately with status `Generating` — proving it doesn't block the UI
+thread — without asserting the later `Done`/`Error` transition, which is
+instead covered by manual testing (`TODO.md` Vaihe 21.5's "Voit
+ajaa/testata").

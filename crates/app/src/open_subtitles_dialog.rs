@@ -39,6 +39,7 @@ pub fn open_dialog(window: &AppWindow, video_path: &Path, links: &SubtitleLinks)
     set_original(window, links.original_path.as_deref());
     set_translation(window, links.translation_path.as_deref());
     window.set_subtitle_generation_status(SubtitleGenerationStatus::Idle);
+    window.set_subtitle_generation_error_message("".into());
     window.set_is_open_subtitles_dialog_open(true);
 }
 
