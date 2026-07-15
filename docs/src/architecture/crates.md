@@ -31,13 +31,19 @@ unit tests, later against real `.srt` fixtures.
 
 ## `crates/playback-state` (library, package `playback-state`)
 
-Currently an empty library — populated starting at Vaihe 6 in `TODO.md`.
+Depends on `subtitle` for the `Cue` type. Holds `PlaybackMode` (`Normal` |
+`SentenceBySentence`, defaulting to `Normal`) and `PlayerState { mode,
+cues: Vec<Cue>, current_cue_index: Option<usize>, show_translation: bool
+}`.
 
-Intended to hold the playback state machine (mode, cursor position, state
-transitions such as next/previous/repeat sentence and Normal ↔
-Sentence-by-sentence mode switching), with no I/O and no UI, so the
-sentence-by-sentence navigation logic can be TDD'd without a Slint window
-or a video file.
+`PlayerState::toggle_mode()` flips between `Normal` and
+`SentenceBySentence`. `set_cues(cues)` replaces the loaded cues and resets
+`current_cue_index` to `Some(0)`, or `None` if `cues` is empty.
+`toggle_translation()` flips `show_translation`.
+
+No I/O and no UI yet, so this state machine is TDD'd without a Slint
+window or a video file. Cue navigation (next/previous/repeat sentence) is
+added in a later step (see `TODO.md`, Vaihe 7).
 
 ## `crates/app` (binary, package `trango`)
 

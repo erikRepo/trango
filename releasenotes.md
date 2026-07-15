@@ -9,6 +9,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.5] - 2026-07-15
+
+### Added
+- `playback-state` crate: `PlaybackMode` (`Normal` | `SentenceBySentence`, defaults to `Normal`)
+- `playback-state` crate: `PlayerState { mode, cues, current_cue_index, show_translation }` with `toggle_mode()`, `set_cues(...)` (resets the cursor to the first cue, or `None` if empty), and `toggle_translation()`
+
 ## [0.1.4] - 2026-07-15
 
 ### Added

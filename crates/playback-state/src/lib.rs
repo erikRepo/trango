@@ -1,14 +1,12 @@
 //! Playback state machine for trango (mode, cursor, transitions).
 //!
-//! Currently empty — populated in later development steps (see `TODO.md`).
+//! Provides `PlaybackMode` (Normal vs. sentence-by-sentence) and
+//! `PlayerState`, the player's full observable state plus the transitions
+//! that mutate it. No I/O, no UI — pure state, so it can be tested without a
+//! Slint window or a video file.
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test_crate_builds() {
-        // Given: the playback-state crate as it exists right now
-        // When:  the workspace is compiled and tested
-        // Then:  this trivial assertion passes, proving the crate wires up correctly
-        assert_eq!(1 + 1, 2);
-    }
-}
+mod mode;
+mod state;
+
+pub use mode::PlaybackMode;
+pub use state::PlayerState;
