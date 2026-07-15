@@ -4,10 +4,11 @@
 //! `ui/app-window.slint`). libmpv integration and the rest of the UI are
 //! wired in later development steps (see `TODO.md`).
 
+mod sentence_card;
 mod video_player;
 
 use std::cell::RefCell;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use playback_state::{PlaybackMode, PlayerState};
@@ -52,6 +53,39 @@ fn video_path_from_args(args: &[String]) -> Option<PathBuf> {
     args.get(1).map(PathBuf::from)
 }
 
+/// Reads the subtitle path to load (if any) from CLI arguments, as used by
+/// `main`. `args` is expected to include the program name at index 0,
+/// matching Vaihe 14's `trango <path/to/video> <path/to/subs.srt>` usage —
+/// the Open Subtitles dialog for picking a file in-app arrives in a later
+/// step.
+fn subtitle_path_from_args(args: &[String]) -> Option<PathBuf> {
+    args.get(2).map(PathBuf::from)
+}
+
+/// Reads and parses `subtitle_path` into cues, loading them into `state` and
+/// mirroring the resulting current cue into the window's sentence card. Logs
+/// and leaves `state` untouched if the file can't be read or parsed, since a
+/// bad subtitle path shouldn't prevent the video from playing.
+fn load_subtitles(window: &AppWindow, state: &Rc<RefCell<PlayerState>>, subtitle_path: &Path) {
+    let contents = match std::fs::read_to_string(subtitle_path) {
+        Ok(contents) => contents,
+        Err(err) => {
+            tracing::error!(?subtitle_path, %err, "failed to read subtitle file");
+            return;
+        }
+    };
+    let cues = match subtitle::parse_srt(&contents) {
+        Ok(cues) => cues,
+        Err(err) => {
+            tracing::error!(?subtitle_path, %err, "failed to parse subtitle file");
+            return;
+        }
+    };
+    tracing::info!(?subtitle_path, cue_count = cues.len(), "loaded subtitles");
+    state.borrow_mut().set_cues(cues);
+    sentence_card::update_sentence_card(window, &state.borrow());
+}
+
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
     tracing::info!("trango starting");
@@ -59,11 +93,20 @@ fn main() -> anyhow::Result<()> {
 
     let window = AppWindow::new()?;
     window.set_version(env!("CARGO_PKG_VERSION").into());
-    let _player_state = wire_player_state(&window);
+    let player_state = wire_player_state(&window);
+    sentence_card::update_sentence_card(&window, &player_state.borrow());
 
     let args: Vec<String> = std::env::args().collect();
+    if let Some(subtitle_path) = subtitle_path_from_args(&args) {
+        load_subtitles(&window, &player_state, &subtitle_path);
+    }
+
     let _video_player = match video_path_from_args(&args) {
-        Some(video_path) => Some(video_player::VideoPlayer::attach(&window, &video_path)?),
+        Some(video_path) => Some(video_player::VideoPlayer::attach(
+            &window,
+            &video_path,
+            Rc::clone(&player_state),
+        )?),
         None => {
             tracing::info!("no video path given; run as `trango <path/to/video>` to play one");
             None
@@ -109,6 +152,33 @@ mod tests {
         assert_eq!(video_path_from_args(&args), None);
     }
 
+    #[test]
+    fn test_subtitle_path_from_args_with_both_paths() {
+        // Given: argv with a video path followed by a subtitle path
+        let args = vec![
+            "trango".to_string(),
+            "video.mp4".to_string(),
+            "subs.srt".to_string(),
+        ];
+
+        // When:  extracting the subtitle path
+        // Then:  it's the second argument after the program name
+        assert_eq!(
+            subtitle_path_from_args(&args),
+            Some(PathBuf::from("subs.srt"))
+        );
+    }
+
+    #[test]
+    fn test_subtitle_path_from_args_without_subtitle_path() {
+        // Given: argv with only a video path, no subtitle path
+        let args = vec!["trango".to_string(), "video.mp4".to_string()];
+
+        // When:  extracting the subtitle path
+        // Then:  there is none
+        assert_eq!(subtitle_path_from_args(&args), None);
+    }
+
     // Slint's winit backend can only be initialized once per process (and
     // stays bound to the thread that created it), so every assertion that
     // needs a real `AppWindow` lives in this single test instead of one
@@ -144,5 +214,21 @@ mod tests {
         window.invoke_toggle_mode();
         assert_eq!(player_state.borrow().mode, PlaybackMode::Normal);
         assert!(!window.get_sentence_mode_active());
+
+        // When:  the sentence card is wired to a state with no cues loaded
+        // Then:  it shows the placeholder label/text
+        sentence_card::update_sentence_card(&window, &player_state.borrow());
+        assert_eq!(window.get_sentence_label(), "Sentence – / –");
+        assert!(!window.get_has_current_sentence());
+
+        // When:  loading the real sample.srt fixture via load_subtitles
+        // Then:  the cards's properties reflect the first parsed cue
+        let subtitle_path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../test-media/sample/sample.srt");
+        load_subtitles(&window, &player_state, &subtitle_path);
+        assert_eq!(player_state.borrow().cues.len(), 5);
+        assert_eq!(window.get_sentence_label(), "Sentence 1 / 5");
+        assert_eq!(window.get_sentence_text(), "Welcome to Trango Player.");
+        assert!(window.get_has_current_sentence());
     }
 }

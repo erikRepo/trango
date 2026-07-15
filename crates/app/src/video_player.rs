@@ -29,13 +29,14 @@ use std::time::Duration;
 
 use libmpv2::render::{OpenGLInitParams, RenderContext, RenderParam, RenderParamApiType};
 use libmpv2::Mpv;
-use playback_state::format_time;
+use playback_state::{format_time, PlaybackMode, PlayerState};
 use slint::{ComponentHandle, GraphicsAPI, RenderingState, Timer, TimerMode, Weak};
 
 use gl_proc_address_bridge::{
     bridged_get_proc_address, with_bridged_get_proc_address, SlintGlContext,
 };
 
+use crate::sentence_card::update_sentence_card;
 use crate::AppWindow;
 
 /// How often the scrub bar's `Timer` re-reads mpv's `time-pos`/`duration`
@@ -84,7 +85,16 @@ impl VideoPlayer {
     /// `RenderingSetup` notification (only that callback exposes the OpenGL
     /// loader mpv needs), so actual playback start is deferred until Slint
     /// delivers it — normally on the very first rendered frame.
-    pub fn attach(window: &AppWindow, video_path: &Path) -> anyhow::Result<Self> {
+    ///
+    /// `player_state` is shared with the rest of the app (see `main.rs`); in
+    /// `SentenceBySentence` mode, the scrub bar's polling timer also syncs
+    /// its `current_cue_index` to mpv's `time-pos` and mirrors the result
+    /// into the window's current-sentence card (see [`sync_current_sentence`]).
+    pub fn attach(
+        window: &AppWindow,
+        video_path: &Path,
+        player_state: Rc<RefCell<PlayerState>>,
+    ) -> anyhow::Result<Self> {
         let mpv = Mpv::with_initializer(|init| {
             init.set_property("vo", "libmpv")?;
             Ok(())
@@ -129,6 +139,7 @@ impl VideoPlayer {
         let poll_window_weak = window.as_weak();
         scrub_bar_timer.start(TimerMode::Repeated, SCRUB_BAR_POLL_INTERVAL, move || {
             poll_scrub_bar(&poll_inner, &poll_window_weak);
+            sync_current_sentence(&poll_inner, &player_state, &poll_window_weak);
         });
 
         Ok(Self {
@@ -162,6 +173,31 @@ fn poll_scrub_bar(inner: &Rc<RefCell<VideoPlayerInner>>, window_weak: &Weak<AppW
     } else {
         0.0
     });
+}
+
+/// While `player_state` is in `SentenceBySentence` mode, syncs its
+/// `current_cue_index` to mpv's `time-pos` (see
+/// `PlayerState::sync_cue_to_time`) and mirrors the resulting cue into the
+/// window's current-sentence card. A no-op in `Normal` mode, and while mpv
+/// hasn't started decoding a file yet (`time-pos` unavailable). Called on
+/// `SCRUB_BAR_POLL_INTERVAL` by the timer started in [`VideoPlayer::attach`].
+fn sync_current_sentence(
+    inner: &Rc<RefCell<VideoPlayerInner>>,
+    player_state: &Rc<RefCell<PlayerState>>,
+    window_weak: &Weak<AppWindow>,
+) {
+    let Some(window) = window_weak.upgrade() else {
+        return;
+    };
+    let mut state = player_state.borrow_mut();
+    if state.mode != PlaybackMode::SentenceBySentence {
+        return;
+    }
+    let Ok(time_pos) = inner.borrow().mpv.get_property::<f64>("time-pos") else {
+        return;
+    };
+    state.sync_cue_to_time(Duration::from_secs_f64(time_pos.max(0.0)));
+    update_sentence_card(&window, &state);
 }
 
 /// Creates the mpv render context using Slint's OpenGL loader, wires mpv's

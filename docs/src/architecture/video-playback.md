@@ -68,6 +68,26 @@ The timer is stored on `VideoPlayer` (`scrub_bar_timer`) purely to keep it
 alive: dropping a `slint::Timer` stops it, the same reason the mpv core
 itself is kept alive via `'static Mpv` for the process lifetime.
 
+## Current-sentence card: syncing to mpv's time-pos
+
+The same timer tick that drives the scrub bar also calls
+`sync_current_sentence`, which mirrors the current subtitle cue into the
+sentence panel's `CurrentSentenceCard` (`app-window.slint`). It reads mpv's
+`time-pos`, and — only while the shared `PlayerState` (passed into
+`VideoPlayer::attach`) is in `SentenceBySentence` mode — calls
+`PlayerState::sync_cue_to_time` to move `current_cue_index` to whichever
+cue most recently started, then `sentence_card::update_sentence_card` to
+write the resulting "Sentence N / M" label and cue text onto the window. In
+`Normal` mode it's a no-op, so the card simply keeps showing whatever cue
+was last focused (e.g. the first one, set by `set_cues` when subtitles are
+loaded) instead of chasing playback.
+
+Cue-lookup itself (`sync_cue_to_time`) is plain `Duration` arithmetic with
+no mpv/Slint dependency, so it's unit-tested directly in
+`playback-state` — only the "read `time-pos`, write it into the window"
+integration around it needs a real mpv/Slint instance to exercise the same
+way frame rendering does (see below).
+
 ## Current limitation: no inset video area yet
 
 mpv's render API always draws starting at `(0, 0)` of the framebuffer it's

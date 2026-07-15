@@ -9,6 +9,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.14] - 2026-07-15
+
+### Added
+- `playback_state::PlayerState::sync_cue_to_time(time: Duration)`: sets `current_cue_index` to the cue whose start is the latest one at or before `time` (the sentence currently playing, or the most recently started one across a gap between cues), `None` before the first cue's start or with no cues loaded
+- `crates/app/src/sentence_card.rs`: `update_sentence_card(&AppWindow, &PlayerState)` mirrors the current cue into the window's "Sentence N / M" label and original-language text (placeholder text when none is in focus), split from a pure `sentence_card_display` helper so the mapping is unit-tested without a Slint window
+- `app-window.slint`: `CurrentSentenceCard` component (rounded card, uppercase mono sentence label, 24px/600 original text, divider) in a new sentence-panel column next to the video, per `sketch/design_reference.dc.html#1c`
+- `trango video.mp4 subs.srt` CLI usage: a second argument (`subtitle_path_from_args`) is read, parsed with `subtitle::parse_srt`, loaded into `PlayerState` via `set_cues`, and mirrored into the current-sentence card on startup — a bad/missing path is logged and otherwise ignored rather than stopping video playback
+- `video_player.rs`: the scrub bar's polling timer also calls the new `sync_current_sentence`, which — only in `SentenceBySentence` mode — syncs `current_cue_index` to mpv's `time-pos` and refreshes the current-sentence card
+
+### Changed
+- `trango` depends on `subtitle` (previously only a dev-dependency, used by the E2E test) so `main.rs` can parse subtitle files at runtime
+- `video_player::VideoPlayer::attach` takes an additional `Rc<RefCell<PlayerState>>` parameter, shared with the rest of the app, so its polling timer can read and update playback state
+- `app-window.slint`: the body row is now a `HorizontalLayout` (video column + 16px margins/gaps + fixed-width sentence panel column) instead of a single video column filling the whole width
+
 ## [0.1.13] - 2026-07-15
 
 ### Added

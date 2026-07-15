@@ -2,6 +2,8 @@
 //! transitions that mutate it (mode toggling, loading cues, translation
 //! visibility).
 
+use std::time::Duration;
+
 use subtitle::Cue;
 
 use crate::mode::PlaybackMode;
@@ -45,6 +47,17 @@ impl PlayerState {
     /// Flips whether translation text is shown.
     pub fn toggle_translation(&mut self) {
         self.show_translation = !self.show_translation;
+    }
+
+    /// Updates `current_cue_index` to the cue whose start timestamp is the
+    /// latest one at or before `time` — i.e. the sentence currently playing,
+    /// or the most recently started one if `time` falls in a gap between
+    /// cues. Drives the current-sentence card from mpv's `time-pos` while in
+    /// `SentenceBySentence` mode. Leaves the cursor at `None` if `time` is
+    /// before the first cue's start, or no cues are loaded.
+    pub fn sync_cue_to_time(&mut self, time: Duration) {
+        let started_count = self.cues.partition_point(|cue| cue.start <= time);
+        self.current_cue_index = started_count.checked_sub(1);
     }
 }
 
@@ -135,5 +148,83 @@ mod tests {
         assert!(state.show_translation);
         state.toggle_translation();
         assert!(!state.show_translation);
+    }
+
+    #[test]
+    fn test_sync_cue_to_time_on_empty_cues_is_none() {
+        // Given: a fresh state with no cues loaded
+        // When:  syncing to any timestamp
+        // Then:  the cursor stays None
+        let mut state = PlayerState::new();
+        state.sync_cue_to_time(Duration::from_millis(500));
+        assert_eq!(state.current_cue_index, None);
+    }
+
+    #[test]
+    fn test_sync_cue_to_time_before_first_cue_clears_cursor() {
+        // Given: a state with cues loaded (cursor defaults to the first cue)
+        // When:  syncing to a time before the first cue's start
+        // Then:  the cursor becomes None, since no sentence has started yet
+        let mut state = PlayerState::new();
+        state.set_cues(vec![
+            cue(1, 1_000, 2_000, "one"),
+            cue(2, 2_000, 3_000, "two"),
+        ]);
+
+        state.sync_cue_to_time(Duration::from_millis(500));
+
+        assert_eq!(state.current_cue_index, None);
+    }
+
+    #[test]
+    fn test_sync_cue_to_time_at_exact_cue_start_selects_that_cue() {
+        // Given: a state with two cues
+        // When:  syncing exactly to the second cue's start
+        // Then:  the cursor selects the second cue
+        let mut state = PlayerState::new();
+        state.set_cues(vec![cue(1, 0, 1_000, "one"), cue(2, 1_000, 2_000, "two")]);
+
+        state.sync_cue_to_time(Duration::from_millis(1_000));
+
+        assert_eq!(state.current_cue_index, Some(1));
+    }
+
+    #[test]
+    fn test_sync_cue_to_time_within_cue_span_selects_that_cue() {
+        // Given: a state with two cues
+        // When:  syncing to a time inside the first cue's span
+        // Then:  the cursor selects the first cue
+        let mut state = PlayerState::new();
+        state.set_cues(vec![cue(1, 0, 1_000, "one"), cue(2, 1_000, 2_000, "two")]);
+
+        state.sync_cue_to_time(Duration::from_millis(500));
+
+        assert_eq!(state.current_cue_index, Some(0));
+    }
+
+    #[test]
+    fn test_sync_cue_to_time_in_gap_keeps_previous_cue() {
+        // Given: a state with two cues that have a silent gap between them
+        // When:  syncing to a time inside that gap
+        // Then:  the cursor stays on the cue that most recently started
+        let mut state = PlayerState::new();
+        state.set_cues(vec![cue(1, 0, 1_000, "one"), cue(2, 1_500, 2_000, "two")]);
+
+        state.sync_cue_to_time(Duration::from_millis(1_200));
+
+        assert_eq!(state.current_cue_index, Some(0));
+    }
+
+    #[test]
+    fn test_sync_cue_to_time_after_last_cue_selects_last_cue() {
+        // Given: a state with two cues
+        // When:  syncing to a time after the last cue's end
+        // Then:  the cursor stays on the last cue
+        let mut state = PlayerState::new();
+        state.set_cues(vec![cue(1, 0, 1_000, "one"), cue(2, 1_000, 2_000, "two")]);
+
+        state.sync_cue_to_time(Duration::from_millis(5_000));
+
+        assert_eq!(state.current_cue_index, Some(1));
     }
 }

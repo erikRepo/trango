@@ -59,6 +59,14 @@ or `H:MM:SS` once it reaches an hour; used for the scrub bar's time labels
 non-finite input (e.g. mpv's `time-pos`/`duration` before a video has
 started reporting them) to `00:00` instead of panicking or underflowing.
 
+`sync_cue_to_time(time: Duration)` sets `current_cue_index` to the cue whose
+`start` is the latest one at or before `time` — the sentence currently
+playing, or the most recently started one if `time` falls in a gap between
+cues — and `None` if `time` is before the first cue's start or no cues are
+loaded. This is what drives the current-sentence card from mpv's `time-pos`
+while in `SentenceBySentence` mode (see
+`docs/src/architecture/video-playback.md`).
+
 No I/O and no UI yet, so this state machine (and `format_time`) is TDD'd
 without a Slint window or a video file.
 
@@ -82,6 +90,16 @@ mpv's `time-pos`/`duration` properties to drive the scrub bar below the
 video frame; without a video path, the video area just shows the window
 background as a placeholder and the scrub bar stays at `00:00`. Picking a
 file from an in-app dialog is a later `TODO.md` step.
+
+If a second CLI argument is given (`trango video.mp4 subs.srt`),
+`load_subtitles` reads and parses it with `subtitle::parse_srt`, loads the
+resulting cues into `PlayerState` via `set_cues`, and mirrors the first cue
+into the current-sentence card (`crates/app/src/sentence_card.rs`,
+`update_sentence_card`) — see
+`docs/src/architecture/video-playback.md` for how that card keeps updating
+from mpv's `time-pos` afterward. A file that can't be read or doesn't parse
+is logged and otherwise ignored — a bad subtitle path shouldn't stop the
+video from playing.
 
 Depends on `playback-state` for `PlayerState`. `wire_player_state(&AppWindow)`
 creates a `PlayerState` (behind `Rc<RefCell<_>>` — Slint callbacks run on the

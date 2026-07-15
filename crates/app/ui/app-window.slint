@@ -89,6 +89,53 @@ component GhostButton {
     }
 }
 
+/// The right-hand sentence panel's top card: "Sentence N / M" (uppercase,
+/// mono, muted) above the current cue's original-language text, with a
+/// divider below. `sentence-label`/`sentence-text`/`has-sentence` are set
+/// from Rust: `main.rs` after loading a subtitle file, and
+/// `video_player.rs`'s scrub bar poll (while in `SentenceBySentence` mode,
+/// synced from mpv's `time-pos`). Translation display and the sentence-list
+/// card underneath it arrive in later TODO.md steps.
+component CurrentSentenceCard {
+    in property <string> sentence-label;
+    in property <string> sentence-text;
+    in property <bool> has-sentence;
+
+    Rectangle {
+        border-width: 1px;
+        border-radius: 8px;
+        border-color: Palette.border;
+        background: Palette.panel-bg;
+
+        VerticalLayout {
+            padding: 20px;
+            spacing: 12px;
+
+            Text {
+                text: root.sentence-label;
+                color: Palette.muted-text;
+                font-family: "JetBrains Mono";
+                font-size: 10px;
+                font-weight: 600;
+            }
+
+            Text {
+                text: root.sentence-text;
+                color: root.has-sentence ? Palette.primary-text : Palette.muted-text;
+                font-family: "Inter";
+                font-size: 24px;
+                font-weight: 600;
+                wrap: word-wrap;
+            }
+
+            Rectangle {
+                height: 1px;
+                background: Palette.border;
+            }
+        }
+    }
+}
+
 /// Time / progress control below the video frame: current time (mono,
 /// muted) — 4px track with accent-filled progress and a white circular
 /// thumb — total time (mono, muted). `current-time-label`/`duration-label`
@@ -165,6 +212,11 @@ export component AppWindow inherits Window {
     in property <string> current-time-label: "00:00";
     in property <string> duration-label: "00:00";
     in property <float> scrub-progress: 0.0;
+    // Current-sentence card state, mirrored from playback_state::PlayerState
+    // by crates/app/src/sentence_card.rs — see CurrentSentenceCard above.
+    in property <string> sentence-label: "Sentence – / –";
+    in property <string> sentence-text: "No sentence loaded.";
+    in property <bool> has-current-sentence: false;
     callback toggle-mode();
 
     title: "TrangoPlayer v" + version;
@@ -249,21 +301,38 @@ export component AppWindow inherits Window {
             }
         }
 
-        VerticalLayout {
-            Rectangle {
-                // Video frame area, filling the remaining window height
-                // below the top bar. Transparent while a video is loaded so
-                // the mpv underlay shows through (see `video-loaded` above);
-                // otherwise filled with the window background color as a
-                // placeholder. Precise inset margins, rounded corners and
-                // the sentence panel column land in later TODO.md steps.
-                background: root.video-loaded ? transparent : Palette.window-bg;
+        HorizontalLayout {
+            padding: 16px;
+            spacing: 16px;
+
+            VerticalLayout {
+                spacing: 8px;
+
+                Rectangle {
+                    // Video frame area, filling the remaining column height.
+                    // Transparent while a video is loaded so the mpv underlay
+                    // shows through (see `video-loaded` above); otherwise
+                    // filled with the window background color as a
+                    // placeholder. Precise rounded corners land in a later
+                    // TODO.md step.
+                    background: root.video-loaded ? transparent : Palette.window-bg;
+                }
+
+                ScrubBar {
+                    current-time-label: root.current-time-label;
+                    duration-label: root.duration-label;
+                    progress: root.scrub-progress;
+                }
             }
 
-            ScrubBar {
-                current-time-label: root.current-time-label;
-                duration-label: root.duration-label;
-                progress: root.scrub-progress;
+            VerticalLayout {
+                width: 320px;
+
+                CurrentSentenceCard {
+                    sentence-label: root.sentence-label;
+                    sentence-text: root.sentence-text;
+                    has-sentence: root.has-current-sentence;
+                }
             }
         }
     }
