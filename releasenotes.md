@@ -9,6 +9,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.4] - 2026-07-15
+
+### Added
+- `subtitle` crate: `merge_translation(original: Vec<Cue>, translation: Vec<Cue>) -> Vec<Cue>` attaching a translation track's text onto an original track's cues by timing overlap (not index), so mismatched cue counts between hand-timed and STT-generated tracks don't silently drift out of sync
+
+### Changed
+- `Cue` gains a `translation: Option<String>` field (`None` until `merge_translation` fills it in)
+
 ## [0.1.3] - 2026-07-15
 
 ### Added

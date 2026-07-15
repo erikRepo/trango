@@ -15,10 +15,16 @@ pub struct Cue {
     pub end: Duration,
     /// The subtitle text shown during `[start, end)`.
     pub text: String,
+    /// Translated text for this cue, if a translation track has been merged
+    /// in via `merge_translation`. `None` until then.
+    pub translation: Option<String>,
 }
 
 impl Cue {
     /// Builds a new `Cue`, validating that `start` is strictly before `end`.
+    ///
+    /// `translation` starts as `None`; use `merge_translation` to fill it in
+    /// from a second subtitle track.
     pub fn new(
         index: u32,
         start: Duration,
@@ -33,6 +39,7 @@ impl Cue {
             start,
             end,
             text: text.into(),
+            translation: None,
         })
     }
 }

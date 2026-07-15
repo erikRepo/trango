@@ -5,14 +5,26 @@ three members:
 
 ## `crates/subtitle` (library, package `subtitle`)
 
-Holds the `Cue` data model (`index`, `start`, `end`, `text`) and
-`SubtitleError` (see `docs/src/technology/thiserror.md`). `Cue::new`
-validates that `start < end`. `parse_srt(&str) -> Result<Vec<Cue>,
-SubtitleError>` parses `.srt` file contents into cues: it strips a
-leading UTF-8 BOM, normalizes `\n`/`\r\n` line endings, and returns
-`SubtitleError::InvalidFormat` for malformed blocks (bad index, missing
-timing line, unparseable timestamp). Tested against fixture files in
-`crates/subtitle/tests/fixtures/`.
+Holds the `Cue` data model (`index`, `start`, `end`, `text`,
+`translation`) and `SubtitleError` (see
+`docs/src/technology/thiserror.md`). `Cue::new` validates that `start <
+end` and leaves `translation` as `None`. `parse_srt(&str) ->
+Result<Vec<Cue>, SubtitleError>` parses `.srt` file contents into cues:
+it strips a leading UTF-8 BOM, normalizes `\n`/`\r\n` line endings, and
+returns `SubtitleError::InvalidFormat` for malformed blocks (bad index,
+missing timing line, unparseable timestamp). Tested against fixture
+files in `crates/subtitle/tests/fixtures/`.
+
+`merge_translation(original: Vec<Cue>, translation: Vec<Cue>) ->
+Vec<Cue>` attaches a second (translation) subtitle track's text onto
+`original`'s cues. Matching is done by timing overlap, not by index: for
+each original cue, the translation cue whose `[start, end)` range
+overlaps it the most supplies the text, and a cue with no overlapping
+translation cue keeps `translation: None`. Overlap-based matching was
+chosen over index-based matching because the two tracks may not have the
+same number of cues — e.g. a hand-timed original paired with an
+STT-generated translation — so pairing by position would silently drift
+out of sync.
 
 No dependency on Slint or libmpv, so it can be tested with fast, isolated
 unit tests, later against real `.srt` fixtures.
