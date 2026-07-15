@@ -9,6 +9,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.31] - 2026-07-15
+
+### Fixed
+- `crates/app/src/video_player.rs`: Space could still replay the *next* sentence instead of the current one even after the previous fix — `sync_current_sentence` and `apply_pending_pause` run in the same poll tick, `sync_current_sentence` first, so on the exact tick `time-pos` first reached a contiguous cue's shared end/next-start boundary, `pause_at` was still armed (not cleared until immediately after, same tick) and the cursor got reclassified before the pause even landed. Gating on "has `pause_at` cleared" couldn't fix a bug that happens before clearing
+
+### Removed
+- `sync_current_sentence` (`video_player.rs`) and `PlayerState::sync_cue_to_time` (`playback-state`), rather than patching the bug above a third time — under the current model every play action is a bounded single-cue span whose cue is already known from the moment it starts, so there's nothing left for live `time-pos`-based cue rediscovery to correctly do (see `docs/src/specs/`'s "`sync_current_sentence` removed entirely" for the full reasoning, including what would need it back: `Normal` mode continuous playback or scrub-bar dragging, neither of which exists yet)
+
 ## [0.1.30] - 2026-07-15
 
 ### Fixed

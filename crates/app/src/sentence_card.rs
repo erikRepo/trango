@@ -105,7 +105,7 @@ mod tests {
             cue(2, 1_000, 2_000, "two"),
             cue(3, 2_000, 3_000, "three"),
         ]);
-        state.sync_cue_to_time(Duration::from_millis(1_500));
+        state.jump_to_cue(1);
 
         let display = sentence_card_display(&state);
 

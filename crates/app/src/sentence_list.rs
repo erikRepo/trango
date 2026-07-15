@@ -70,7 +70,7 @@ mod tests {
 
     #[test]
     fn test_sentence_list_rows_marks_current_cue() {
-        // Given: a state with three cues, cursor synced onto the second
+        // Given: a state with three cues, cursor on the second
         // When:  computing the sentence list rows
         // Then:  each row's label is "index · text" and only the current
         //        cue's row has is_current set
@@ -80,7 +80,7 @@ mod tests {
             cue(2, 1_000, 2_000, "two"),
             cue(3, 2_000, 3_000, "three"),
         ]);
-        state.sync_cue_to_time(Duration::from_millis(1_500));
+        state.jump_to_cue(1);
 
         let rows = sentence_list_rows(&state);
 

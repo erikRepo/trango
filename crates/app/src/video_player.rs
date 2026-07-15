@@ -36,8 +36,6 @@ use gl_proc_address_bridge::{
     bridged_get_proc_address, with_bridged_get_proc_address, SlintGlContext,
 };
 
-use crate::sentence_card::update_sentence_card;
-use crate::sentence_list::update_sentence_list;
 use crate::AppWindow;
 
 /// How often the scrub bar's `Timer` re-reads mpv's `time-pos`/`duration`
@@ -67,8 +65,7 @@ struct VideoPlayerInner {
     /// should pause mpv, armed by [`VideoPlayer::toggle_play_span`] when it
     /// starts playing a [`PlaySpanCommand`]'s span. Cleared once reached, or
     /// immediately if `toggle_play_span` is called again while still armed
-    /// (Space pausing early). While this is armed, [`sync_current_sentence`]
-    /// leaves `current_cue_index` alone — see its doc comment for why.
+    /// (Space pausing early).
     pause_at: Option<Duration>,
     /// Timestamp the next poll tick (see [`apply_pending_start_seek`]) should
     /// seek mpv to once a file is actually loaded, armed by
@@ -114,10 +111,13 @@ impl VideoPlayer {
     /// first frame has rendered, well before any video is likely to have
     /// been picked.
     ///
-    /// `player_state` is shared with the rest of the app (see `main.rs`); in
-    /// `SentenceBySentence` mode, the scrub bar's polling timer also syncs
-    /// its `current_cue_index` to mpv's `time-pos` and mirrors the result
-    /// into the window's current-sentence card (see [`sync_current_sentence`]).
+    /// `player_state` is shared with the rest of the app (see `main.rs`) —
+    /// used here only for the initial `loadfile`'s own start-of-playback
+    /// pause/seek (see [`pause_and_arm_start_seek`]). `current_cue_index`
+    /// is otherwise only ever moved by explicit navigation/Space actions,
+    /// not by anything time-pos-driven — see `docs/src/specs/`, "No mode
+    /// autoplays", for why polling `time-pos` to live-track the current
+    /// cue was removed rather than patched again.
     pub fn attach(
         window: &AppWindow,
         video_path: Option<&Path>,
@@ -174,7 +174,6 @@ impl VideoPlayer {
         let poll_window_weak = window.as_weak();
         scrub_bar_timer.start(TimerMode::Repeated, SCRUB_BAR_POLL_INTERVAL, move || {
             poll_scrub_bar(&poll_inner, &poll_window_weak);
-            sync_current_sentence(&poll_inner, &player_state, &poll_window_weak);
             apply_pending_pause(&poll_inner);
             apply_pending_start_seek(&poll_inner);
         });
@@ -380,59 +379,6 @@ fn poll_scrub_bar(inner: &Rc<RefCell<VideoPlayerInner>>, window_weak: &Weak<AppW
     } else {
         0.0
     });
-}
-
-/// While `player_state` is in `SentenceBySentence` mode and a
-/// [`PlaySpanCommand`] is actively playing (`inner.pause_at` armed — see
-/// [`VideoPlayer::toggle_play_span`]), syncs `current_cue_index` to mpv's
-/// live `time-pos` (see `PlayerState::sync_cue_to_time`) and mirrors the
-/// resulting cue into the window's current-sentence card. The sentence
-/// list is only rebuilt when the cursor's cue actually changed, since this
-/// runs on every `SCRUB_BAR_POLL_INTERVAL` tick and rebuilding its model is
-/// otherwise pointless churn.
-///
-/// Skipped entirely once `pause_at` is no longer armed — i.e. once mpv has
-/// paused (whether at the end of the span or early, via Space) — rather
-/// than continuing to derive `current_cue_index` from `time-pos` while
-/// paused: a paused position can land exactly on the *next* cue's start
-/// (common with real speech-to-text output, whose cues are often back-to-
-/// back with no gap between them), which would otherwise silently flip the
-/// cursor to that next cue the instant playback stopped — so pressing
-/// Space again to "replay" would actually play the wrong sentence. The
-/// cursor navigation methods (`next_cue`/`previous_cue`/`jump_to_cue`/
-/// `repeat_current_cue`) already set it correctly the moment they're
-/// invoked; live-syncing here is only useful while a span set in motion by
-/// `repeat_current_cue` is actually still playing toward its own end.
-///
-/// A no-op in `Normal` mode, and while mpv hasn't started decoding a file
-/// yet (`time-pos` unavailable). Called on `SCRUB_BAR_POLL_INTERVAL` by the
-/// timer started in [`VideoPlayer::attach`].
-fn sync_current_sentence(
-    inner: &Rc<RefCell<VideoPlayerInner>>,
-    player_state: &Rc<RefCell<PlayerState>>,
-    window_weak: &Weak<AppWindow>,
-) {
-    let Some(window) = window_weak.upgrade() else {
-        return;
-    };
-    let mut state = player_state.borrow_mut();
-    if state.mode != PlaybackMode::SentenceBySentence {
-        return;
-    }
-    let inner = inner.borrow();
-    if inner.pause_at.is_none() {
-        return;
-    }
-    let Ok(time_pos) = inner.mpv.get_property::<f64>("time-pos") else {
-        return;
-    };
-    drop(inner);
-    let previous_cue_index = state.current_cue_index;
-    state.sync_cue_to_time(Duration::from_secs_f64(time_pos.max(0.0)));
-    update_sentence_card(&window, &state);
-    if state.current_cue_index != previous_cue_index {
-        update_sentence_list(&window, &state);
-    }
 }
 
 /// Creates the mpv render context using Slint's OpenGL loader, wires mpv's

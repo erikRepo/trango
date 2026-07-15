@@ -385,3 +385,48 @@ and restructured so the pause always happens unconditionally; only the
 *first-cue seek-arming* part stays conditional on `SentenceBySentence`
 mode with cues present (Normal mode, or no cues, still pauses — just at
 `0:00`, since there's no particular cue start to land on instead).
+
+## `sync_current_sentence` removed entirely — not patched a third time
+
+The `pause_at`-gated fix described above (keeping `sync_current_sentence`
+but skipping it once `pause_at` cleared) turned out to still be wrong:
+tested against `test-media/sample2/`'s real whisper-cli-generated,
+contiguous-cue subtitle, Space still replayed the *next* sentence
+instead of the current one. The gating missed the actual failure moment
+— `sync_current_sentence` and `apply_pending_pause` run in the same
+`SCRUB_BAR_POLL_INTERVAL` tick, `sync_current_sentence` first. On the
+very tick `time-pos` first reaches (or, more likely, slightly overshoots)
+the playing cue's `end`, `pause_at` is *still* `Some` — `apply_pending_pause`
+hasn't cleared it yet, it runs right after in the same tick — so
+`sync_current_sentence` still ran, saw a `time-pos` already at/past the
+next cue's `start` (contiguous cues again), and reclassified the cursor
+before the pause even landed. Gating on "has `pause_at` been cleared"
+can't fix a bug that happens *before* clearing, only after.
+
+Stepping back, the actual question was: does `sync_current_sentence`
+serve any purpose left to fix, or should it go? Under the post-redesign
+model (this file's "No mode autoplays" section above), every play action
+is a bounded single-cue span kicked off by `toggle_play_span`, which
+already knows exactly which cue it's playing — the cursor doesn't need
+to be *rediscovered* from `time-pos` at any point during that span, it's
+already correct from the moment the action fired. The only thing that
+would ever need live `time-pos`-based cue discovery is a free-running,
+un-bounded playback the app doesn't know the cue for in advance —
+`Normal` mode's continuous playback (not yet wired to any UI at all,
+`TODO.md` Vaihe 21) or a scrub-bar drag-to-seek feature (doesn't exist —
+the scrub bar is currently display-only). Neither exists today, so there
+was nothing left for `sync_current_sentence` to correctly serve, only a
+recurring source of the same class of bug.
+
+It was removed outright — the function, its poll-loop call, and
+`PlayerState::sync_cue_to_time` (now with no remaining callers) —  rather
+than patched a third time. The sentence card/list still update correctly
+on every cursor-moving action, since `next_cue`/`previous_cue`/
+`jump_to_cue`'s callers (`apply_navigation_result` in `main.rs`) already
+call `sentence_card::update_sentence_card`/`sentence_list::update_sentence_list`
+directly, synchronously, independent of the removed poll-based path;
+`repeat_current_cue` (Space) never needed to trigger either, since it
+never moves the cursor. If `Normal` mode or scrub-bar dragging need
+live cue tracking later, that should be designed and tested fresh against
+whatever their actual seek/playback model turns out to be, not by
+reviving this removed mechanism as-is.
