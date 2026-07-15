@@ -5,6 +5,7 @@
 //! wired in later development steps (see `TODO.md`).
 
 mod sentence_card;
+mod sentence_list;
 mod video_player;
 
 use std::cell::RefCell;
@@ -49,12 +50,13 @@ fn wire_player_state(window: &AppWindow) -> Rc<RefCell<PlayerState>> {
     state
 }
 
-/// Wires the window's `next-cue`, `previous-cue`, and `repeat-cue`
-/// callbacks — invoked by `app-window.slint`'s `key-pressed` handler for
-/// Right/Left/Space while in `SentenceBySentence` mode — to `PlayerState`'s
+/// Wires the window's `next-cue`, `previous-cue`, `repeat-cue`, and
+/// `jump-to-cue` callbacks — invoked by `app-window.slint`'s `key-pressed`
+/// handler for Right/Left/Space while in `SentenceBySentence` mode, and by
+/// the sentence list's row clicks, respectively — to `PlayerState`'s
 /// matching navigation methods, mirroring the resulting cue into the
-/// sentence card and handing any produced `SeekCommand` to `video_player` to
-/// drive mpv (seek + play-to-end + pause, see
+/// sentence card/list and handing any produced `SeekCommand` to
+/// `video_player` to drive mpv (seek + play-to-end + pause, see
 /// `video_player::VideoPlayer::apply_seek_command`).
 fn wire_cue_navigation(
     window: &AppWindow,
@@ -79,12 +81,26 @@ fn wire_cue_navigation(
         &video_player,
         |state| state.repeat_current_cue(),
     ));
+
+    let jump_state = Rc::clone(state);
+    let jump_window_weak = window.as_weak();
+    let jump_video_player = Rc::clone(&video_player);
+    window.on_jump_to_cue(move |index| {
+        let Ok(index) = usize::try_from(index) else {
+            tracing::warn!(index, "ignoring negative sentence list row index");
+            return;
+        };
+        let command = jump_state.borrow_mut().jump_to_cue(index);
+        if let Some(window) = jump_window_weak.upgrade() {
+            apply_navigation_result(&window, &jump_state.borrow(), &jump_video_player, command);
+        }
+    });
 }
 
-/// Builds the closure behind one `wire_cue_navigation` callback: runs
-/// `navigate` against the shared `PlayerState`, mirrors the resulting cue
-/// into the sentence card, and — if a `SeekCommand` was produced — hands it
-/// to `video_player`.
+/// Builds the closure behind one `wire_cue_navigation` key-driven callback:
+/// runs `navigate` against the shared `PlayerState`, then applies the result
+/// the same way the sentence list's row-click handler does (see
+/// `apply_navigation_result`).
 fn cue_navigation_handler(
     window: &AppWindow,
     state: &Rc<RefCell<PlayerState>>,
@@ -97,11 +113,26 @@ fn cue_navigation_handler(
     move || {
         let command = navigate(&mut state.borrow_mut());
         if let Some(window) = window_weak.upgrade() {
-            sentence_card::update_sentence_card(&window, &state.borrow());
+            apply_navigation_result(&window, &state.borrow(), &video_player, command);
         }
-        if let Some(command) = command {
-            video_player.apply_seek_command(command);
-        }
+    }
+}
+
+/// Mirrors a navigation result into the sentence card and sentence list, and
+/// — if a `SeekCommand` was produced — hands it to `video_player` to drive
+/// mpv. Shared by arrow/space key handling and the sentence list's row-click
+/// handling so both paths behave identically, per README's "Sentence list"
+/// spec ("same behavior as arrow navigation").
+fn apply_navigation_result(
+    window: &AppWindow,
+    state: &PlayerState,
+    video_player: &video_player::VideoPlayer,
+    command: Option<SeekCommand>,
+) {
+    sentence_card::update_sentence_card(window, state);
+    sentence_list::update_sentence_list(window, state);
+    if let Some(command) = command {
+        video_player.apply_seek_command(command);
     }
 }
 
@@ -144,6 +175,7 @@ fn load_subtitles(window: &AppWindow, state: &Rc<RefCell<PlayerState>>, subtitle
     tracing::info!(?subtitle_path, cue_count = cues.len(), "loaded subtitles");
     state.borrow_mut().set_cues(cues);
     sentence_card::update_sentence_card(window, &state.borrow());
+    sentence_list::update_sentence_list(window, &state.borrow());
 }
 
 fn main() -> anyhow::Result<()> {
@@ -155,6 +187,7 @@ fn main() -> anyhow::Result<()> {
     window.set_version(env!("CARGO_PKG_VERSION").into());
     let player_state = wire_player_state(&window);
     sentence_card::update_sentence_card(&window, &player_state.borrow());
+    sentence_list::update_sentence_list(&window, &player_state.borrow());
 
     let args: Vec<String> = std::env::args().collect();
     if let Some(subtitle_path) = subtitle_path_from_args(&args) {
@@ -182,6 +215,8 @@ fn main() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use slint::Model;
+
     use super::*;
 
     #[test]
@@ -297,5 +332,14 @@ mod tests {
         assert_eq!(window.get_sentence_label(), "Sentence 1 / 5");
         assert_eq!(window.get_sentence_text(), "Welcome to Trango Player.");
         assert!(window.get_has_current_sentence());
+
+        // When:  the same load_subtitles call also feeds the sentence list
+        // Then:  it holds one row per cue, the first one marked current
+        let rows = window.get_sentence_list_rows();
+        assert_eq!(rows.row_count(), 5);
+        let first_row = rows.row_data(0).expect("row 0 exists");
+        assert_eq!(first_row.label, "1 · Welcome to Trango Player.");
+        assert!(first_row.is_current);
+        assert_eq!(window.get_sentence_list_current_index(), 0);
     }
 }

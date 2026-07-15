@@ -37,6 +37,7 @@ use gl_proc_address_bridge::{
 };
 
 use crate::sentence_card::update_sentence_card;
+use crate::sentence_list::update_sentence_list;
 use crate::AppWindow;
 
 /// How often the scrub bar's `Timer` re-reads mpv's `time-pos`/`duration`
@@ -286,8 +287,11 @@ fn poll_scrub_bar(inner: &Rc<RefCell<VideoPlayerInner>>, window_weak: &Weak<AppW
 /// While `player_state` is in `SentenceBySentence` mode, syncs its
 /// `current_cue_index` to mpv's `time-pos` (see
 /// `PlayerState::sync_cue_to_time`) and mirrors the resulting cue into the
-/// window's current-sentence card. A no-op in `Normal` mode, and while mpv
-/// hasn't started decoding a file yet (`time-pos` unavailable). Called on
+/// window's current-sentence card. The sentence list is only rebuilt when
+/// the cursor's cue actually changed, since this runs on every
+/// `SCRUB_BAR_POLL_INTERVAL` tick and rebuilding its model is otherwise
+/// pointless churn. A no-op in `Normal` mode, and while mpv hasn't started
+/// decoding a file yet (`time-pos` unavailable). Called on
 /// `SCRUB_BAR_POLL_INTERVAL` by the timer started in [`VideoPlayer::attach`].
 fn sync_current_sentence(
     inner: &Rc<RefCell<VideoPlayerInner>>,
@@ -304,8 +308,12 @@ fn sync_current_sentence(
     let Ok(time_pos) = inner.borrow().mpv.get_property::<f64>("time-pos") else {
         return;
     };
+    let previous_cue_index = state.current_cue_index;
     state.sync_cue_to_time(Duration::from_secs_f64(time_pos.max(0.0)));
     update_sentence_card(&window, &state);
+    if state.current_cue_index != previous_cue_index {
+        update_sentence_list(&window, &state);
+    }
 }
 
 /// Creates the mpv render context using Slint's OpenGL loader, wires mpv's

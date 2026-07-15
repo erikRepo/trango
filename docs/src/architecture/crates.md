@@ -53,6 +53,11 @@ player should do" — instead of driving mpv directly:
 - `repeat_current_cue()` never moves the cursor; calling it any number of
   times for the same cue returns the identical command, matching the
   README's requirement that Space always replays the same span.
+- `jump_to_cue(index: usize)` moves the cursor directly to `index` and
+  returns the same command shape, reusing the same private `seek_command_for`
+  helper as the other three — `None`, cursor untouched, if `index` is out of
+  range. This is what backs the sentence list's row clicks (see below),
+  which the README requires to behave exactly like arrow navigation.
 
 `format_time(seconds: f64) -> String` formats a playback time as `MM:SS`,
 or `H:MM:SS` once it reaches an hour; used for the scrub bar's time labels
@@ -96,8 +101,9 @@ If a second CLI argument is given (`trango video.mp4 subs.srt`),
 `load_subtitles` reads and parses it with `subtitle::parse_srt`, loads the
 resulting cues into `PlayerState` via `set_cues`, and mirrors the first cue
 into the current-sentence card (`crates/app/src/sentence_card.rs`,
-`update_sentence_card`) — see
-`docs/src/architecture/video-playback.md` for how that card keeps updating
+`update_sentence_card`) and the sentence list (`crates/app/src/sentence_list.rs`,
+`update_sentence_list`) — see
+`docs/src/architecture/video-playback.md` for how both keep updating
 from mpv's `time-pos` afterward. A file that can't be read or doesn't parse
 is logged and otherwise ignored — a bad subtitle path shouldn't stop the
 video from playing.

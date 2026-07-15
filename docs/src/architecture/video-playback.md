@@ -82,6 +82,13 @@ write the resulting "Sentence N / M" label and cue text onto the window. In
 was last focused (e.g. the first one, set by `set_cues` when subtitles are
 loaded) instead of chasing playback.
 
+`sync_current_sentence` also refreshes the sentence list
+(`sentence_list::update_sentence_list`), but only when `current_cue_index`
+actually changed compared to before the `sync_cue_to_time` call — the poll
+tick runs at `SCRUB_BAR_POLL_INTERVAL` regardless of whether the focused cue
+moved, and rebuilding the list's `VecModel` on every tick would be pointless
+churn for a property that usually stays the same between ticks.
+
 Cue-lookup itself (`sync_cue_to_time`) is plain `Duration` arithmetic with
 no mpv/Slint dependency, so it's unit-tested directly in
 `playback-state` — only the "read `time-pos`, write it into the window"
@@ -101,15 +108,42 @@ it `reject`s the event, leaving Normal-mode key handling for a later step.
 `main.rs`'s `wire_cue_navigation` connects those three callbacks (via
 `cue_navigation_handler`) to the matching `PlayerState` method
 (`next_cue`/`previous_cue`/`repeat_current_cue`, see `crates.md`'s
-navigation section for their pure logic). Each handler:
+navigation section for their pure logic), and separately wires
+`on_jump_to_cue` — invoked by the sentence list's row clicks, see below — to
+`PlayerState::jump_to_cue`. Both paths funnel through the same
+`apply_navigation_result` helper:
 
 1. Runs the navigation method, producing an `Option<SeekCommand>`.
-2. Mirrors the resulting cue into the sentence card via
-   `sentence_card::update_sentence_card` regardless of whether a command
-   came back (e.g. `next_cue` at the last cue returns `None` but the
-   cursor hasn't moved, so re-rendering is harmless).
+2. Mirrors the resulting cue into the sentence card and sentence list via
+   `sentence_card::update_sentence_card`/`sentence_list::update_sentence_list`
+   regardless of whether a command came back (e.g. `next_cue` at the last
+   cue returns `None` but the cursor hasn't moved, so re-rendering is
+   harmless).
 3. If a `SeekCommand` was produced, hands it to
    `VideoPlayer::apply_seek_command`.
+
+Sharing `apply_navigation_result` is what makes row clicks behave exactly
+like arrow-key navigation, per README's "Sentence list" spec, without
+duplicating the seek/pause/card/list-refresh logic in two places.
+
+## Sentence list: row clicks and auto-scroll into view
+
+`SentenceListCard` (`app-window.slint`) renders one row per
+`sentence-list-rows` entry (set by `sentence_list::update_sentence_list`),
+highlighting whichever row has `is-current` set with an accent-tinted pill.
+Clicking a row's `TouchArea` emits `row-clicked(index)`, forwarded by
+`AppWindow`'s `jump-to-cue(int)` callback straight to
+`wire_cue_navigation`'s `on_jump_to_cue` handler above.
+
+`SentenceListCard` also keeps the current row scrolled into view on its own,
+entirely in Slint: a `changed current-index` handler calls its
+`bring-into-view` function whenever `sentence-list-current-index` changes
+(from a row click, arrow-key navigation, or mpv time-pos sync), adjusting
+the underlying `ListView`'s `viewport-y` just enough to bring that row's
+fixed-height slot back within `visible-height` — the same technique
+Slint's built-in `StandardListViewBase` widget uses internally, reimplemented
+here since the sentence list's rows are custom-styled rather than
+`StandardListViewItem`s.
 
 `apply_seek_command` issues mpv's `seek <start> absolute` command and sets
 `pause` to `false`, then — if `then_pause` is set — arms `pause_at =

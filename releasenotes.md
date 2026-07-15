@@ -9,6 +9,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.17] - 2026-07-15
+
+### Added
+- `playback_state::PlayerState::jump_to_cue(index: usize)`: moves the cursor directly to `index` and returns the same `SeekCommand` shape as `next_cue`/`previous_cue`, reusing the shared `seek_command_for` helper — `None`, cursor untouched, if `index` is out of range
+- `app-window.slint`: `SentenceListRow` struct and `SentenceListCard` component — the scrollable "index · text" sentence list underneath `CurrentSentenceCard`, with the current cue highlighted via an accent-tinted pill and clicking a row emitting `jump-to-cue(index)`. Auto-scrolls the clicked/synced row into view via a `bring-into-view` function modeled on Slint's own `StandardListViewBase`
+- `crates/app/src/sentence_list.rs`: `update_sentence_list(&AppWindow, &PlayerState)` mirrors the loaded cues into the window's `sentence-list-rows`/`sentence-list-current-index` properties, split from a pure `sentence_list_rows` helper so the mapping is unit-tested without a Slint window
+- `crates/app/src/main.rs`: `wire_cue_navigation` now also wires `on_jump_to_cue`, driving `PlayerState::jump_to_cue` from sentence list row clicks — the same post-navigation handling (`apply_navigation_result`) as arrow/space key presses, so both paths behave identically per README's "Sentence list" spec
+
+### Changed
+- `crates/app/src/main.rs`: `cue_navigation_handler`'s per-callback body was extracted into a shared `apply_navigation_result` (refreshes the sentence card and sentence list, then applies any produced `SeekCommand`), now reused by both key-driven navigation and the sentence list's row-click handler instead of duplicating the logic
+- `video_player.rs`: `sync_current_sentence` only rebuilds the sentence list's model when the synced cue index actually changes (comparing against the previous `current_cue_index`), since it otherwise runs on every `SCRUB_BAR_POLL_INTERVAL` tick
+
 ## [0.1.16] - 2026-07-15
 
 ### Changed

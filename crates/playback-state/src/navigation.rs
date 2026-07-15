@@ -45,6 +45,17 @@ impl PlayerState {
         let cue = self.cues.get(self.current_cue_index?)?;
         Some(seek_command_for(cue))
     }
+
+    /// Moves the cursor directly to `index` and returns the seek command to
+    /// play through that cue — the same command shape `next_cue`/
+    /// `previous_cue` return, so a sentence list row click behaves exactly
+    /// like arrow navigation. `None`, leaving the cursor untouched, if
+    /// `index` is out of range for the loaded cues.
+    pub fn jump_to_cue(&mut self, index: usize) -> Option<SeekCommand> {
+        let cue = self.cues.get(index)?;
+        self.current_cue_index = Some(index);
+        Some(seek_command_for(cue))
+    }
 }
 
 #[cfg(test)]
@@ -194,6 +205,52 @@ mod tests {
                 then_pause: true,
             })
         );
+    }
+
+    #[test]
+    fn test_jump_to_cue_on_empty_state_returns_none() {
+        // Given: a fresh state with no cues loaded
+        // When:  jumping to any index
+        // Then:  it returns None and the cursor stays None
+        let mut state = PlayerState::new();
+        assert_eq!(state.jump_to_cue(0), None);
+        assert_eq!(state.current_cue_index, None);
+    }
+
+    #[test]
+    fn test_jump_to_cue_moves_cursor_and_returns_seek_command() {
+        // Given: a state with three cues, cursor on the first
+        // When:  jumping directly to the third cue
+        // Then:  the cursor moves there and the command covers its span
+        let mut state = PlayerState::new();
+        state.set_cues(three_cues());
+
+        let command = state.jump_to_cue(2);
+
+        assert_eq!(state.current_cue_index, Some(2));
+        assert_eq!(
+            command,
+            Some(SeekCommand {
+                start: Duration::from_millis(2_000),
+                end: Duration::from_millis(3_000),
+                then_pause: true,
+            })
+        );
+    }
+
+    #[test]
+    fn test_jump_to_cue_out_of_range_returns_none_and_does_not_move() {
+        // Given: a state with three cues, cursor on the second
+        // When:  jumping to an index past the end of the cue list
+        // Then:  it returns None and the cursor stays where it was
+        let mut state = PlayerState::new();
+        state.set_cues(three_cues());
+        state.next_cue();
+
+        let command = state.jump_to_cue(99);
+
+        assert_eq!(command, None);
+        assert_eq!(state.current_cue_index, Some(1));
     }
 
     #[test]

@@ -8,6 +8,8 @@
 // into `sentence-mode-active`. Body/bottom-hint-bar content arrives in
 // later steps.
 
+import { ListView } from "std-widgets.slint";
+
 /// Color tokens from README.md's "Design Tokens" section, shared across the
 /// top bar components below.
 global Palette {
@@ -133,6 +135,96 @@ component CurrentSentenceCard {
                 background: Palette.border;
             }
         }
+    }
+}
+
+/// One row in the sentence list: `"index · text"`, plus whether it's the
+/// currently focused cue (highlighted with an accent-tinted pill).
+struct SentenceListRow {
+    label: string,
+    is-current: bool,
+}
+
+/// The right-hand sentence panel's scrollable "all cues" list, underneath
+/// `CurrentSentenceCard`. `rows`/`current-index` are set from Rust
+/// (`crates/app/src/sentence_list.rs`) whenever the loaded cues or the
+/// current cue change. Clicking a row emits `row-clicked` with that row's
+/// index, which `main.rs` wires to the same `playback-state::jump_to_cue`
+/// navigation used by arrow-key navigation — see README's "Sentence list"
+/// interaction spec.
+component SentenceListCard inherits Rectangle {
+    in property <[SentenceListRow]> rows: [];
+    in property <int> current-index: -1;
+    callback row-clicked(int);
+
+    /// Fixed row height, matched by `row-y`/`bring-into-view` below so the
+    /// scroll-into-view math doesn't need to measure text layout.
+    property <length> row-height: 32px;
+
+    border-width: 1px;
+    border-radius: 8px;
+    border-color: Palette.border;
+    background: Palette.panel-bg;
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 4px;
+
+        Text {
+            text: "Sentence list";
+            color: Palette.muted-text;
+            font-family: "JetBrains Mono";
+            font-size: 10px;
+            font-weight: 600;
+        }
+
+        list := ListView {
+            for row[index] in root.rows : Rectangle {
+                height: root.row-height;
+                border-radius: 6px;
+                background: row.is-current ? Palette.accent.with-alpha(0.22) : transparent;
+
+                Text {
+                    text: row.label;
+                    color: row.is-current ? Palette.primary-text : Palette.muted-text;
+                    font-family: "Inter";
+                    font-size: 13px;
+                    font-weight: 500;
+                    overflow: elide;
+                    x: 10px;
+                    width: parent.width - 20px;
+                    vertical-alignment: center;
+                }
+
+                TouchArea {
+                    clicked => { root.row-clicked(index); }
+                }
+            }
+        }
+    }
+
+    /// The current row's y position within `list`'s scrolled viewport —
+    /// negative/beyond `visible-height` means it's currently out of view.
+    pure function row-y(index: int) -> length {
+        return list.viewport-y + index * root.row-height;
+    }
+
+    /// Scrolls `list` just enough to bring row `index` fully into view,
+    /// without otherwise disturbing the current scroll position.
+    function bring-into-view(index: int) {
+        if (row-y(index) < 0) {
+            list.viewport-y += 0 - row-y(index);
+        }
+        if (row-y(index) + root.row-height > list.visible-height) {
+            list.viewport-y -= row-y(index) + root.row-height - list.visible-height;
+        }
+    }
+
+    changed current-index => {
+        if (root.current-index < 0 || root.current-index >= root.rows.length) {
+            return;
+        }
+        root.bring-into-view(root.current-index);
     }
 }
 
@@ -265,6 +357,10 @@ export component AppWindow inherits Window {
     in property <string> sentence-label: "Sentence – / –";
     in property <string> sentence-text: "No sentence loaded.";
     in property <bool> has-current-sentence: false;
+    // Sentence list state, mirrored from playback_state::PlayerState by
+    // crates/app/src/sentence_list.rs — see SentenceListCard above.
+    in property <[SentenceListRow]> sentence-list-rows: [];
+    in property <int> sentence-list-current-index: -1;
     callback toggle-mode();
     // Sentence-by-sentence navigation, invoked by `nav-focus`'s key-pressed
     // handler below for Right/Left/Space respectively — see
@@ -272,6 +368,10 @@ export component AppWindow inherits Window {
     callback next-cue();
     callback previous-cue();
     callback repeat-cue();
+    // Sentence list row click, invoked by SentenceListCard with the clicked
+    // row's index — wired in main.rs to playback_state::jump_to_cue, the
+    // same navigation call arrow keys drive.
+    callback jump-to-cue(int);
 
     title: "TrangoPlayer v" + version;
     width: 960px;
@@ -400,11 +500,20 @@ export component AppWindow inherits Window {
 
                 VerticalLayout {
                     width: 320px;
+                    spacing: 12px;
 
                     CurrentSentenceCard {
+                        vertical-stretch: 0;
                         sentence-label: root.sentence-label;
                         sentence-text: root.sentence-text;
                         has-sentence: root.has-current-sentence;
+                    }
+
+                    SentenceListCard {
+                        vertical-stretch: 1;
+                        rows: root.sentence-list-rows;
+                        current-index: root.sentence-list-current-index;
+                        row-clicked(index) => { root.jump-to-cue(index); }
                     }
                 }
             }
