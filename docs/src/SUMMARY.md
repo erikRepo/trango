@@ -22,3 +22,5 @@
 - [thiserror](technology/thiserror.md)
 - [slint](technology/slint.md)
 - [libmpv2](technology/libmpv2.md)
+- [serde](technology/serde.md)
+- [toml](technology/toml.md)

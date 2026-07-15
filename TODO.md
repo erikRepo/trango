@@ -372,6 +372,47 @@ soittimeen; jos `whisper-cli` puuttuu, tila päätyy `Error`+selkeä viesti.
 
 ---
 
+## Vaihe 21.6 — Mallin valinta UI:sta: autodiscovery + persistointi + kieli
+
+**Tavoite:** Vaihe 21.5:n `TRANGO_WHISPER_MODEL_PATH`-ympäristömuuttuja
+korvataan UI:sta tehtävällä mallin valinnalla — käyttäjä voi vaihtaa
+mallia (esim. eri kielille) käynnistämättä sovellusta uudelleen, ja
+sovellus ehdottaa itse todennäköisiä mallikansioita sen sijaan että
+käyttäjä joutuisi aina selaamaan kotihakemistosta asti.
+
+- Uusi "Select whisper model" -rivi Open Subtitles -dialogissa
+  (`TODO.md` Vaihe 19/20/21.5:n "Generate subtitles" -napin vieressä) —
+  avaa in-app-kansioselaimen (sama `FileListDialog`-komponentti kuin Open
+  Video -dialogissa / käännöslinkityksessä), josta valitaan `.bin`/`.gguf`-
+  tiedosto. "Generate subtitles" -nappi on pois päältä kunnes malli on
+  valittu.
+- Autodiscovery: selain avautuu oletuksena parhaaseen löydettyyn
+  kansioon (muutama yleinen whisper.cpp-asennuspolku + `./models`, ks.
+  `crates/app/src/model_picker.rs::candidate_model_folders`) — ei pelkkää
+  kotihakemistoa. Käyttäjä voi silti navigoida mihin tahansa kansioon itse.
+- Valittu malli **persistoidaan** pieneen TOML-config-tiedostoon
+  (`crates/app/src/config.rs`, `$XDG_CONFIG_HOME/trango/config.toml` tai
+  `$HOME/.config/trango/config.toml`) — uusi Cargo-riippuvuus `serde`+`toml`
+  (kysytty ja hyväksytty käyttäjältä ennen lisäystä, CLAUDE.md:n mukaisesti).
+  Muistaa myös viimeksi selatun kansion, jotta selain ei aina palaa
+  autodiscoveryn oletukseen.
+- Kieli päätellään automaattisesti mallin tiedostonimestä
+  (`model_picker::language_flag`): whisper.cpp:n `.en`-päätteiset mallit
+  (esim. `ggml-base.en.bin`) ovat englanti-only → `-l en`; muut
+  (monikieliset) mallit → `-l auto`, koska whisper-cli:n oma oletuskieli on
+  aina `en` riippumatta ladatusta mallista.
+- Dokumentoitu `docs/src/usage/`: heikkoresurssisemmat kielet (esim.
+  heprea) tarvitsevat ison monikielisen mallin (`medium`/`large-v3`) hyvään
+  laatuun — pienet mallit (`base`/`small`) ovat niissä selvästi heikompia.
+
+**Voit ajaa/testata:** `cargo run -p trango -- video.mp4` — Open Subtitles
+-dialogissa "Select whisper model" avaa kansioselaimen valmiiksi
+todennäköiseen kansioon; valinnan jälkeen "Generate subtitles" aktivoituu
+ja ajaa whisper-cli:n oikealla `-l`-lipulla; malli pysyy valittuna myös
+seuraavalla käynnistyskerralla.
+
+---
+
 ## Vaihe 22 — Design-tarkennus (pikselintarkkuus mockiin)
 
 **Tavoite:** Käy koko UI läpi `sketch/design_reference.dc.html`:ää vasten —

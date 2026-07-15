@@ -9,6 +9,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.26] - 2026-07-15
+
+### Added
+- `crates/app/src/config.rs`: `TrangoConfig`, trango's first persisted settings file (`$XDG_CONFIG_HOME/trango/config.toml`, falling back to `$HOME/.config/trango/config.toml`) — remembers the picked whisper.cpp model and last-browsed folder across restarts; new Cargo dependencies `serde` + `toml` (asked and approved before adding, see `docs/src/technology/`)
+- `crates/app/src/model_picker.rs`: whisper.cpp model selection (`TODO.md` Vaihe 21.6) — `list_folder_entries`/`default_start_folder` for an in-app `.bin`/`.gguf` folder browser with best-effort autodiscovery of a starting folder (a few common whisper.cpp install locations, then `./models`), and `language_flag`/`display_name` inferring `-l en`/`-l auto` from whisper.cpp's own `.en` filename convention (its own `--language` default is always `en` regardless of the loaded model)
+- `subtitle::WhisperCliGenerator`: new `language` field, passed as `-l` when set
+- `app-window.slint`: Open Subtitles dialog gained a model row ("select a whisper model…" / "whisper model: `<name>` (change)") next to "Generate subtitles", which is now disabled until a model is picked; a new `FileListDialog` instance (`is-model-picker-dialog-open` etc., same chrome as the Open Video dialog and translation-link picker) for picking one
+- `docs/src/usage/`: UI-driven model selection replaces the old `TRANGO_WHISPER_MODEL_PATH` env var in the docs, plus a note that non-English languages (Hebrew was the concrete case) need a `medium`/`large-v3` multilingual model for good quality, not `base`/`small`; `docs/src/specs/`: the autodiscovery/persistence/language-inference design
+
+### Changed
+- `crates/app/src/main.rs`: `generate-subtitles-requested` now reads the model from a shared `Rc<RefCell<Option<PathBuf>>>` (set by the new model picker, loaded from `config::load()` at startup) instead of the `TRANGO_WHISPER_MODEL_PATH` environment variable; `whisper_cli_generator_from_env` renamed `whisper_cli_generator`, taking the model path as a parameter
+
 ## [0.1.25] - 2026-07-15
 
 ### Added

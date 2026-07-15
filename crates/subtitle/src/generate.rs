@@ -69,6 +69,13 @@ pub struct WhisperCliGenerator {
     /// the flag, letting `whisper-cli` fall back to its own default model
     /// lookup.
     pub model_path: Option<PathBuf>,
+    /// The `-l`/`--language` value to pass, e.g. `"en"` or `"auto"`. `None`
+    /// omits the flag, letting `whisper-cli` fall back to its own default
+    /// (`"en"`, regardless of which model is loaded) — callers transcribing
+    /// anything other than English should pass an explicit value (the
+    /// `app` crate's `model_picker::language_flag` derives one from the
+    /// selected model's filename).
+    pub language: Option<String>,
 }
 
 impl Default for WhisperCliGenerator {
@@ -76,6 +83,7 @@ impl Default for WhisperCliGenerator {
         Self {
             binary_path: PathBuf::from("whisper-cli"),
             model_path: None,
+            language: None,
         }
     }
 }
@@ -96,6 +104,9 @@ impl SubtitleGenerator for WhisperCliGenerator {
         command.arg("-f").arg(video_path);
         if let Some(model_path) = &self.model_path {
             command.arg("-m").arg(model_path);
+        }
+        if let Some(language) = &self.language {
+            command.arg("-l").arg(language);
         }
         command.arg("-of").arg(&output_stem).arg("-osrt");
 
@@ -210,6 +221,7 @@ mod tests {
                 .unwrap()
                 .join("no-such-whisper-cli-binary"),
             model_path: None,
+            language: None,
         };
 
         let result = generator.generate(&video_path);
@@ -272,6 +284,7 @@ printf '1\n00:00:00,000 --> 00:00:05,000\n[fake whisper-cli output]\n' > "${of}.
         let generator = WhisperCliGenerator {
             binary_path,
             model_path: Some(model_path.clone()),
+            language: Some("auto".to_string()),
         };
         let expected_output = video_path.with_extension("srt");
 
@@ -286,6 +299,7 @@ printf '1\n00:00:00,000 --> 00:00:05,000\n[fake whisper-cli output]\n' > "${of}.
                 .expect("fake whisper-cli should have logged its args");
         assert!(logged_args.contains(&format!("-f {}", video_path.display())));
         assert!(logged_args.contains(&format!("-m {}", model_path.display())));
+        assert!(logged_args.contains("-l auto"));
         assert!(logged_args.contains("-osrt"));
 
         std::fs::remove_dir_all(dir).expect("failed to clean up temp test dir");
@@ -308,6 +322,7 @@ printf '1\n00:00:00,000 --> 00:00:05,000\n[fake whisper-cli output]\n' > "${of}.
         let generator = WhisperCliGenerator {
             binary_path,
             model_path: None,
+            language: None,
         };
 
         let result = generator.generate(&video_path);
@@ -336,6 +351,7 @@ printf '1\n00:00:00,000 --> 00:00:05,000\n[fake whisper-cli output]\n' > "${of}.
         let generator = WhisperCliGenerator {
             binary_path,
             model_path: None,
+            language: None,
         };
 
         let result = generator.generate(&video_path);

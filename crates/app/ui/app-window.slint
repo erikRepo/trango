@@ -800,9 +800,12 @@ component OpenSubtitlesDialog {
     in property <string> original-name;
     in property <SubtitleGenerationStatus> generation-status: SubtitleGenerationStatus.Idle;
     in property <string> generation-error-message: "";
+    in property <bool> model-selected: false;
+    in property <string> model-name: "";
     in property <bool> translation-linked;
     in property <string> translation-name;
     callback generate-subtitles();
+    callback select-model();
     callback link-translation();
     callback cancel();
     callback confirm();
@@ -924,7 +927,7 @@ component OpenSubtitlesDialog {
                                 Rectangle {
                                     border-radius: 6px;
                                     background: Palette.accent;
-                                    opacity: root.generation-status == SubtitleGenerationStatus.Generating ? 0.55 : 1.0;
+                                    opacity: root.generation-status == SubtitleGenerationStatus.Generating || !root.model-selected ? 0.55 : 1.0;
 
                                     HorizontalLayout {
                                         padding-left: 14px;
@@ -947,10 +950,29 @@ component OpenSubtitlesDialog {
                                     }
 
                                     TouchArea {
-                                        enabled: root.generation-status != SubtitleGenerationStatus.Generating;
+                                        enabled: root.generation-status != SubtitleGenerationStatus.Generating && root.model-selected;
                                         clicked => { root.generate-subtitles(); }
                                     }
                                 }
+                            }
+                        }
+
+                        if !root.original-linked : Rectangle {
+                            HorizontalLayout {
+                                Text {
+                                    text: root.model-selected
+                                        ? "whisper model: " + root.model-name + " (change)"
+                                        : "select a whisper model to enable generation…";
+                                    color: Palette.accent;
+                                    font-family: "Inter";
+                                    font-size: 11px;
+                                    font-weight: 500;
+                                    wrap: word-wrap;
+                                }
+                            }
+
+                            TouchArea {
+                                clicked => { root.select-model(); }
                             }
                         }
 
@@ -1210,6 +1232,24 @@ export component AppWindow inherits Window {
     callback select-link-translation-row(int);
     callback cancel-link-translation-dialog();
     callback confirm-link-translation();
+    // Whisper model selection (TODO.md Vaihe 21.6): which ggml/gguf model
+    // "Generate subtitles" runs `subtitle::WhisperCliGenerator` against.
+    // Set from Rust by crates/app/src/model_picker.rs; persisted across
+    // restarts by crates/app/src/config.rs.
+    in property <bool> whisper-model-selected: false;
+    in property <string> whisper-model-name: "";
+    // Invoked by the Open Subtitles dialog's model row. Opens the model
+    // picker (a FileListDialog scoped to .bin/.gguf files, same chrome as
+    // the Open Video dialog), starting from an autodiscovered or
+    // previously-picked folder (model_picker::default_start_folder).
+    callback select-whisper-model-requested();
+    in property <bool> is-model-picker-dialog-open: false;
+    in property <string> model-picker-folder-label: "";
+    in property <[FileListRow]> model-picker-rows: [];
+    in property <int> model-picker-selected-index: -1;
+    callback select-model-picker-row(int);
+    callback cancel-model-picker-dialog();
+    callback confirm-model-picker-dialog();
 
     title: "TrangoPlayer v" + version;
     width: 960px;
@@ -1399,9 +1439,12 @@ export component AppWindow inherits Window {
             original-name: root.open-subtitles-original-name;
             generation-status: root.subtitle-generation-status;
             generation-error-message: root.subtitle-generation-error-message;
+            model-selected: root.whisper-model-selected;
+            model-name: root.whisper-model-name;
             translation-linked: root.open-subtitles-translation-linked;
             translation-name: root.open-subtitles-translation-name;
             generate-subtitles => { root.generate-subtitles-requested(); }
+            select-model => { root.select-whisper-model-requested(); }
             link-translation => { root.link-translation-requested(); }
             cancel => { root.cancel-open-subtitles-dialog(); }
             confirm => { root.confirm-open-subtitles-dialog(); }
@@ -1421,6 +1464,21 @@ export component AppWindow inherits Window {
             row-clicked(index) => { root.select-link-translation-row(index); }
             cancel => { root.cancel-link-translation-dialog(); }
             confirm => { root.confirm-link-translation(); }
+        }
+
+        // Also reached from inside the Open Subtitles dialog, same as the
+        // translation-link picker above.
+        if root.is-model-picker-dialog-open : FileListDialog {
+            width: parent.width;
+            height: parent.height;
+            title: "Select whisper model";
+            confirm-label: "Select";
+            folder-label: root.model-picker-folder-label;
+            rows: root.model-picker-rows;
+            selected-index: root.model-picker-selected-index;
+            row-clicked(index) => { root.select-model-picker-row(index); }
+            cancel => { root.cancel-model-picker-dialog(); }
+            confirm => { root.confirm-model-picker-dialog(); }
         }
     }
 }

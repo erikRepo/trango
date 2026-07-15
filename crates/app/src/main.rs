@@ -4,6 +4,8 @@
 //! `ui/app-window.slint`). libmpv integration and the rest of the UI are
 //! wired in later development steps (see `TODO.md`).
 
+mod config;
+mod model_picker;
 mod open_subtitles_dialog;
 mod open_video_dialog;
 mod sentence_card;
@@ -415,9 +417,11 @@ fn open_selected_video(
 /// `cancel`/`confirm-open-subtitles-dialog` (backdrop/✕/Cancel/Done) just
 /// close it: both sections are already live the moment they're linked, not
 /// deferred to "Done" (see `AppWindow`'s doc comment on those callbacks).
-/// `generate-subtitles-requested` (`TODO.md` Vaihe 20/21.5) runs
-/// `subtitle::WhisperCliGenerator` (configured by
-/// `whisper_cli_generator_from_env`) on a background thread via
+/// `generate-subtitles-requested` (`TODO.md` Vaihe 20/21.5/21.6) runs
+/// `subtitle::WhisperCliGenerator` — configured by `whisper_cli_generator`
+/// with `selected_model`'s currently picked model (see
+/// `wire_model_picker`) and its language flag
+/// (`model_picker::language_flag`) — on a background thread via
 /// `subtitle_generation::spawn_generate` — real transcription can take
 /// seconds to minutes, so running it on the UI thread would freeze the
 /// whole app. Its result is posted back to the UI thread with
@@ -431,7 +435,10 @@ fn open_selected_video(
 /// just the new path, handled by a separate closure set up here that does
 /// hold the `Rc<RefCell<PlayerState>>`/`Rc<RefCell<CurrentMedia>>` needed to
 /// load the subtitle into the player and record it in `current_media`, same
-/// as a picked translation is below.
+/// as a picked translation is below. No model selected yet is a clear
+/// `Error` rather than an attempted run — the button is also disabled in
+/// that state (`AppWindow::whisper-model-selected`), this is the defensive
+/// fallback.
 ///
 /// `link-translation-requested` opens a nested `FileListDialog` picker
 /// (`open_subtitles_dialog::open_translation_picker`) over the video's
@@ -442,29 +449,34 @@ fn open_selected_video(
 /// the pick back into the (still-open) Open Subtitles dialog's translation
 /// row (`open_subtitles_dialog::mark_translation_linked`).
 ///
-/// Builds a `subtitle::WhisperCliGenerator` configured from environment
-/// variables (`TODO.md` Vaihe 21.5's "binäärin polku/nimi konfiguroitavissa"
-/// / "mallitiedoston polku samoin konfiguroitavissa"), so the binary and
-/// model don't need to live at fixed paths:
-/// - `TRANGO_WHISPER_CLI_PATH`: path or bare name of the `whisper-cli`
-///   binary. Defaults to `"whisper-cli"`, resolved via `PATH` — see
-///   `docs/src/usage` for installing it.
-/// - `TRANGO_WHISPER_MODEL_PATH`: path to a ggml/gguf model file. If unset,
-///   the `-m` flag is omitted and `whisper-cli` falls back to its own
-///   default model lookup.
-fn whisper_cli_generator_from_env() -> subtitle::WhisperCliGenerator {
-    let mut generator = subtitle::WhisperCliGenerator::default();
-    if let Some(binary_path) = std::env::var_os("TRANGO_WHISPER_CLI_PATH") {
-        generator.binary_path = PathBuf::from(binary_path);
+/// `select-whisper-model-requested` opens a second nested `FileListDialog`,
+/// wired by `wire_model_picker` — see its doc comment.
+///
+/// Builds a `subtitle::WhisperCliGenerator` for `video_path` from
+/// `binary_path` (see `wire_model_picker`'s doc comment for why the model
+/// itself isn't read from an environment variable, unlike the binary) and
+/// `model_path`'s language (`model_picker::language_flag`).
+///
+/// - `TRANGO_WHISPER_CLI_PATH` env var: path or bare name of the
+///   `whisper-cli` binary. Defaults to `"whisper-cli"`, resolved via
+///   `PATH` — see `docs/src/usage` for installing it.
+fn whisper_cli_generator(model_path: PathBuf) -> subtitle::WhisperCliGenerator {
+    let binary_path = std::env::var_os("TRANGO_WHISPER_CLI_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("whisper-cli"));
+    let language = model_picker::language_flag(&model_path).to_string();
+    subtitle::WhisperCliGenerator {
+        binary_path,
+        model_path: Some(model_path),
+        language: Some(language),
     }
-    generator.model_path = std::env::var_os("TRANGO_WHISPER_MODEL_PATH").map(PathBuf::from);
-    generator
 }
 
 fn wire_open_subtitles_dialog(
     window: &AppWindow,
     state: &Rc<RefCell<PlayerState>>,
     current_media: Rc<RefCell<CurrentMedia>>,
+    selected_model: Rc<RefCell<Option<PathBuf>>>,
 ) {
     let request_window_weak = window.as_weak();
     let request_media = Rc::clone(&current_media);
@@ -520,12 +532,22 @@ fn wire_open_subtitles_dialog(
 
     let generate_window_weak = window.as_weak();
     let generate_media = Rc::clone(&current_media);
+    let generate_model = Rc::clone(&selected_model);
     window.on_generate_subtitles_requested(move || {
         let Some(window) = generate_window_weak.upgrade() else {
             return;
         };
         let Some(video_path) = generate_media.borrow().video_path.clone() else {
             tracing::warn!("subtitle generation requested with no video open");
+            return;
+        };
+        let Some(model_path) = generate_model.borrow().clone() else {
+            // Defensive fallback: the button is disabled
+            // (whisper-model-selected) until a model is picked, so this
+            // shouldn't normally be reachable.
+            tracing::warn!("subtitle generation requested with no whisper model selected");
+            window.set_subtitle_generation_status(SubtitleGenerationStatus::Error);
+            window.set_subtitle_generation_error_message("Select a whisper model first.".into());
             return;
         };
         window.set_subtitle_generation_status(SubtitleGenerationStatus::Generating);
@@ -538,7 +560,7 @@ fn wire_open_subtitles_dialog(
         // that state.
         let callback_window_weak = generate_window_weak.clone();
         subtitle_generation::spawn_generate(
-            whisper_cli_generator_from_env(),
+            whisper_cli_generator(model_path),
             video_path,
             move |result| {
                 let _ = slint::invoke_from_event_loop(move || {
@@ -636,6 +658,99 @@ fn wire_open_subtitles_dialog(
     });
 }
 
+/// Wires the Open Subtitles dialog's model row (`TODO.md` Vaihe 21.6):
+/// `select-whisper-model-requested` opens a `FileListDialog` scoped to
+/// `.bin`/`.gguf` files, starting from `model_picker::default_start_folder`
+/// (best-effort autodiscovery, falling back to the config's last-browsed
+/// folder or the current working directory) — reusing the same in-app
+/// folder-browsing chrome as the Open Video dialog and the translation-link
+/// picker (see `open_video_dialog`'s and `open_subtitles_dialog`'s module
+/// docs for why there's no OS-native file picker here either).
+///
+/// The model is deliberately *not* configured through an environment
+/// variable the way `TRANGO_WHISPER_CLI_PATH` is (see
+/// `whisper_cli_generator`'s doc comment): a learner is expected to switch
+/// models/languages fairly often (e.g. one model per target language), so
+/// picking one here instead persists it to `config::TrangoConfig`
+/// (`crates/app/src/config.rs`) via `config::save`, remembered across
+/// restarts without needing to re-set an environment variable each time.
+///
+/// `selected_model` is shared with `wire_open_subtitles_dialog`'s
+/// `generate-subtitles-requested` handler, which reads it when building
+/// the generator.
+fn wire_model_picker(window: &AppWindow, selected_model: Rc<RefCell<Option<PathBuf>>>) {
+    let entries: Rc<RefCell<Vec<model_picker::FolderEntry>>> = Rc::new(RefCell::new(Vec::new()));
+
+    let request_window_weak = window.as_weak();
+    let request_entries = Rc::clone(&entries);
+    window.on_select_whisper_model_requested(move || {
+        let Some(window) = request_window_weak.upgrade() else {
+            return;
+        };
+        let folder = model_picker::default_start_folder(&config::load());
+        let files = model_picker::list_folder_entries(&folder);
+        model_picker::open_dialog(&window, &folder, &files);
+        *request_entries.borrow_mut() = files;
+    });
+
+    let select_window_weak = window.as_weak();
+    let select_entries = Rc::clone(&entries);
+    window.on_select_model_picker_row(move |index| {
+        let Some(window) = select_window_weak.upgrade() else {
+            return;
+        };
+        let target_folder = usize::try_from(index).ok().and_then(|index| {
+            match select_entries.borrow().get(index)? {
+                model_picker::FolderEntry::Up(path)
+                | model_picker::FolderEntry::Folder { path, .. } => Some(path.clone()),
+                model_picker::FolderEntry::Model(_) => None,
+            }
+        });
+        if let Some(target_folder) = target_folder {
+            let files = model_picker::list_folder_entries(&target_folder);
+            model_picker::open_dialog(&window, &target_folder, &files);
+            *select_entries.borrow_mut() = files;
+            return;
+        }
+        window.set_model_picker_selected_index(index);
+        model_picker::mark_selected(&window, &select_entries.borrow(), index);
+    });
+
+    let cancel_window_weak = window.as_weak();
+    window.on_cancel_model_picker_dialog(move || {
+        if let Some(window) = cancel_window_weak.upgrade() {
+            window.set_is_model_picker_dialog_open(false);
+        }
+    });
+
+    let confirm_window_weak = window.as_weak();
+    let confirm_entries = Rc::clone(&entries);
+    window.on_confirm_model_picker_dialog(move || {
+        let Some(window) = confirm_window_weak.upgrade() else {
+            return;
+        };
+        let model = usize::try_from(window.get_model_picker_selected_index())
+            .ok()
+            .and_then(|index| confirm_entries.borrow().get(index).cloned())
+            .and_then(|entry| match entry {
+                model_picker::FolderEntry::Model(model) => Some(model),
+                _ => None,
+            });
+        let Some(model) = model else {
+            return;
+        };
+        window.set_is_model_picker_dialog_open(false);
+        window.set_whisper_model_selected(true);
+        window.set_whisper_model_name(model.name.clone().into());
+        *selected_model.borrow_mut() = Some(model.path.clone());
+
+        let mut config = config::load();
+        config.whisper_model_path = Some(model.path.clone());
+        config.whisper_model_folder = model.path.parent().map(Path::to_path_buf);
+        config::save(&config);
+    });
+}
+
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
     tracing::info!("trango starting");
@@ -686,7 +801,19 @@ fn main() -> anyhow::Result<()> {
         default_video_folder(&args),
         Rc::clone(&current_media),
     );
-    wire_open_subtitles_dialog(&window, &player_state, current_media);
+
+    let startup_config = config::load();
+    let selected_model = Rc::new(RefCell::new(
+        startup_config
+            .whisper_model_path
+            .filter(|path| path.is_file()),
+    ));
+    if let Some(model_path) = selected_model.borrow().clone() {
+        window.set_whisper_model_selected(true);
+        window.set_whisper_model_name(model_picker::display_name(&model_path).into());
+    }
+    wire_model_picker(&window, Rc::clone(&selected_model));
+    wire_open_subtitles_dialog(&window, &player_state, current_media, selected_model);
 
     window.run()?;
     Ok(())
@@ -982,7 +1109,13 @@ mod tests {
             subtitle_path: Some(subtitle_path.clone()),
             translation_path: None,
         }));
-        wire_open_subtitles_dialog(&window, &player_state, Rc::clone(&current_media));
+        let selected_model: Rc<RefCell<Option<PathBuf>>> = Rc::new(RefCell::new(None));
+        wire_open_subtitles_dialog(
+            &window,
+            &player_state,
+            Rc::clone(&current_media),
+            Rc::clone(&selected_model),
+        );
 
         window.invoke_open_subtitles_dialog_requested();
         assert!(window.get_is_open_subtitles_dialog_open());
@@ -1120,16 +1253,38 @@ mod tests {
         std::fs::create_dir_all(&async_dir).expect("failed to create temp test dir");
         let async_video_path = async_dir.join("no_subs_async.mp4");
         std::fs::write(&async_video_path, b"").expect("failed to write fixture video file");
+        let fake_model_path = async_dir.join("ggml-fake-model.bin");
+        std::fs::write(&fake_model_path, b"").expect("failed to write fixture model file");
         *current_media.borrow_mut() = CurrentMedia {
             video_path: Some(async_video_path),
             subtitle_path: None,
             translation_path: None,
         };
 
+        *selected_model.borrow_mut() = Some(fake_model_path);
         window.invoke_generate_subtitles_requested();
         assert_eq!(
             window.get_subtitle_generation_status(),
             SubtitleGenerationStatus::Generating
+        );
+
+        // When:  clicking "Generate subtitles" with no whisper model
+        //        selected (TODO.md Vaihe 21.6) — the button is also
+        //        disabled in the UI for this state
+        //        (whisper-model-selected), this exercises the handler's
+        //        defensive fallback directly
+        // Then:  status goes straight to Error with a message naming the
+        //        actual problem, and no background thread/process is
+        //        spawned at all
+        *selected_model.borrow_mut() = None;
+        window.invoke_generate_subtitles_requested();
+        assert_eq!(
+            window.get_subtitle_generation_status(),
+            SubtitleGenerationStatus::Error
+        );
+        assert_eq!(
+            window.get_subtitle_generation_error_message(),
+            "Select a whisper model first."
         );
 
         std::fs::remove_dir_all(&generate_dir).expect("failed to clean up temp test dir");

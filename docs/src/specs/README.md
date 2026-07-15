@@ -160,3 +160,64 @@ immediately with status `Generating` — proving it doesn't block the UI
 thread — without asserting the later `Done`/`Error` transition, which is
 instead covered by manual testing (`TODO.md` Vaihe 21.5's "Voit
 ajaa/testata").
+
+## Model selection: UI + autodiscovery instead of an environment variable, persisted to a small TOML config
+
+`TODO.md` Vaihe 21.5 initially configured `WhisperCliGenerator`'s model
+through an environment variable (`TRANGO_WHISPER_MODEL_PATH`), mirroring
+the binary path's own `TRANGO_WHISPER_CLI_PATH`. Vaihe 21.6 replaces that
+for the model specifically (the binary path env var is unchanged) — a
+learner is expected to switch models somewhat often (e.g. one per target
+language being studied), and re-exporting an environment variable and
+restarting the app for that is more friction than the UI can avoid.
+
+The Open Subtitles dialog gained a model row next to "Generate
+subtitles" (disabled until a model is picked). Clicking it opens a
+`FileListDialog` — the same in-app folder-browsing chrome already used
+for the Open Video dialog and the translation-link picker, scoped to
+`.bin`/`.gguf` files this time (`crates/app/src/model_picker.rs`,
+mirroring `open_video_dialog.rs`'s `FolderEntry`/`list_folder_entries`
+shape closely). Three things this module handles that the Open Video
+dialog's equivalent doesn't need to:
+
+- **Autodiscovery of a starting folder.** Rather than a folder derived
+  from a currently-open file (as the Open Video dialog does) or a plain
+  "always start empty", `default_start_folder` tries, in order: the
+  config's last-browsed folder (see below) if it still exists; the first
+  of a short list of folders whisper.cpp models commonly end up in
+  (`candidate_model_folders` — a cloned+built whisper.cpp repo's own
+  `models/`, a couple of XDG-ish cache/data locations, and `./models`,
+  matching whisper-cli's own default model lookup path) that both exists
+  *and* actually contains model files; the first of those that merely
+  exists; finally the current working directory. This is deliberately not
+  exhaustive OS-specific magic (no registry lookups, no `dirs`/`directories`
+  crate) — just a handful of well-known conventions plus always-available
+  manual navigation as the fallback, in keeping with README's "no
+  OS-native file picker" direction for every other in-app dialog.
+- **Persisting the pick.** `crates/app/src/config.rs` adds trango's first
+  persistent settings file — `$XDG_CONFIG_HOME/trango/config.toml`
+  (falling back to `$HOME/.config/trango/config.toml`), read at startup
+  and written whenever a model is confirmed in the picker. This needed a
+  new Cargo dependency (`serde` + `toml`) — asked and approved by the user
+  before adding, per `CLAUDE.md`. A missing or corrupt config file loads
+  as `TrangoConfig::default()` rather than failing startup — losing a
+  remembered path is much less disruptive than trango refusing to open.
+- **Language inference.** whisper-cli's own `--language` default is
+  always `"en"`, regardless of which model is loaded — passing nothing
+  would silently mistranscribe non-English audio even with a multilingual
+  model loaded. `model_picker::language_flag` inspects the model's
+  filename for whisper.cpp's own `.en` naming convention (e.g.
+  `ggml-base.en.bin`) and passes `-l en` for those, `-l auto` (explicit
+  language auto-detection) for everything else, so the right thing happens
+  without asking the user to also pick a language separately. This is
+  filename-convention-based, not a guarantee — a model renamed against
+  convention would be inferred incorrectly, but whisper.cpp's own
+  distribution and download tooling follows this convention consistently.
+
+One more consequence worth documenting: whisper.cpp's smaller models
+(`tiny`/`base`/`small`) are trained on far less non-English data than
+English, so transcription quality for lower-resource languages (Hebrew
+was the concrete case that prompted this) degrades much more on small
+models than it does for English. `docs/src/usage/` recommends `medium` or
+`large-v3` for anything other than English as a result — this is
+documentation/guidance only, trango doesn't enforce or check it.
