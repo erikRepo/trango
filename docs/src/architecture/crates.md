@@ -53,8 +53,14 @@ player should do" — instead of driving mpv directly:
   times for the same cue returns the identical command, matching the
   README's requirement that Space always replays the same span.
 
-No I/O and no UI yet, so this state machine is TDD'd without a Slint
-window or a video file.
+`format_time(seconds: f64) -> String` formats a playback time as `MM:SS`,
+or `H:MM:SS` once it reaches an hour; used for the scrub bar's time labels
+(see `docs/src/architecture/video-playback.md`). It clamps negative or
+non-finite input (e.g. mpv's `time-pos`/`duration` before a video has
+started reporting them) to `00:00` instead of panicking or underflowing.
+
+No I/O and no UI yet, so this state machine (and `format_time`) is TDD'd
+without a Slint window or a video file.
 
 ## `crates/app` (binary, package `trango`)
 
@@ -71,9 +77,11 @@ buttons). If a video path is given as a CLI argument
 (`trango path/to/video.mp4`), `video_player::VideoPlayer::attach` embeds
 libmpv playback into the window (see
 `docs/src/architecture/video-playback.md` and
-`docs/src/technology/libmpv2.md`); without one, the video area just shows
-the window background as a placeholder. Picking a file from an in-app
-dialog is a later `TODO.md` step.
+`docs/src/technology/libmpv2.md`) and starts a repeating timer that polls
+mpv's `time-pos`/`duration` properties to drive the scrub bar below the
+video frame; without a video path, the video area just shows the window
+background as a placeholder and the scrub bar stays at `00:00`. Picking a
+file from an in-app dialog is a later `TODO.md` step.
 
 Depends on `playback-state` for `PlayerState`. `wire_player_state(&AppWindow)`
 creates a `PlayerState` (behind `Rc<RefCell<_>>` — Slint callbacks run on the

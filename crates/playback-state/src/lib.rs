@@ -9,7 +9,9 @@ mod mode;
 mod navigation;
 mod seek_command;
 mod state;
+mod time_format;
 
 pub use mode::PlaybackMode;
 pub use seek_command::SeekCommand;
 pub use state::PlayerState;
+pub use time_format::format_time;

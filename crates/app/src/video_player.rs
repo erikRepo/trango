@@ -11,6 +11,13 @@
 //! paints its scene on top; wherever that scene is transparent (the video
 //! area in `app-window.slint`, while `video-loaded` is true), the frame mpv
 //! just drew remains visible.
+//!
+//! Separately, a repeating `slint::Timer` polls mpv's `time-pos`/`duration`
+//! properties (see `poll_scrub_bar`) to drive the scrub bar. This is a
+//! second, independent way of talking to mpv alongside the rendering
+//! notifier above — plain property reads, not tied to the render/GL loop —
+//! kept simple rather than wiring up `Mpv`'s event-context/`observe_property`
+//! API for just two properties.
 
 mod gl_proc_address_bridge;
 
@@ -18,16 +25,23 @@ use std::cell::RefCell;
 use std::ffi::CString;
 use std::path::Path;
 use std::rc::Rc;
+use std::time::Duration;
 
 use libmpv2::render::{OpenGLInitParams, RenderContext, RenderParam, RenderParamApiType};
 use libmpv2::Mpv;
-use slint::{ComponentHandle, GraphicsAPI, RenderingState, Weak};
+use playback_state::format_time;
+use slint::{ComponentHandle, GraphicsAPI, RenderingState, Timer, TimerMode, Weak};
 
 use gl_proc_address_bridge::{
     bridged_get_proc_address, with_bridged_get_proc_address, SlintGlContext,
 };
 
 use crate::AppWindow;
+
+/// How often the scrub bar's `Timer` re-reads mpv's `time-pos`/`duration`
+/// properties. Frequent enough for smooth-looking thumb/progress motion,
+/// without polling on every rendered frame.
+const SCRUB_BAR_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
 /// `GL_DRAW_FRAMEBUFFER_BINDING` (== `GL_FRAMEBUFFER_BINDING`, same value in
 /// desktop GL and GLES) — queried each frame in [`render_frame`] rather than
@@ -46,14 +60,17 @@ struct VideoPlayerInner {
     gl_get_integerv: Option<unsafe extern "C" fn(u32, *mut i32)>,
 }
 
-/// Owns an mpv core registered as a rendering underlay on an [`AppWindow`].
-/// The rendering notifier closure holds its own `Rc` clone of the shared
-/// state and keeps playback going independent of this handle, so `inner`
-/// isn't read yet — it's kept here for Vaihe 12 (scrub bar), which will read
-/// `time-pos`/`duration` off `inner.borrow().mpv` the same way.
+/// Owns an mpv core registered as a rendering underlay on an [`AppWindow`],
+/// plus the scrub bar's polling timer. Both the rendering notifier and the
+/// timer closures hold their own `Rc` clone of the shared state, so `inner`
+/// itself isn't read directly here — this handle just needs to outlive them.
+/// `scrub_bar_timer` must be kept alive too: dropping a `slint::Timer` stops
+/// it.
 pub struct VideoPlayer {
     #[allow(dead_code)]
     inner: Rc<RefCell<VideoPlayerInner>>,
+    #[allow(dead_code)]
+    scrub_bar_timer: Timer,
 }
 
 impl VideoPlayer {
@@ -104,8 +121,44 @@ impl VideoPlayer {
             })
             .map_err(|err| anyhow::anyhow!("failed to register mpv rendering notifier: {err}"))?;
 
-        Ok(Self { inner })
+        let scrub_bar_timer = Timer::default();
+        let poll_inner = Rc::clone(&inner);
+        let poll_window_weak = window.as_weak();
+        scrub_bar_timer.start(TimerMode::Repeated, SCRUB_BAR_POLL_INTERVAL, move || {
+            poll_scrub_bar(&poll_inner, &poll_window_weak);
+        });
+
+        Ok(Self {
+            inner,
+            scrub_bar_timer,
+        })
     }
+}
+
+/// Reads mpv's `time-pos`/`duration` properties and mirrors them into the
+/// scrub bar's Slint properties: formatted `MM:SS` (or `H:MM:SS`) time
+/// labels and a `0.0`–`1.0` progress fraction. Called on
+/// `SCRUB_BAR_POLL_INTERVAL` by the timer started in [`VideoPlayer::attach`].
+/// Both properties are unavailable (an `Err`) before mpv has loaded and
+/// started decoding a file, in which case this reports `00:00` / `0.0`
+/// rather than propagating the error — there's nothing wrong to report, mpv
+/// just hasn't got there yet.
+fn poll_scrub_bar(inner: &Rc<RefCell<VideoPlayerInner>>, window_weak: &Weak<AppWindow>) {
+    let Some(window) = window_weak.upgrade() else {
+        return;
+    };
+    let mpv = inner.borrow().mpv;
+
+    let time_pos = mpv.get_property::<f64>("time-pos").unwrap_or(0.0);
+    let duration = mpv.get_property::<f64>("duration").unwrap_or(0.0);
+
+    window.set_current_time_label(format_time(time_pos).into());
+    window.set_duration_label(format_time(duration).into());
+    window.set_scrub_progress(if duration > 0.0 {
+        (time_pos / duration).clamp(0.0, 1.0) as f32
+    } else {
+        0.0
+    });
 }
 
 /// Creates the mpv render context using Slint's OpenGL loader, wires mpv's

@@ -9,6 +9,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.11] - 2026-07-15
+
+### Added
+- `playback_state::format_time(seconds: f64) -> String`: formats a playback time as `MM:SS` (or `H:MM:SS` past one hour) for the scrub bar's time labels, clamping negative/non-finite input to `00:00`
+- `crates/app/ui/app-window.slint`: `ScrubBar` component below the video frame — mono muted time labels either side of a 4px rounded track with an accent-filled progress fill and a white circular thumb, per `sketch/design_reference.dc.html#1c`
+- `video_player.rs`: `VideoPlayer::attach` starts a repeating `slint::Timer` (`SCRUB_BAR_POLL_INTERVAL`, 200ms) that polls mpv's `time-pos`/`duration` properties and mirrors them into the new `current-time-label`/`duration-label`/`scrub-progress` `AppWindow` properties
+- `docs/src/architecture/video-playback.md`: new "Scrub bar: polling mpv's playback-time properties" section
+
 ## [0.1.10] - 2026-07-15
 
 ### Added

@@ -41,6 +41,32 @@ So with a video loaded, mpv's `BeforeRendering` draw is the only thing
 that ever paints color into the video area — Slint's own pass leaves it
 untouched.
 
+## Scrub bar: polling mpv's playback-time properties
+
+Unlike frame rendering, the scrub bar (current time / total time / progress
+fill + thumb) doesn't need to run inside the render loop — it just needs
+mpv's `time-pos` and `duration` properties on a steady cadence. `attach`
+starts a repeating `slint::Timer` (`SCRUB_BAR_POLL_INTERVAL`, 200ms) that
+calls `poll_scrub_bar`: it reads both properties with `Mpv::get_property`,
+formats them with `playback_state::format_time` (`MM:SS`, or `H:MM:SS` past
+the one-hour mark), and writes `current-time-label`, `duration-label`, and
+`scrub-progress` (a `0.0`–`1.0` fraction) on the `AppWindow`, which
+`ScrubBar` in `app-window.slint` renders as the mock's 4px track + accent
+fill + white thumb.
+
+Plain polling was chosen over `Mpv`'s event-context / `observe_property`
+API: two properties on a fixed interval doesn't need a second event source
+alongside the rendering notifier, and `slint::Timer` callbacks already run
+on the Slint UI thread, so no cross-thread handoff (`invoke_from_event_loop`,
+as the render context's update callback needs) is required to set Slint
+properties. Before mpv has started decoding a file, both properties return
+`Err`; `poll_scrub_bar` treats that as `00:00` / `0.0` rather than
+propagating an error, since it isn't one — mpv just hasn't got there yet.
+
+The timer is stored on `VideoPlayer` (`scrub_bar_timer`) purely to keep it
+alive: dropping a `slint::Timer` stops it, the same reason the mpv core
+itself is kept alive via `'static Mpv` for the process lifetime.
+
 ## Current limitation: no inset video area yet
 
 mpv's render API always draws starting at `(0, 0)` of the framebuffer it's
