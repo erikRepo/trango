@@ -24,7 +24,7 @@ Open `design_reference.dc.html` in any browser to view it (it needs `support.js`
 - Bottom hint bar (34px tall)
 
 **Top bar** — background `#1c1c22`-ish (see tokens below), 1px bottom border, horizontal flex, space-between, 16px side padding:
-- Left: 8px dot (accent color) + "lingoplay" wordmark, 14px/600 Inter
+- Left: 8px dot (accent color) + "TrangoPlayer" wordmark, 14px/600 Inter
 - Center: segmented control, 2 items ("Normal" / "Sentence by sentence"), pill container with 3px padding, active segment filled with accent blue, inactive text is muted grey
 - Right: two ghost buttons "Open video…" and "Open subtitles…", 1px border, monospace label, 12px
 
