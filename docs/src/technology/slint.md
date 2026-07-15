@@ -80,3 +80,12 @@ bottom hint bar are added in later `TODO.md` steps.
   installed as system fonts; Slint falls back to its default font
   silently otherwise, no build/runtime error. No font files are bundled
   with the app yet.
+- `HorizontalLayout`/`VerticalLayout` default `cross-axis-alignment` is
+  `stretch` — every direct child fills the full cross-axis extent (e.g.
+  the full height of a `HorizontalLayout`) regardless of its own
+  min/preferred height. This is a *different* property from
+  `horizontal-stretch`/`vertical-stretch`, which only control growth
+  along the layout's **main** axis and have no effect on cross-axis
+  sizing. The top bar's row sets `cross-axis-alignment: center;` so the
+  segmented control and ghost buttons size to their own padding instead
+  of filling the whole 52px bar.

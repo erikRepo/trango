@@ -29,8 +29,6 @@ component SegmentButton {
 
     min-width: layout.min-width;
     min-height: layout.min-height;
-    horizontal-stretch: 0;
-    vertical-stretch: 0;
 
     Rectangle {
         border-radius: 5px;
@@ -66,8 +64,6 @@ component GhostButton {
 
     min-width: layout.min-width;
     min-height: layout.min-height;
-    horizontal-stretch: 0;
-    vertical-stretch: 0;
 
     Rectangle {
         border-width: 1px;
@@ -112,11 +108,10 @@ export component AppWindow inherits Window {
                 padding-left: 16px;
                 padding-right: 16px;
                 alignment: space-between;
+                cross-axis-alignment: center;
 
                 HorizontalLayout {
                     spacing: 10px;
-                    horizontal-stretch: 0;
-                    vertical-stretch: 0;
 
                     Rectangle {
                         width: 8px;
@@ -139,8 +134,6 @@ export component AppWindow inherits Window {
                 Rectangle {
                     background: Palette.segmented-bg;
                     border-radius: 7px;
-                    horizontal-stretch: 0;
-                    vertical-stretch: 0;
 
                     HorizontalLayout {
                         padding: 3px;
@@ -162,8 +155,6 @@ export component AppWindow inherits Window {
 
                 HorizontalLayout {
                     spacing: 8px;
-                    horizontal-stretch: 0;
-                    vertical-stretch: 0;
 
                     GhostButton {
                         label: "Open video…";
