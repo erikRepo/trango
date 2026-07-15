@@ -248,19 +248,21 @@ fn default_video_folder(args: &[String]) -> PathBuf {
 }
 
 /// Wires the Open Video dialog (Vaihe 18): the top bar's
-/// `open-video-dialog-requested` callback lists `default_folder`'s video
-/// files and opens the modal (`open_video_dialog::open_dialog`);
-/// `select-open-video-row` updates which row is highlighted
-/// (`open_video_dialog::mark_selected`); `confirm-open-video` loads the
-/// selected file (see `open_selected_video`); `cancel-open-video-dialog`
-/// (backdrop/✕/Cancel) just closes it.
+/// `open-video-dialog-requested` callback lists `default_folder`'s entries
+/// and opens the modal (`open_video_dialog::open_dialog`);
+/// `select-open-video-row` either navigates to a different folder (an
+/// `Up`/`Folder` row — re-listing and re-populating the dialog in place) or
+/// marks a video row selected (`open_video_dialog::mark_selected`);
+/// `confirm-open-video` loads the selected video (see
+/// `open_selected_video`); `cancel-open-video-dialog` (backdrop/✕/Cancel)
+/// just closes it.
 fn wire_open_video_dialog(
     window: &AppWindow,
     state: &Rc<RefCell<PlayerState>>,
     video_player_slot: Rc<RefCell<Option<Rc<video_player::VideoPlayer>>>>,
     default_folder: PathBuf,
 ) {
-    let entries: Rc<RefCell<Vec<open_video_dialog::VideoFileEntry>>> =
+    let entries: Rc<RefCell<Vec<open_video_dialog::FolderEntry>>> =
         Rc::new(RefCell::new(Vec::new()));
 
     let request_window_weak = window.as_weak();
@@ -269,7 +271,7 @@ fn wire_open_video_dialog(
         let Some(window) = request_window_weak.upgrade() else {
             return;
         };
-        let files = open_video_dialog::list_video_files(&default_folder);
+        let files = open_video_dialog::list_folder_entries(&default_folder);
         open_video_dialog::open_dialog(&window, &default_folder, &files);
         *request_entries.borrow_mut() = files;
     });
@@ -287,6 +289,19 @@ fn wire_open_video_dialog(
         let Some(window) = select_window_weak.upgrade() else {
             return;
         };
+        let target_folder = usize::try_from(index).ok().and_then(|index| {
+            match select_entries.borrow().get(index)? {
+                open_video_dialog::FolderEntry::Up(path)
+                | open_video_dialog::FolderEntry::Folder { path, .. } => Some(path.clone()),
+                open_video_dialog::FolderEntry::Video(_) => None,
+            }
+        });
+        if let Some(target_folder) = target_folder {
+            let files = open_video_dialog::list_folder_entries(&target_folder);
+            open_video_dialog::open_dialog(&window, &target_folder, &files);
+            *select_entries.borrow_mut() = files;
+            return;
+        }
         window.set_open_video_selected_index(index);
         open_video_dialog::mark_selected(&window, &select_entries.borrow(), index);
     });
@@ -298,14 +313,18 @@ fn wire_open_video_dialog(
         let Some(window) = confirm_window_weak.upgrade() else {
             return;
         };
-        let Ok(index) = usize::try_from(window.get_open_video_selected_index()) else {
-            return;
-        };
-        let Some(entry) = confirm_entries.borrow().get(index).cloned() else {
+        let video_path = usize::try_from(window.get_open_video_selected_index())
+            .ok()
+            .and_then(|index| confirm_entries.borrow().get(index).cloned())
+            .and_then(|entry| match entry {
+                open_video_dialog::FolderEntry::Video(video) => Some(video.path),
+                _ => None,
+            });
+        let Some(video_path) = video_path else {
             return;
         };
         window.set_is_open_video_dialog_open(false);
-        open_selected_video(&window, &confirm_state, &video_player_slot, &entry.path);
+        open_selected_video(&window, &confirm_state, &video_player_slot, &video_path);
     });
 }
 
@@ -637,36 +656,45 @@ mod tests {
         assert!(!player_state.borrow().show_translation);
         assert!(!window.get_show_translation());
 
-        // When:  opening the Open Video dialog with two file entries
+        // When:  opening the Open Video dialog with an Up row, a subfolder,
+        //        and two video entries
         // Then:  it opens with the folder label mirrored, one row per
-        //        entry, and the first row pre-selected
+        //        entry, and the first *video* row pre-selected (not row 0,
+        //        which is the non-selectable Up row)
         let entries = vec![
-            open_video_dialog::VideoFileEntry {
+            open_video_dialog::FolderEntry::Up(PathBuf::from("/")),
+            open_video_dialog::FolderEntry::Folder {
+                path: PathBuf::from("/videos/clips"),
+                name: "clips".to_string(),
+            },
+            open_video_dialog::FolderEntry::Video(open_video_dialog::VideoFileEntry {
                 path: PathBuf::from("/videos/a.mp4"),
                 name: "a.mp4".to_string(),
                 size_label: "10 MB".to_string(),
-            },
-            open_video_dialog::VideoFileEntry {
+            }),
+            open_video_dialog::FolderEntry::Video(open_video_dialog::VideoFileEntry {
                 path: PathBuf::from("/videos/b.mkv"),
                 name: "b.mkv".to_string(),
                 size_label: "20 MB".to_string(),
-            },
+            }),
         ];
         open_video_dialog::open_dialog(&window, Path::new("/videos"), &entries);
         assert!(window.get_is_open_video_dialog_open());
         assert_eq!(window.get_open_video_folder_label(), "/videos");
-        assert_eq!(window.get_open_video_selected_index(), 0);
+        assert_eq!(window.get_open_video_selected_index(), 2);
         let dialog_rows = window.get_open_video_rows();
-        assert_eq!(dialog_rows.row_count(), 2);
-        assert!(dialog_rows.row_data(0).expect("row 0 exists").is_selected);
-        assert!(!dialog_rows.row_data(1).expect("row 1 exists").is_selected);
+        assert_eq!(dialog_rows.row_count(), 4);
+        assert!(dialog_rows.row_data(0).expect("row 0 exists").is_navigable);
+        assert!(dialog_rows.row_data(1).expect("row 1 exists").is_navigable);
+        assert!(dialog_rows.row_data(2).expect("row 2 exists").is_selected);
+        assert!(!dialog_rows.row_data(3).expect("row 3 exists").is_selected);
 
-        // When:  selecting the second row, as a row click does
+        // When:  selecting the second video row, as a row click does
         // Then:  the row model reflects the new selection
-        open_video_dialog::mark_selected(&window, &entries, 1);
+        open_video_dialog::mark_selected(&window, &entries, 3);
         let dialog_rows = window.get_open_video_rows();
-        assert!(!dialog_rows.row_data(0).expect("row 0 exists").is_selected);
-        assert!(dialog_rows.row_data(1).expect("row 1 exists").is_selected);
+        assert!(!dialog_rows.row_data(2).expect("row 2 exists").is_selected);
+        assert!(dialog_rows.row_data(3).expect("row 3 exists").is_selected);
 
         // When:  cancelling, as the backdrop/✕/Cancel button does
         // Then:  the dialog closes

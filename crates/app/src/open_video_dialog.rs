@@ -1,8 +1,7 @@
-//! Open Video dialog (Vaihe 18): an in-app modal listing video files from a
-//! folder — no OS-native file picker, per README's `#2a` mock — plus
-//! same-stem `.srt` auto-matching once a file is opened. Folder switching
-//! (browsing to a different folder from inside the dialog) is out of scope
-//! here; see `docs/src/specs/README.md`.
+//! Open Video dialog (Vaihe 18): an in-app modal listing a folder's video
+//! files and subfolders — no OS-native file/folder picker, per README's
+//! `#2a` mock — with in-dialog navigation (an "‥ Up" row plus clicking a
+//! subfolder) and same-stem `.srt` auto-matching once a video is opened.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -10,18 +9,18 @@ use std::rc::Rc;
 
 use slint::VecModel;
 
-use crate::{AppWindow, OpenVideoFileRow};
+use crate::{AppWindow, OpenVideoRow};
 
 /// Video file extensions recognized when listing a folder. README doesn't
 /// scope this further, so this covers the common containers a language
 /// learner is likely to have on disk.
 const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mkv", "webm", "mov", "avi"];
 
-/// One row in the Open Video dialog's file list. README defers
-/// duration/size metadata to a later iteration if probing turns out heavy
-/// (`TODO.md` Vaihe 18) — `size_label` (a cheap `std::fs::metadata` read) is
-/// currently the only metadata shown alongside the name; duration would
-/// need decoding the file with libmpv/ffprobe.
+/// A selectable, openable video file — one possible [`FolderEntry`]. README
+/// defers duration/size metadata to a later iteration if probing turns out
+/// heavy (`TODO.md` Vaihe 18) — `size_label` (a cheap `std::fs::metadata`
+/// read) is currently the only metadata shown alongside the name; duration
+/// would need decoding the file with libmpv/ffprobe.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VideoFileEntry {
     /// Absolute path to the video file — used to open it and to look up a
@@ -33,39 +32,81 @@ pub struct VideoFileEntry {
     pub size_label: String,
 }
 
-/// Lists `folder`'s video files (by extension, see [`VIDEO_EXTENSIONS`]),
-/// sorted by filename. Returns an empty list (logging a warning) if
-/// `folder` can't be read, so a missing/inaccessible folder doesn't panic
-/// the dialog.
-pub fn list_video_files(folder: &Path) -> Vec<VideoFileEntry> {
-    let entries = match fs::read_dir(folder) {
-        Ok(entries) => entries,
+/// One row in the Open Video dialog's listing: either something that
+/// navigates the dialog to a different folder (`Up`/`Folder`), or a video
+/// file that can be selected and opened.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FolderEntry {
+    /// The listed folder's parent — shown first, only when a parent exists
+    /// (i.e. not at the filesystem root).
+    Up(PathBuf),
+    /// A subfolder of the listed folder.
+    Folder {
+        /// Absolute path to navigate to on click.
+        path: PathBuf,
+        /// Displayed folder name.
+        name: String,
+    },
+    /// A video file.
+    Video(VideoFileEntry),
+}
+
+/// Lists `folder`'s contents as dialog rows: an `Up` entry first (if
+/// `folder` has a parent), then subfolders sorted by name, then video files
+/// (by extension, see [`VIDEO_EXTENSIONS`]) sorted by name. Returns just the
+/// `Up` entry (or nothing) if `folder`'s contents can't be read (logging a
+/// warning), so a missing/inaccessible folder doesn't panic the dialog.
+pub fn list_folder_entries(folder: &Path) -> Vec<FolderEntry> {
+    let mut entries = Vec::new();
+    if let Some(parent) = folder.parent() {
+        entries.push(FolderEntry::Up(parent.to_path_buf()));
+    }
+
+    let dir_entries = match fs::read_dir(folder) {
+        Ok(dir_entries) => dir_entries,
         Err(err) => {
             tracing::warn!(?folder, %err, "failed to read video folder");
-            return Vec::new();
+            return entries;
         }
     };
 
-    let mut files: Vec<VideoFileEntry> = entries
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.file_type().is_ok_and(|file_type| file_type.is_file()))
-        .filter(|entry| is_video_file(&entry.path()))
-        .filter_map(|entry| {
-            let path = entry.path();
-            let name = path.file_name()?.to_string_lossy().into_owned();
-            let size_label = entry
+    let mut subfolders: Vec<(String, PathBuf)> = Vec::new();
+    let mut videos: Vec<VideoFileEntry> = Vec::new();
+    for dir_entry in dir_entries.filter_map(|entry| entry.ok()) {
+        let Ok(file_type) = dir_entry.file_type() else {
+            continue;
+        };
+        let path = dir_entry.path();
+        let Some(name) = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+        else {
+            continue;
+        };
+        if file_type.is_dir() {
+            subfolders.push((name, path));
+        } else if file_type.is_file() && is_video_file(&path) {
+            let size_label = dir_entry
                 .metadata()
                 .map(|metadata| format_file_size(metadata.len()))
                 .unwrap_or_default();
-            Some(VideoFileEntry {
+            videos.push(VideoFileEntry {
                 path,
                 name,
                 size_label,
-            })
-        })
-        .collect();
-    files.sort_by(|a, b| a.name.cmp(&b.name));
-    files
+            });
+        }
+    }
+    subfolders.sort_by(|a, b| a.0.cmp(&b.0));
+    videos.sort_by(|a, b| a.name.cmp(&b.name));
+
+    entries.extend(
+        subfolders
+            .into_iter()
+            .map(|(name, path)| FolderEntry::Folder { path, name }),
+    );
+    entries.extend(videos.into_iter().map(FolderEntry::Video));
+    entries
 }
 
 /// Whether `path`'s extension matches one of [`VIDEO_EXTENSIONS`]
@@ -111,13 +152,15 @@ pub fn matching_subtitle_path(video_path: &Path) -> Option<PathBuf> {
 }
 
 /// Rebuilds the dialog's row model from `entries`, pre-selecting the first
-/// one (if any — mirrors the mock's pre-highlighted first row) and opens the
-/// modal: sets `open-video-folder-label`/`open-video-rows`/
+/// video entry (if any — mirrors the mock's pre-highlighted first row) and
+/// opens the modal: sets `open-video-folder-label`/`open-video-rows`/
 /// `open-video-selected-index`/`is-open-video-dialog-open`. Called by
-/// `main.rs`'s `wire_open_video_dialog` when the top bar's "Open video…"
-/// button is clicked.
-pub fn open_dialog(window: &AppWindow, folder: &Path, entries: &[VideoFileEntry]) {
-    let selected_index = if entries.is_empty() { -1 } else { 0 };
+/// `main.rs`'s `wire_open_video_dialog` both when the top bar's "Open
+/// video…" button is clicked and when a row navigates to a different
+/// folder (setting `is-open-video-dialog-open` again in the latter case is
+/// harmless — it's already `true`).
+pub fn open_dialog(window: &AppWindow, folder: &Path, entries: &[FolderEntry]) {
+    let selected_index = first_video_index(entries);
     window.set_open_video_folder_label(folder.display().to_string().into());
     window
         .set_open_video_rows(Rc::new(VecModel::from(dialog_rows(entries, selected_index))).into());
@@ -125,24 +168,50 @@ pub fn open_dialog(window: &AppWindow, folder: &Path, entries: &[VideoFileEntry]
     window.set_is_open_video_dialog_open(true);
 }
 
+/// The index of `entries`' first `Video` entry, or `-1` if none.
+fn first_video_index(entries: &[FolderEntry]) -> i32 {
+    entries
+        .iter()
+        .position(|entry| matches!(entry, FolderEntry::Video(_)))
+        .and_then(|index| i32::try_from(index).ok())
+        .unwrap_or(-1)
+}
+
 /// Rebuilds the row model with `selected_index` marked current, without
-/// touching the folder label or dialog-open state — used when a row is
-/// clicked (`main.rs`'s `on_select_open_video_row`).
-pub fn mark_selected(window: &AppWindow, entries: &[VideoFileEntry], selected_index: i32) {
+/// touching the folder label or dialog-open state — used when a video row
+/// is clicked (`main.rs`'s `on_select_open_video_row`).
+pub fn mark_selected(window: &AppWindow, entries: &[FolderEntry], selected_index: i32) {
     window
         .set_open_video_rows(Rc::new(VecModel::from(dialog_rows(entries, selected_index))).into());
 }
 
-/// Maps `entries` into the Slint row model, marking the entry at
-/// `selected_index` (if in range) as selected.
-fn dialog_rows(entries: &[VideoFileEntry], selected_index: i32) -> Vec<OpenVideoFileRow> {
+/// Maps `entries` into the Slint row model. `Up`/`Folder` entries render as
+/// navigable rows (no size label, never selected — clicking them navigates
+/// instead, handled in `main.rs`); the `Video` entry at `selected_index` (if
+/// any) is marked selected.
+fn dialog_rows(entries: &[FolderEntry], selected_index: i32) -> Vec<OpenVideoRow> {
     entries
         .iter()
         .enumerate()
-        .map(|(index, entry)| OpenVideoFileRow {
-            name: entry.name.clone().into(),
-            size_label: entry.size_label.clone().into(),
-            is_selected: usize::try_from(selected_index).ok() == Some(index),
+        .map(|(index, entry)| match entry {
+            FolderEntry::Up(_) => OpenVideoRow {
+                name: "⬆ .. (up)".into(),
+                size_label: "".into(),
+                is_selected: false,
+                is_navigable: true,
+            },
+            FolderEntry::Folder { name, .. } => OpenVideoRow {
+                name: format!("{name}/").into(),
+                size_label: "".into(),
+                is_selected: false,
+                is_navigable: true,
+            },
+            FolderEntry::Video(video) => OpenVideoRow {
+                name: video.name.clone().into(),
+                size_label: video.size_label.clone().into(),
+                is_selected: usize::try_from(selected_index).ok() == Some(index),
+                is_navigable: false,
+            },
         })
         .collect()
 }
@@ -155,46 +224,73 @@ mod tests {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../test-media/sample")
     }
 
+    /// Extracts a `Video` entry's `VideoFileEntry`, panicking otherwise —
+    /// keeps the folder-navigation tests focused on the entries that matter
+    /// for that assertion.
+    fn expect_video(entry: &FolderEntry) -> &VideoFileEntry {
+        match entry {
+            FolderEntry::Video(video) => video,
+            other => panic!("expected a Video entry, got {other:?}"),
+        }
+    }
+
     #[test]
-    fn test_list_video_files_finds_real_sample_video() {
+    fn test_list_folder_entries_finds_real_sample_video() {
         // Given: the repo's real test-media/sample fixture folder, which has
-        //        one .mp4 alongside two .srt files
-        // When:  listing its video files
-        // Then:  only the .mp4 is returned, with a non-empty size label
-        let files = list_video_files(&fixture_dir());
+        //        one .mp4 alongside two .srt files and no subfolders
+        // When:  listing its contents
+        // Then:  an Up entry (the folder has a parent) is followed by the
+        //        single video entry, with a non-empty size label
+        let entries = list_folder_entries(&fixture_dir());
 
-        assert_eq!(files.len(), 1);
-        assert_eq!(files[0].name, "sample.mp4");
-        assert!(!files[0].size_label.is_empty());
+        assert!(matches!(entries[0], FolderEntry::Up(_)));
+        assert_eq!(entries.len(), 2);
+        let video = expect_video(&entries[1]);
+        assert_eq!(video.name, "sample.mp4");
+        assert!(!video.size_label.is_empty());
     }
 
     #[test]
-    fn test_list_video_files_missing_folder_returns_empty() {
-        // Given: a folder that doesn't exist
-        // When:  listing its video files
-        // Then:  an empty list is returned rather than panicking
-        let files = list_video_files(Path::new("/no/such/folder/trango-test"));
+    fn test_list_folder_entries_missing_folder_returns_just_up() {
+        // Given: a folder that doesn't exist, but has a parent path
+        // When:  listing its contents
+        // Then:  only the Up entry comes back, rather than panicking
+        let entries = list_folder_entries(Path::new("/no/such/folder/trango-test"));
 
-        assert!(files.is_empty());
+        assert_eq!(
+            entries,
+            vec![FolderEntry::Up(PathBuf::from("/no/such/folder"))]
+        );
     }
 
     #[test]
-    fn test_list_video_files_filters_and_sorts() {
-        // Given: a temp folder with mixed video/non-video files, one with an
-        //        uppercase extension, created out of alphabetical order
-        // When:  listing its video files
-        // Then:  only recognized video extensions come back, sorted by name
-        let dir = std::env::temp_dir().join("trango-test-list-video-files-filters-and-sorts");
+    fn test_list_folder_entries_filters_sorts_and_lists_subfolders_first() {
+        // Given: a temp folder with mixed video/non-video files (one with an
+        //        uppercase extension) and a subfolder, created out of order
+        // When:  listing its contents
+        // Then:  Up, then the subfolder, then only recognized video
+        //        extensions, each group sorted by name
+        let dir = std::env::temp_dir()
+            .join("trango-test-list-folder-entries-filters-sorts-and-lists-subfolders-first");
         let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).expect("failed to create temp test dir");
+        fs::create_dir_all(dir.join("clips")).expect("failed to create temp test dir");
         fs::write(dir.join("b_video.mp4"), b"").expect("failed to write fixture file");
         fs::write(dir.join("a_video.MKV"), b"").expect("failed to write fixture file");
         fs::write(dir.join("notes.txt"), b"").expect("failed to write fixture file");
 
-        let files = list_video_files(&dir);
+        let entries = list_folder_entries(&dir);
 
-        let names: Vec<&str> = files.iter().map(|entry| entry.name.as_str()).collect();
-        assert_eq!(names, vec!["a_video.MKV", "b_video.mp4"]);
+        assert!(matches!(entries[0], FolderEntry::Up(_)));
+        assert_eq!(
+            entries[1],
+            FolderEntry::Folder {
+                path: dir.join("clips"),
+                name: "clips".to_string(),
+            }
+        );
+        assert_eq!(expect_video(&entries[2]).name, "a_video.MKV");
+        assert_eq!(expect_video(&entries[3]).name, "b_video.mp4");
+        assert_eq!(entries.len(), 4);
 
         fs::remove_dir_all(&dir).expect("failed to clean up temp test dir");
     }
@@ -230,5 +326,36 @@ mod tests {
         let video_path = fixture_dir().join("does_not_exist.mp4");
 
         assert_eq!(matching_subtitle_path(&video_path), None);
+    }
+
+    #[test]
+    fn test_first_video_index() {
+        // Given: an entry list with navigable rows before the first video
+        // When:  finding the first video's index
+        // Then:  it's the video's position, not 0
+        let entries = vec![
+            FolderEntry::Up(PathBuf::from("/videos")),
+            FolderEntry::Folder {
+                path: PathBuf::from("/videos/clips"),
+                name: "clips".to_string(),
+            },
+            FolderEntry::Video(VideoFileEntry {
+                path: PathBuf::from("/videos/a.mp4"),
+                name: "a.mp4".to_string(),
+                size_label: "1 MB".to_string(),
+            }),
+        ];
+
+        assert_eq!(first_video_index(&entries), 2);
+    }
+
+    #[test]
+    fn test_first_video_index_with_no_videos_is_negative_one() {
+        // Given: an entry list with no Video entries
+        // When:  finding the first video's index
+        // Then:  -1, meaning "nothing selectable"
+        let entries = vec![FolderEntry::Up(PathBuf::from("/videos"))];
+
+        assert_eq!(first_video_index(&entries), -1);
     }
 }

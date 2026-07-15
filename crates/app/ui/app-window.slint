@@ -310,30 +310,37 @@ component SentenceListCard inherits Rectangle {
     }
 }
 
-/// One row in the Open Video dialog's file list: filename and formatted
-/// size, with `is-selected` driving the accent-tinted background/chip color
-/// (see `OpenVideoDialog`). Set from Rust in
+/// One row in the Open Video dialog's listing: either a navigable row (the
+/// "‥ Up" row or a subfolder — `is-navigable`, no `size-label`, never
+/// `is-selected`; clicking it navigates the dialog to a different folder)
+/// or a selectable video file (`is-selected` driving the accent-tinted
+/// background/chip color). Set from Rust in
 /// `crates/app/src/open_video_dialog.rs`.
-struct OpenVideoFileRow {
+struct OpenVideoRow {
     name: string,
     size-label: string,
     is-selected: bool,
+    is-navigable: bool,
 }
 
-/// The Open Video dialog (`TODO.md` Vaihe 18): a modal overlay listing video
-/// files from a folder — pixel reference
-/// `sketch/design_reference.dc.html#2a`, left mock — no OS-native file
-/// picker, an in-app list instead. `folder-label`/`rows`/`selected-index`
-/// are set from Rust (`crates/app/src/open_video_dialog.rs`) when the top
-/// bar's "Open video…" button is clicked. Clicking a row emits
-/// `row-clicked` with its index; the backdrop, header "✕", and footer
-/// "Cancel" all emit `cancel`; footer "Open" emits `confirm` (a no-op
-/// while nothing is selected) — `main.rs`'s `wire_open_video_dialog` wires
-/// all three to `AppWindow`'s matching callbacks, `confirm` also loading
-/// the selected file.
+/// The Open Video dialog (`TODO.md` Vaihe 18): a modal overlay listing a
+/// folder's video files and subfolders — pixel reference
+/// `sketch/design_reference.dc.html#2a`, left mock (extended here with
+/// in-dialog folder navigation, not shown in that static mock) — no
+/// OS-native file/folder picker, an in-app list instead.
+/// `folder-label`/`rows`/`selected-index` are set from Rust
+/// (`crates/app/src/open_video_dialog.rs`) when the top bar's "Open
+/// video…" button is clicked, and again whenever a navigable row changes
+/// the listed folder. Clicking a row emits `row-clicked` with its index —
+/// `main.rs` decides whether that navigates (an `Up`/`Folder` row) or
+/// selects (a video row); the backdrop, header "✕", and footer "Cancel"
+/// all emit `cancel`; footer "Open" emits `confirm` (a no-op while nothing
+/// is selected) — `main.rs`'s `wire_open_video_dialog` wires all three to
+/// `AppWindow`'s matching callbacks, `confirm` also loading the selected
+/// file.
 component OpenVideoDialog {
     in property <string> folder-label;
-    in property <[OpenVideoFileRow]> rows: [];
+    in property <[OpenVideoRow]> rows: [];
     in property <int> selected-index: -1;
     callback row-clicked(int);
     callback cancel();
@@ -421,7 +428,7 @@ component OpenVideoDialog {
                     }
 
                     if root.rows.length == 0 : Text {
-                        text: "No video files found in this folder.";
+                        text: "This folder is empty.";
                         color: Palette.muted-text;
                         font-family: "Inter";
                         font-size: 13px;
@@ -439,7 +446,7 @@ component OpenVideoDialog {
                                 spacing: 10px;
                                 cross-axis-alignment: center;
 
-                                Rectangle {
+                                if !row.is-navigable : Rectangle {
                                     width: 28px;
                                     height: 20px;
                                     border-radius: 3px;
@@ -454,11 +461,11 @@ component OpenVideoDialog {
                                         color: row.is-selected ? Palette.primary-text : Palette.ghost-text;
                                         font-family: "Inter";
                                         font-size: 13px;
-                                        font-weight: 500;
+                                        font-weight: row.is-navigable ? 600 : 500;
                                         overflow: elide;
                                     }
 
-                                    Text {
+                                    if row.size-label != "" : Text {
                                         text: row.size-label;
                                         color: Palette.muted-text;
                                         font-family: "JetBrains Mono";
@@ -719,7 +726,7 @@ export component AppWindow inherits Window {
     // crates/app/src/open_video_dialog.rs — see OpenVideoDialog above.
     in property <bool> is-open-video-dialog-open: false;
     in property <string> open-video-folder-label: "";
-    in property <[OpenVideoFileRow]> open-video-rows: [];
+    in property <[OpenVideoRow]> open-video-rows: [];
     in property <int> open-video-selected-index: -1;
     // Invoked by the top bar's "Open video…" GhostButton; wired in main.rs's
     // wire_open_video_dialog to list the default folder's video files and

@@ -9,6 +9,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.21] - 2026-07-15
+
+### Added
+- `crates/app/src/open_video_dialog.rs`: the Open Video dialog can now switch folders in-app — `list_folder_entries` replaces `list_video_files`, returning a `FolderEntry` per row (`Up` for the listed folder's parent, `Folder` for subfolders, `Video` for video files, sorted subfolders-then-videos-then-alphabetically), and clicking an `Up`/`Folder` row re-lists into that folder instead of selecting it (only `Video` rows are selectable/openable). `app-window.slint`'s `OpenVideoRow` (renamed from `OpenVideoFileRow`) gained `is-navigable`, rendering navigable rows without a chip/size line and in a heavier weight
+
+### Changed
+- `crates/app/src/main.rs`: `wire_open_video_dialog`'s `select-open-video-row` handler now branches on the clicked row's `FolderEntry` kind — navigating (re-listing and re-opening the dialog against the new folder) for `Up`/`Folder`, marking-selected for `Video`, same as before
+
 ## [0.1.20] - 2026-07-15
 
 ### Added

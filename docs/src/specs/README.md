@@ -6,12 +6,16 @@ behavior that go beyond what's already covered by the repository root
 handoff spec leaves open (see e.g. `TODO.md` Vaihe 21, Normal mode's
 sentence-panel behavior).
 
-## TODO: Open Video dialog folder switching
+## Open Video dialog: folder navigation
 
-The Open Video dialog (`TODO.md` Vaihe 18) lists video files from a single
-default folder (`main.rs`'s `default_video_folder`: the CLI video path's
-parent directory if one was given, otherwise the current working
-directory) — there is no in-dialog control to browse to a different folder.
-Listed explicitly out of scope for Vaihe 18 in `TODO.md`'s "Ei tässä
-listassa" section; a native folder picker is the planned approach when this
-is picked up.
+The Open Video dialog (`TODO.md` Vaihe 18) opens on a default folder
+(`main.rs`'s `default_video_folder`: the CLI video path's parent directory
+if one was given, otherwise the current working directory), but isn't
+limited to it: an "‥ Up" row and clicking a listed subfolder navigate the
+dialog in place, re-listing that folder's contents
+(`open_video_dialog::list_folder_entries`). This was chosen over a
+native OS folder picker to stay consistent with README's "no OS-native
+file picker — mockin oma UI" direction for the dialog as a whole, and
+needs no new dependency. `TODO.md`'s "Ei tässä listassa" section originally
+deferred folder switching with a *native* picker specifically; this in-app
+navigation isn't that, so it's covered here instead.

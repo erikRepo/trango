@@ -97,13 +97,18 @@ video frame; without a video path, the video area just shows the window
 background as a placeholder and the scrub bar stays at `00:00`.
 
 A video can also be picked in-app via the top bar's "Open video…" button
-(`TODO.md` Vaihe 18): `open_video_dialog::list_video_files` lists a
-folder's video files (by extension, with a `std::fs::metadata`-based size
-label — duration is deferred, since it would need decoding the file) and
+(`TODO.md` Vaihe 18): `open_video_dialog::list_folder_entries` lists a
+folder's subfolders and video files (by extension, with a
+`std::fs::metadata`-based size label for videos — duration is deferred,
+since it would need decoding the file) as `FolderEntry` rows, and
 `open_video_dialog::matching_subtitle_path` looks for a same-stem `.srt`
-next to the chosen file. `wire_open_video_dialog` in `main.rs` wires the
-button, row selection, and the "Open" button's `open_selected_video`, which
-loads any auto-matched subtitle first (or clears stale cues if none match),
+next to the chosen video. Clicking an `Up`/`Folder` row navigates the
+dialog to that folder in place (see `docs/src/specs/README.md`'s "Open
+Video dialog: folder navigation") instead of selecting it — only `Video`
+rows are selectable. `wire_open_video_dialog` in `main.rs` wires the
+button, row navigation/selection, and the "Open" button's
+`open_selected_video`, which loads any auto-matched subtitle first (or
+clears stale cues if none match),
 then either attaches a fresh `VideoPlayer` (if trango was started without a
 CLI video argument) or calls the existing one's `VideoPlayer::load_video`
 (switching files mid-session) — see
