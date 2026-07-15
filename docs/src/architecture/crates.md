@@ -32,7 +32,8 @@ unit tests, later against real `.srt` fixtures.
 ## `crates/playback-state` (library, package `playback-state`)
 
 Depends on `subtitle` for the `Cue` type. Holds `PlaybackMode` (`Normal` |
-`SentenceBySentence`, defaulting to `Normal`) and `PlayerState { mode,
+`SentenceBySentence`, defaulting to `SentenceBySentence` — the primary
+language-learning use case) and `PlayerState { mode,
 cues: Vec<Cue>, current_cue_index: Option<usize>, show_translation: bool
 }`.
 

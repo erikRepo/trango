@@ -23,8 +23,8 @@ pub struct PlayerState {
 }
 
 impl PlayerState {
-    /// Builds a fresh `PlayerState`: `Normal` mode, no cues, no cursor,
-    /// translation hidden.
+    /// Builds a fresh `PlayerState`: `SentenceBySentence` mode (see
+    /// `PlaybackMode`'s default), no cues, no cursor, translation hidden.
     pub fn new() -> Self {
         Self::default()
     }
@@ -78,36 +78,37 @@ mod tests {
     }
 
     #[test]
-    fn test_new_state_starts_in_normal_mode_with_no_cues() {
+    fn test_new_state_starts_in_sentence_by_sentence_mode_with_no_cues() {
         // Given: nothing
         // When:  building a fresh PlayerState
-        // Then:  mode is Normal, cues are empty, cursor is None, translation hidden
+        // Then:  mode is SentenceBySentence, cues are empty, cursor is None,
+        //        translation hidden
         let state = PlayerState::new();
-        assert_eq!(state.mode, PlaybackMode::Normal);
+        assert_eq!(state.mode, PlaybackMode::SentenceBySentence);
         assert!(state.cues.is_empty());
         assert_eq!(state.current_cue_index, None);
         assert!(!state.show_translation);
     }
 
     #[test]
-    fn test_toggle_mode_switches_normal_to_sentence_by_sentence() {
-        // Given: a fresh state in Normal mode
+    fn test_toggle_mode_switches_sentence_by_sentence_to_normal() {
+        // Given: a fresh state (defaults to SentenceBySentence)
         // When:  toggling the mode once
-        // Then:  it becomes SentenceBySentence
+        // Then:  it becomes Normal
         let mut state = PlayerState::new();
         state.toggle_mode();
-        assert_eq!(state.mode, PlaybackMode::SentenceBySentence);
+        assert_eq!(state.mode, PlaybackMode::Normal);
     }
 
     #[test]
-    fn test_toggle_mode_twice_returns_to_normal() {
-        // Given: a fresh state in Normal mode
+    fn test_toggle_mode_twice_returns_to_sentence_by_sentence() {
+        // Given: a fresh state (defaults to SentenceBySentence)
         // When:  toggling the mode twice
-        // Then:  it is back to Normal
+        // Then:  it is back to SentenceBySentence
         let mut state = PlayerState::new();
         state.toggle_mode();
         state.toggle_mode();
-        assert_eq!(state.mode, PlaybackMode::Normal);
+        assert_eq!(state.mode, PlaybackMode::SentenceBySentence);
     }
 
     #[test]

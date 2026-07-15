@@ -125,6 +125,33 @@ runs from `main`'s `if let Some(video_player) = &video_player` branch), so
 pressing the keys with subtitles but no video loaded is a no-op rather than
 a panic.
 
+## Starting paused at the first cue in SentenceBySentence mode
+
+`PlaybackMode::default()` is `SentenceBySentence` (the primary
+language-learning use case — see `crates.md`), so a freshly opened video
+would otherwise start playing immediately with no cue focused yet, which
+doesn't fit "step through one sentence at a time". Right after
+`setup_render_context` issues `loadfile`, it calls
+`pause_and_arm_start_seek_if_sentence_mode(mpv, &player_state.borrow())`:
+if the shared `PlayerState` is in `SentenceBySentence` mode and has cues
+loaded (via `subtitle_path_from_args`/`load_subtitles`, which runs before
+`VideoPlayer::attach` in `main.rs`), it immediately sets mpv's `pause`
+property (safe before the file has loaded) and returns the first cue's
+start, which is stored as `VideoPlayerInner::pending_start_seek`. It's a
+no-op (no pause, nothing armed) in `Normal` mode or with no cues loaded,
+since there's nothing to seek to.
+
+The seek to that timestamp can't happen in the same call: issuing mpv's
+`seek` command immediately after `loadfile` fails with `Raw(-12)`
+(`MPV_ERROR_COMMAND`) because the core is still idle — nothing has loaded
+yet for `seek` to act on, unlike a plain property set. So the seek is
+deferred to `apply_pending_start_seek`, called on every existing
+`SCRUB_BAR_POLL_INTERVAL` tick alongside `apply_pending_pause`: once mpv's
+`time-pos` property becomes readable (the signal that `loadfile` actually
+finished), it issues the seek and clears `pending_start_seek`. Playback
+stays paused throughout — pausing happens up front, the seek only moves
+*where* it's paused once possible.
+
 ## Current limitation: no inset video area yet
 
 mpv's render API always draws starting at `(0, 0)` of the framebuffer it's

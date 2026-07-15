@@ -9,6 +9,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.16] - 2026-07-15
+
+### Changed
+- `playback_state::PlaybackMode::default()` is now `SentenceBySentence` (was `Normal`) — the primary language-learning use case, so a fresh player starts there; `main.rs`'s `wire_player_state` mirrors this into the window's `sentence-mode-active` property right after wiring, since `app-window.slint` itself still hardcodes `false`
+- `video_player.rs`: after `loadfile`, a new `pause_and_arm_start_seek_if_sentence_mode` pauses mpv immediately and arms a deferred seek to the first loaded cue's start when the shared `PlayerState` is in `SentenceBySentence` mode, instead of continuing to autoplay — a no-op in `Normal` mode or with no cues loaded. The seek itself is applied by `apply_pending_start_seek` on the next scrub bar poll tick rather than right after `loadfile`, since mpv's `seek` command errors (`Raw(-12)`) if issued before the core has actually finished loading a file
+
 ## [0.1.15] - 2026-07-15
 
 ### Added

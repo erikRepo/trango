@@ -20,13 +20,17 @@ fn print_version() {
     println!("trango {}", env!("CARGO_PKG_VERSION"));
 }
 
-/// Owns a fresh `PlayerState` and wires the window's `toggle-mode` callback
-/// (invoked by the top bar's segmented control) to
-/// `PlayerState::toggle_mode()`, mirroring the resulting mode back into the
-/// `sentence-mode-active` Slint property. Returns the shared state so
-/// callers can inspect it (used by tests; later steps will read it too).
+/// Owns a fresh `PlayerState` — defaulting to `SentenceBySentence` mode, the
+/// primary language-learning use case — and mirrors that default into the
+/// window's `sentence-mode-active` property, since `app-window.slint`
+/// itself only hardcodes `false`. Also wires the window's `toggle-mode`
+/// callback (invoked by the top bar's segmented control) to
+/// `PlayerState::toggle_mode()`, mirroring each subsequent mode change back
+/// into `sentence-mode-active` too. Returns the shared state so callers can
+/// inspect it (used by tests; later steps will read it too).
 fn wire_player_state(window: &AppWindow) -> Rc<RefCell<PlayerState>> {
     let state = Rc::new(RefCell::new(PlayerState::new()));
+    window.set_sentence_mode_active(state.borrow().mode == PlaybackMode::SentenceBySentence);
 
     let state_for_callback = Rc::clone(&state);
     let window_weak = window.as_weak();
@@ -254,25 +258,29 @@ mod tests {
         window.set_version(env!("CARGO_PKG_VERSION").into());
         assert_eq!(window.get_version(), env!("CARGO_PKG_VERSION"));
 
-        // When:  reading sentence_mode_active before any interaction
-        // Then:  it defaults to false, i.e. the "Normal" segment is active,
-        //        matching the freshly wired PlayerState's Normal mode
+        // When:  reading sentence_mode_active before wiring
+        // Then:  it's still app-window.slint's own hardcoded default (false)
         assert!(!window.get_sentence_mode_active());
-        let player_state = wire_player_state(&window);
-        assert_eq!(player_state.borrow().mode, PlaybackMode::Normal);
 
-        // When:  invoking toggle-mode, as a segmented control click does
-        // Then:  both the Rust-owned PlayerState and the mirrored Slint
-        //        property switch to SentenceBySentence
-        window.invoke_toggle_mode();
+        // When:  wiring a fresh PlayerState
+        // Then:  it defaults to SentenceBySentence (the primary language-
+        //        learning use case), mirrored into sentence_mode_active
+        let player_state = wire_player_state(&window);
         assert_eq!(player_state.borrow().mode, PlaybackMode::SentenceBySentence);
         assert!(window.get_sentence_mode_active());
 
-        // When:  invoking toggle-mode again
-        // Then:  both flip back to Normal
+        // When:  invoking toggle-mode, as a segmented control click does
+        // Then:  both the Rust-owned PlayerState and the mirrored Slint
+        //        property switch to Normal
         window.invoke_toggle_mode();
         assert_eq!(player_state.borrow().mode, PlaybackMode::Normal);
         assert!(!window.get_sentence_mode_active());
+
+        // When:  invoking toggle-mode again
+        // Then:  both flip back to SentenceBySentence
+        window.invoke_toggle_mode();
+        assert_eq!(player_state.borrow().mode, PlaybackMode::SentenceBySentence);
+        assert!(window.get_sentence_mode_active());
 
         // When:  the sentence card is wired to a state with no cues loaded
         // Then:  it shows the placeholder label/text

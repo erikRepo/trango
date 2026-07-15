@@ -62,10 +62,18 @@ struct VideoPlayerInner {
     /// Resolved `glGetIntegerv`, used to look up the currently bound
     /// framebuffer in [`render_frame`].
     gl_get_integerv: Option<unsafe extern "C" fn(u32, *mut i32)>,
-    /// Timestamp at which the scrub bar poll tick (see [`pause_at_reached`])
+    /// Timestamp at which the scrub bar poll tick (see [`apply_pending_pause`])
     /// should pause mpv, armed by [`VideoPlayer::apply_seek_command`] for a
     /// [`SeekCommand`] with `then_pause` set. Cleared once reached.
     pause_at: Option<Duration>,
+    /// Timestamp the next poll tick (see [`apply_pending_start_seek`]) should
+    /// seek mpv to once a file is actually loaded, armed by
+    /// [`pause_and_arm_start_seek_if_sentence_mode`] right after `loadfile`.
+    /// Deferred rather than seeking immediately: mpv's `seek` command errors
+    /// if issued before the core has finished loading anything to seek
+    /// within, which `time-pos` becoming readable signals. Cleared once
+    /// applied.
+    pending_start_seek: Option<Duration>,
 }
 
 /// Owns an mpv core registered as a rendering underlay on an [`AppWindow`],
@@ -114,17 +122,23 @@ impl VideoPlayer {
             render_context: None,
             gl_get_integerv: None,
             pause_at: None,
+            pending_start_seek: None,
         }));
 
         let video_path = video_path.to_owned();
         let window_weak = window.as_weak();
         let notifier_inner = Rc::clone(&inner);
+        let notifier_player_state = Rc::clone(&player_state);
         window
             .window()
             .set_rendering_notifier(move |state, graphics_api| match state {
-                RenderingState::RenderingSetup => {
-                    setup_render_context(&notifier_inner, graphics_api, &window_weak, &video_path)
-                }
+                RenderingState::RenderingSetup => setup_render_context(
+                    &notifier_inner,
+                    graphics_api,
+                    &window_weak,
+                    &video_path,
+                    &notifier_player_state,
+                ),
                 RenderingState::BeforeRendering => render_frame(&notifier_inner, &window_weak),
                 RenderingState::AfterRendering => {
                     if let Some(render_context) = &notifier_inner.borrow().render_context {
@@ -145,6 +159,7 @@ impl VideoPlayer {
             poll_scrub_bar(&poll_inner, &poll_window_weak);
             sync_current_sentence(&poll_inner, &player_state, &poll_window_weak);
             apply_pending_pause(&poll_inner);
+            apply_pending_start_seek(&poll_inner);
         });
 
         Ok(Self {
@@ -191,6 +206,55 @@ fn apply_pending_pause(inner: &Rc<RefCell<VideoPlayerInner>>) {
         }
         inner.pause_at = None;
     }
+}
+
+/// If `player_state` is in `SentenceBySentence` mode and has cues loaded,
+/// pauses mpv immediately — setting the `pause` property is safe before the
+/// file has actually loaded, unlike the `seek` command — and returns the
+/// first cue's start for the caller to arm as `pending_start_seek`, applied
+/// once mpv has something loaded to seek within (see
+/// [`apply_pending_start_seek`]). Pausing (rather than leaving playback
+/// running until the seek lands) is what makes the learner press
+/// Right/Space to begin the first sentence instead of playback starting
+/// immediately. Returns `None` (no pause, nothing to arm) in `Normal` mode
+/// or with no cues loaded. Called once, right after `setup_render_context`
+/// issues `loadfile`.
+fn pause_and_arm_start_seek_if_sentence_mode(
+    mpv: &Mpv,
+    player_state: &PlayerState,
+) -> Option<Duration> {
+    if player_state.mode != PlaybackMode::SentenceBySentence {
+        return None;
+    }
+    let first_cue = player_state.cues.first()?;
+    if let Err(err) = mpv.set_property("pause", true) {
+        tracing::error!(%err, "failed to pause mpv at start");
+    }
+    Some(first_cue.start)
+}
+
+/// Seeks mpv to `inner`'s armed `pending_start_seek` (see
+/// [`pause_and_arm_start_seek_if_sentence_mode`]) once mpv's `time-pos`
+/// property becomes readable — the signal that `loadfile` has actually
+/// finished loading something to seek within, since issuing `seek`
+/// immediately after `loadfile` fails (mpv error `Raw(-12)`, the core is
+/// still idle). A no-op if nothing is armed. Called on every
+/// `SCRUB_BAR_POLL_INTERVAL` tick.
+fn apply_pending_start_seek(inner: &Rc<RefCell<VideoPlayerInner>>) {
+    let mut inner = inner.borrow_mut();
+    let Some(start) = inner.pending_start_seek else {
+        return;
+    };
+    if inner.mpv.get_property::<f64>("time-pos").is_err() {
+        return;
+    }
+    if let Err(err) = inner
+        .mpv
+        .command("seek", &[&start.as_secs_f64().to_string(), "absolute"])
+    {
+        tracing::error!(%err, "failed to seek mpv to first cue's start");
+    }
+    inner.pending_start_seek = None;
 }
 
 /// Reads mpv's `time-pos`/`duration` properties and mirrors them into the
@@ -252,6 +316,7 @@ fn setup_render_context(
     graphics_api: &GraphicsAPI,
     window_weak: &Weak<AppWindow>,
     video_path: &Path,
+    player_state: &Rc<RefCell<PlayerState>>,
 ) {
     let GraphicsAPI::NativeOpenGL { get_proc_address } = graphics_api else {
         tracing::error!("mpv render context requires Slint's OpenGL renderer");
@@ -310,6 +375,9 @@ fn setup_render_context(
         Some(video_path) => {
             if let Err(err) = mpv.command("loadfile", &[video_path, "replace"]) {
                 tracing::error!(%err, "failed to load video file");
+            } else {
+                inner.borrow_mut().pending_start_seek =
+                    pause_and_arm_start_seek_if_sentence_mode(mpv, &player_state.borrow());
             }
         }
         None => tracing::error!(?video_path, "video path is not valid UTF-8"),

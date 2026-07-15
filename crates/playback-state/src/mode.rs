@@ -5,9 +5,9 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PlaybackMode {
     /// Continuous playback, uninterrupted by cue boundaries.
-    #[default]
     Normal,
     /// Playback pauses at the end of each cue, waiting for manual navigation.
+    #[default]
     SentenceBySentence,
 }
 
@@ -16,10 +16,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_default_mode_is_normal() {
+    fn test_default_mode_is_sentence_by_sentence() {
         // Given: no explicit mode
         // When:  taking the Default value
-        // Then:  it is Normal
-        assert_eq!(PlaybackMode::default(), PlaybackMode::Normal);
+        // Then:  it is SentenceBySentence — the primary language-learning use
+        //        case, so a fresh player starts there rather than in Normal
+        assert_eq!(PlaybackMode::default(), PlaybackMode::SentenceBySentence);
     }
 }
