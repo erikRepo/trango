@@ -9,6 +9,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.30] - 2026-07-15
+
+### Fixed
+- `crates/app/src/video_player.rs`: opening a video with no subtitle linked yet (or in `Normal` mode) started playing immediately on its own, contradicting the "no mode autoplays" behavior just added — `pause_and_arm_start_seek_if_sentence_mode` only paused mpv when `SentenceBySentence` mode already had cues loaded, returning early otherwise. Renamed to `pause_and_arm_start_seek` and restructured so the initial pause always happens; only arming a seek to the first cue's start stays conditional on `SentenceBySentence` mode with cues present
+
 ## [0.1.29] - 2026-07-15
 
 ### Fixed

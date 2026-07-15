@@ -57,6 +57,8 @@ Open `design_reference.dc.html` in any browser to view it (it needs `support.js`
 
 **Mode switch:** Segmented control in the top bar toggles Normal ↔ Sentence-by-sentence. Persisted per session at minimum.
 
+**No mode autoplays.** Opening a video — with or without a subtitle file, CLI argument or Open Video dialog — always lands paused; only Space starts playback (see `docs/src/specs/`, "No mode autoplays"). In Sentence-by-sentence mode with cues loaded, it lands paused at the first cue's start rather than `0:00`.
+
 **Sentence-by-sentence mode** (core language-learning feature):
 - Driven entirely by subtitle cue timing (start/end timestamps per line).
 - **Right Arrow:** jump playhead to the start of the next subtitle cue and pause there — never autoplays (see `docs/src/specs/` for why: no mode starts playback on its own, only Space does).

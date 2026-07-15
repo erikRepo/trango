@@ -370,3 +370,18 @@ still playing toward its own scheduled pause) — once paused, for any
 reason, it leaves the cursor exactly where the triggering navigation/Space
 action already set it, rather than letting a boundary-matching pause
 position silently reclassify it.
+
+One gap in the first pass of this fix: `video_player.rs`'s own
+`pause_and_arm_start_seek_if_sentence_mode` (the function that pauses mpv
+right after `loadfile`) only ever paused in `SentenceBySentence` mode
+*with at least one cue already loaded* — `let first_cue =
+player_state.cues.first()?;` returned early (skipping the pause
+entirely) for `Normal` mode or a video with no subtitle linked yet. So a
+video opened without a subtitle file (a common case — that's exactly
+when the Open Subtitles dialog's "Generate subtitles" empty state shows)
+started playing immediately on its own, contradicting "no mode
+autoplays" for that specific case. Renamed to `pause_and_arm_start_seek`
+and restructured so the pause always happens unconditionally; only the
+*first-cue seek-arming* part stays conditional on `SentenceBySentence`
+mode with cues present (Normal mode, or no cues, still pauses — just at
+`0:00`, since there's no particular cue start to land on instead).

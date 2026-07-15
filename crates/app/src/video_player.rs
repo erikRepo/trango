@@ -72,7 +72,7 @@ struct VideoPlayerInner {
     pause_at: Option<Duration>,
     /// Timestamp the next poll tick (see [`apply_pending_start_seek`]) should
     /// seek mpv to once a file is actually loaded, armed by
-    /// [`pause_and_arm_start_seek_if_sentence_mode`] right after `loadfile`.
+    /// [`pause_and_arm_start_seek`] right after `loadfile`.
     /// Deferred rather than seeking immediately: mpv's `seek` command errors
     /// if issued before the core has finished loading anything to seek
     /// within, which `time-pos` becoming readable signals. Cleared once
@@ -257,11 +257,11 @@ impl VideoPlayer {
 
 /// Issues mpv's `loadfile` for `video_path`, marks `window`'s `video-loaded`
 /// property `true` (via `slint::invoke_from_event_loop`, since this may run
-/// from the rendering notifier rather than the plain UI-thread path), and —
-/// in `SentenceBySentence` mode — arms `inner`'s `pending_start_seek` (see
-/// [`pause_and_arm_start_seek_if_sentence_mode`]). Shared by
-/// `setup_render_context`'s initial load (if `attach` was given a path) and
-/// `VideoPlayer::load_video`'s later ones.
+/// from the rendering notifier rather than the plain UI-thread path), and
+/// always pauses mpv there — in `SentenceBySentence` mode with cues loaded,
+/// also arms `inner`'s `pending_start_seek` (see [`pause_and_arm_start_seek`]).
+/// Shared by `setup_render_context`'s initial load (if `attach` was given a
+/// path) and `VideoPlayer::load_video`'s later ones.
 fn load_file(
     inner: &Rc<RefCell<VideoPlayerInner>>,
     mpv: &Mpv,
@@ -277,8 +277,7 @@ fn load_file(
         tracing::error!(%err, ?video_path, "failed to load video file");
         return;
     }
-    inner.borrow_mut().pending_start_seek =
-        pause_and_arm_start_seek_if_sentence_mode(mpv, player_state);
+    inner.borrow_mut().pending_start_seek = pause_and_arm_start_seek(mpv, player_state);
 
     let loaded_window_weak = window_weak.clone();
     let _ = slint::invoke_from_event_loop(move || {
@@ -307,33 +306,34 @@ fn apply_pending_pause(inner: &Rc<RefCell<VideoPlayerInner>>) {
     }
 }
 
-/// If `player_state` is in `SentenceBySentence` mode and has cues loaded,
-/// pauses mpv immediately — setting the `pause` property is safe before the
-/// file has actually loaded, unlike the `seek` command — and returns the
-/// first cue's start for the caller to arm as `pending_start_seek`, applied
-/// once mpv has something loaded to seek within (see
-/// [`apply_pending_start_seek`]). Pausing (rather than leaving playback
-/// running until the seek lands) is what makes the learner press
-/// Right/Space to begin the first sentence instead of playback starting
-/// immediately. Returns `None` (no pause, nothing to arm) in `Normal` mode
-/// or with no cues loaded. Called once, right after `setup_render_context`
-/// issues `loadfile`.
-fn pause_and_arm_start_seek_if_sentence_mode(
-    mpv: &Mpv,
-    player_state: &PlayerState,
-) -> Option<Duration> {
-    if player_state.mode != PlaybackMode::SentenceBySentence {
-        return None;
-    }
-    let first_cue = player_state.cues.first()?;
+/// Pauses mpv immediately after `loadfile` — setting the `pause` property
+/// is safe before the file has actually loaded, unlike the `seek` command —
+/// unconditionally, regardless of mode or whether any subtitle is loaded:
+/// no mode autoplays on its own (see `docs/src/specs/`, "No mode
+/// autoplays"), a video with no subtitle included, so it always lands
+/// paused rather than running until the user explicitly starts it (Space).
+///
+/// In `SentenceBySentence` mode with cues loaded, also returns the first
+/// cue's start for the caller to arm as `pending_start_seek`, applied once
+/// mpv has something loaded to seek within (see
+/// [`apply_pending_start_seek`]) — so sentence-by-sentence playback starts
+/// exactly at the first line rather than wherever `loadfile` happened to
+/// land (e.g. `0:00`, which may be lead-in silence/titles before the first
+/// cue). Returns `None` (nothing to arm) in `Normal` mode or with no cues
+/// loaded — the video stays paused at `0:00` there instead. Called once,
+/// right after `setup_render_context`/`load_file` issues `loadfile`.
+fn pause_and_arm_start_seek(mpv: &Mpv, player_state: &PlayerState) -> Option<Duration> {
     if let Err(err) = mpv.set_property("pause", true) {
         tracing::error!(%err, "failed to pause mpv at start");
     }
-    Some(first_cue.start)
+    if player_state.mode != PlaybackMode::SentenceBySentence {
+        return None;
+    }
+    player_state.cues.first().map(|cue| cue.start)
 }
 
 /// Seeks mpv to `inner`'s armed `pending_start_seek` (see
-/// [`pause_and_arm_start_seek_if_sentence_mode`]) once mpv's `time-pos`
+/// [`pause_and_arm_start_seek`]) once mpv's `time-pos`
 /// property becomes readable — the signal that `loadfile` has actually
 /// finished loading something to seek within, since issuing `seek`
 /// immediately after `loadfile` fails (mpv error `Raw(-12)`, the core is
