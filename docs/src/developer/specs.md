@@ -216,3 +216,17 @@ on every poll tick and mirrors a changed cue into the sentence card/list.
 original mechanism structurally can't happen here. Scope: only live
 *tracking* — whether the sentence panel should even show in `Normal` mode
 is still open.
+
+## Current-sentence card: bounded, scrollable sentence text
+
+Reported as long cues getting visually cut off mid-word in the
+current-sentence card. Cause: the original-language `Text` had no bounded
+height, so `CurrentSentenceCard`'s `vertical-stretch: 0` asked its
+`VerticalLayout` parent for exactly the wrapped text's natural height —
+whenever the sentence panel column ran short on room, the layout squeezed
+the card below that, silently clipping the bottom line(s) instead of
+showing or scrolling to them. Fixed the same way `translation-height`
+already fixes the same class of bug for the translation line below it: a
+fixed-height `ScrollView` (`sentence-height`, 150px ≈ 4 lines) so long
+sentences scroll instead of clipping, and the card's height stays
+predictable regardless of cue length.

@@ -175,6 +175,18 @@ component CurrentSentenceCard {
     in property <bool> show-translation;
     callback toggle-translation;
 
+    /// Fixed height for the original-language sentence's scroll area —
+    /// roughly 4 lines of the 24px/600 Inter sentence text. Without this,
+    /// a long cue's wrapped text has no bounded height to lay out against:
+    /// when the sentence panel column runs out of vertical room (a small
+    /// window, or `SentenceListCard` below claiming its `vertical-stretch:
+    /// 1` share), the card gets squeezed shorter than the text's wrapped
+    /// height needs, silently clipping the bottom line(s) instead of
+    /// showing or scrolling to them. Fixed height, same fix as
+    /// `translation-height` below: long sentences scroll inside this box
+    /// instead of being cut off.
+    property <length> sentence-height: 150px;
+
     /// Fixed height for the translation line's scroll area — roughly 3
     /// lines of the 18px/500 Inter translation text. Fixed rather than
     /// sized to content so the card (and, below it, the sentence list's
@@ -225,13 +237,18 @@ component CurrentSentenceCard {
                 }
             }
 
-            Text {
-                text: root.sentence-text;
-                color: root.has-sentence ? Palette.primary-text : Palette.muted-text;
-                font-family: "Inter";
-                font-size: 24px;
-                font-weight: 600;
-                wrap: word-wrap;
+            ScrollView {
+                height: root.sentence-height;
+
+                Text {
+                    text: root.sentence-text;
+                    color: root.has-sentence ? Palette.primary-text : Palette.muted-text;
+                    font-family: "Inter";
+                    font-size: 24px;
+                    font-weight: 600;
+                    wrap: word-wrap;
+                    width: parent.width;
+                }
             }
 
             Rectangle {

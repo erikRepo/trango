@@ -9,6 +9,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.50] - 2026-07-16
+
+### Fixed
+- Current-sentence card's original-language text had no bounded height to wrap against, so long cues could get squeezed shorter than their wrapped line count (whenever the sentence panel ran low on vertical room) and lose their bottom line(s) without any indication. It now scrolls inside a fixed-height box, same pattern already used for the translation line below it, so long sentences are always fully reachable instead of silently clipped
+
 ## [0.1.49] - 2026-07-16
 
 ### Added
