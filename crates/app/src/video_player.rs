@@ -32,7 +32,9 @@ use std::time::Duration;
 
 use libmpv2::render::{OpenGLInitParams, RenderContext, RenderParam, RenderParamApiType};
 use libmpv2::Mpv;
-use playback_state::{format_time, PlaySpanCommand, PlaybackMode, PlayerState, SeekCommand};
+use playback_state::{
+    format_time, PlaySpanCommand, PlaybackMode, PlayerState, SeekCommand, MAX_SPEED,
+};
 use slint::{ComponentHandle, GraphicsAPI, RenderingState, Timer, TimerMode, Weak};
 
 use gl_proc_address_bridge::{
@@ -92,6 +94,12 @@ struct VideoPlayerInner {
     /// within, which `time-pos` becoming readable signals. Cleared once
     /// applied.
     pending_start_seek: Option<Duration>,
+    /// The playback speed [`VideoPlayer::set_speed`] last applied, reapplied
+    /// by [`load_file`] after every `loadfile` — mpv's `speed` property is
+    /// core-level rather than per-file, but reapplying it defensively keeps
+    /// the speed slider's chosen rate in effect across video changes
+    /// regardless. Defaults to `playback_state::MAX_SPEED` (normal speed).
+    current_speed: f64,
 }
 
 /// Owns an mpv core registered as a rendering underlay on an [`AppWindow`],
@@ -173,6 +181,7 @@ impl VideoPlayer {
             video_surface: None,
             pause_at: None,
             pending_start_seek: None,
+            current_speed: MAX_SPEED,
         }));
 
         let video_path = video_path.map(Path::to_owned);
@@ -312,6 +321,20 @@ impl VideoPlayer {
         inner.pause_at = None;
     }
 
+    /// Sets mpv's `speed` property — driven by the always-visible playback-
+    /// speed slider (`app-window.slint`'s `SpeedSlider`, wired to
+    /// `speed-requested` in `main.rs`). `speed` is expected to already be
+    /// mapped/clamped by `playback_state::speed_from_fraction`. Remembered
+    /// in `current_speed` so [`load_file`] can reapply it after loading a
+    /// different video.
+    pub fn set_speed(&self, speed: f64) {
+        let mut inner = self.inner.borrow_mut();
+        if let Err(err) = inner.mpv.set_property("speed", speed) {
+            tracing::error!(%err, speed, "failed to set mpv playback speed");
+        }
+        inner.current_speed = speed;
+    }
+
     /// Loads `video_path` into this already-attached `VideoPlayer` — used
     /// for every video load, including the one `attach`'s `video_path` names
     /// (if any) as well as later Open Video dialog picks (`TODO.md` Vaihe
@@ -352,6 +375,10 @@ fn load_file(
     if let Err(err) = mpv.command("loadfile", &[path_str, "replace"]) {
         tracing::error!(%err, ?video_path, "failed to load video file");
         return;
+    }
+    let current_speed = inner.borrow().current_speed;
+    if let Err(err) = mpv.set_property("speed", current_speed) {
+        tracing::error!(%err, current_speed, "failed to reapply playback speed after loading video");
     }
     inner.borrow_mut().pending_start_seek = pause_and_arm_start_seek(mpv, player_state);
 

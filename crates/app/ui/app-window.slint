@@ -962,6 +962,129 @@ component ScrubBar {
     }
 }
 
+/// Playback-speed control, shown directly below `ScrubBar` and always
+/// visible regardless of mode — useful for language learners who want to
+/// slow a video down without leaving Normal or Sentence-by-sentence mode.
+/// Maximum is normal speed (right edge, "1.0x"); dragging left only slows
+/// the video down, it never speeds it up. `current-speed`/
+/// `current-speed-label` are set from Rust
+/// (`crates/app/src/main.rs`'s `wire_speed_slider`, via
+/// `video_player.rs`'s `VideoPlayer::set_speed`), the fraction-to-speed
+/// mapping and label formatting done by `playback_state::speed_from_fraction`/
+/// `format_speed_label` so it's covered by plain Rust unit tests instead of
+/// Slint. `min-speed`/`max-speed` mirror `playback_state::{MIN_SPEED,MAX_SPEED}`
+/// (0.5-1.0) — Slint can't import Rust constants directly, so they must be
+/// kept in sync by hand. Clicking or dragging the track fires
+/// `speed-requested` with the pointer's fraction (0.0-1.0) across the
+/// track's width, same contract as `ScrubBar`'s `seek-requested`.
+component SpeedSlider {
+    in property <float> current-speed: 1.0;
+    in property <string> current-speed-label: "1.00x";
+    callback speed-requested(float);
+
+    property <float> min-speed: 0.5;
+    property <float> max-speed: 1.0;
+    property <float> progress: (root.current-speed - root.min-speed) / (root.max-speed - root.min-speed);
+
+    height: 44px;
+
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        spacing: 10px;
+        cross-axis-alignment: center;
+
+        Text {
+            text: "Speed";
+            color: Palette.muted-text;
+            font-family: "JetBrains Mono";
+            font-size: 11px;
+            font-weight: 500;
+            vertical-alignment: center;
+        }
+
+        track := Rectangle {
+            height: 4px;
+            border-radius: 2px;
+            background: Palette.border;
+
+            Rectangle {
+                x: 0px;
+                width: parent.width * root.progress;
+                height: parent.height;
+                border-radius: 2px;
+                background: Palette.accent;
+            }
+
+            Rectangle {
+                width: 12px;
+                height: 12px;
+                border-radius: 6px;
+                background: white;
+                x: parent.width * root.progress - self.width / 2;
+                y: (parent.height - self.height) / 2;
+            }
+
+            Text {
+                text: "0.5x";
+                color: Palette.muted-text;
+                font-family: "JetBrains Mono";
+                font-size: 10px;
+                font-weight: 500;
+                x: 0px;
+                y: 12px;
+            }
+
+            Text {
+                text: "0.75x";
+                color: Palette.muted-text;
+                font-family: "JetBrains Mono";
+                font-size: 10px;
+                font-weight: 500;
+                x: parent.width / 2 - self.width / 2;
+                y: 12px;
+            }
+
+            Text {
+                text: "1.0x";
+                color: Palette.muted-text;
+                font-family: "JetBrains Mono";
+                font-size: 10px;
+                font-weight: 500;
+                x: parent.width - self.width;
+                y: 12px;
+            }
+
+            // Taller than the 4px track itself, matching ScrubBar's own
+            // touch target sizing — a hairline is hard to aim for.
+            touch := TouchArea {
+                height: 24px;
+                y: (parent.height - self.height) / 2;
+
+                clicked => {
+                    root.speed-requested(touch.mouse-x / touch.width);
+                }
+                moved => {
+                    if touch.pressed {
+                        root.speed-requested(touch.mouse-x / touch.width);
+                    }
+                }
+            }
+        }
+
+        Text {
+            text: root.current-speed-label;
+            color: Palette.muted-text;
+            font-family: "JetBrains Mono";
+            font-size: 11px;
+            font-weight: 500;
+            vertical-alignment: center;
+            horizontal-alignment: right;
+            width: 44px;
+        }
+    }
+}
+
 /// A subtitle file already linked to the video: small accent chip + name +
 /// muted "linked" tag. Used by `OpenSubtitlesDialog` for both the
 /// original-language and translation sections once a file is set — per
@@ -1506,6 +1629,12 @@ export component AppWindow inherits Window {
     in property <string> current-time-label: "00:00";
     in property <string> duration-label: "00:00";
     in property <float> scrub-progress: 0.0;
+    // Playback-speed slider state, mirrored from mpv's `speed` property by
+    // main.rs's wire_speed_slider whenever the SpeedSlider below is
+    // dragged/clicked — see its own doc comment.
+    in property <float> current-playback-speed: 1.0;
+    in property <string> current-playback-speed-label: "1.00x";
+    callback speed-requested(float);
     // Current-sentence card state, mirrored from playback_state::PlayerState
     // by crates/app/src/sentence_card.rs — see CurrentSentenceCard above.
     in property <string> sentence-label: "Sentence – / –";
@@ -1877,6 +2006,12 @@ export component AppWindow inherits Window {
                         duration-label: root.duration-label;
                         progress: root.scrub-progress;
                         seek-requested(fraction) => { root.seek-requested(fraction); }
+                    }
+
+                    SpeedSlider {
+                        current-speed: root.current-playback-speed;
+                        current-speed-label: root.current-playback-speed-label;
+                        speed-requested(fraction) => { root.speed-requested(fraction); }
                     }
                 }
 

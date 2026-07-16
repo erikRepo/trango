@@ -9,6 +9,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.49] - 2026-07-16
+
+### Added
+- Always-visible playback-speed slider below the scrub bar, in both Normal and Sentence by sentence mode. Maximum is normal speed (1.0x); dragging left only slows the video down, snapping to 0.05 increments between 0.5x and 1.0x, with "0.5x"/"0.75x"/"1.0x" markers under the track — useful for language learners who want to slow a line down without losing per-sentence navigation
+
 ## [0.1.48] - 2026-07-16
 
 ### Fixed
