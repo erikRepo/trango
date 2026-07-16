@@ -1,7 +1,7 @@
 # Crate structure
 
 trango is a Cargo workspace (`[workspace]` in the root `Cargo.toml`) with
-three members:
+four members:
 
 ## `crates/subtitle` (library, package `subtitle`)
 
@@ -75,6 +75,49 @@ while in `SentenceBySentence` mode (see
 
 No I/O and no UI yet, so this state machine (and `format_time`) is TDD'd
 without a Slint window or a video file.
+
+## `crates/word-analysis` (library, package `word-analysis`)
+
+`TODO.md` Vaihe 24's word-by-word sentence analysis, split out the same
+way `subtitle` and `playback-state` are: the HTTP/JSON/file-I/O logic is
+plain Rust with no Slint or libmpv dependency, so it's unit-testable
+(including against a hand-rolled local mock HTTP server, see
+`crates/word-analysis/src/ollama.rs`'s tests) without a UI or a real
+Ollama installation. `crates/app` wires it to the Ctrl+A popup and the
+Open Subtitles dialog's "Analyze all sentences" batch loop.
+
+`WordEntry { word, translation, pronunciation }` and `WordAnalysis {
+words: Vec<WordEntry> }` (`entry.rs`) are the data model for one
+sentence's analysis.
+
+`cache.rs` persists analyses to a JSON sidecar file next to the subtitle
+they belong to, so re-opening the same video/subtitle reuses
+already-computed translations instead of re-calling Ollama:
+`cache_path_for(subtitle_path)` swaps the subtitle's extension for
+`.wordanalysis.json` (e.g. `subs.srt` -> `subs.wordanalysis.json`);
+`AnalysisCache { model, entries: HashMap<u32, WordAnalysis> }` is keyed by
+`Cue::index`. `load_cache`/`save_cache` follow the same robustness
+convention as `crates/app/src/config.rs`: a missing or corrupt cache file
+becomes an empty `AnalysisCache::default()` (logged via `tracing::warn!`),
+not an error — a lost cache means re-analyzing, not a failure to start.
+
+`ollama.rs` talks to a local Ollama instance (see
+`docs/src/technology/ureq.md`). The `OllamaClient` trait (`list_models`,
+`analyze_sentence`) lets callers swap in a fake instead of a real server
+in tests, mirroring `subtitle::SubtitleGenerator`'s role for whisper-cli.
+`HttpOllamaClient` implements it over HTTP, defaulting to
+`http://localhost:11434`: `list_models` reads `GET /api/tags`;
+`analyze_sentence` posts to `/api/generate` with `stream: false` and
+`format: "json"` so the whole answer comes back as one JSON object rather
+than a streamed sequence, then parses its `response` field (itself JSON
+text, per `build_prompt`'s instructions to the model) into a
+`WordAnalysis` — defensively stripping a ` ```json ` code fence first,
+since some local models still wrap their answer in one despite `format:
+"json"`. `build_prompt(sentence, target_language)` and the response
+parser are both plain functions with no I/O, tested directly with canned
+strings; `HttpOllamaClient` itself is tested against a small mock HTTP
+server started on a random local port (`std::net::TcpListener` in its own
+thread), so the test suite doesn't depend on Ollama being installed.
 
 ## `crates/app` (binary, package `trango`)
 
@@ -158,15 +201,16 @@ which `CurrentSentenceCard`'s `ToggleSwitch` and translation `Text` (in
 `app-window.slint`) read directly — purely visual, no effect on playback,
 per the README's translation toggle spec.
 
-## Why three crates instead of one
+## Why four crates instead of one
 
-Splitting `subtitle` and `playback-state` out of the binary means most of
-the business logic (subtitle parsing, cue navigation) is testable without
-pulling in the heavier Slint/libmpv dependencies, and keeps individual
-files small (see `CLAUDE.md`: aim for ~200 lines per file).
+Splitting `subtitle`, `playback-state`, and `word-analysis` out of the
+binary means most of the business logic (subtitle parsing, cue
+navigation, Ollama's HTTP/JSON handling) is testable without pulling in
+the heavier Slint/libmpv dependencies, and keeps individual files small
+(see `CLAUDE.md`: aim for ~200 lines per file).
 
 ## Shared workspace metadata
 
-All three crates inherit `version`, `edition`, and `rust-version` from
+All four crates inherit `version`, `edition`, and `rust-version` from
 `[workspace.package]` in the root `Cargo.toml` (`version.workspace = true`,
 etc.), so the version only needs to be bumped in one place.

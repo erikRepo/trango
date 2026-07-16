@@ -24,3 +24,5 @@
 - [libmpv2](technology/libmpv2.md)
 - [serde](technology/serde.md)
 - [toml](technology/toml.md)
+- [ureq](technology/ureq.md)
+- [serde_json](technology/serde_json.md)

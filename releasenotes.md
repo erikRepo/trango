@@ -9,6 +9,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.35] - 2026-07-16
+
+### Added
+- New `crates/word-analysis` crate (TODO.md Vaihe 24, part 1/6): pure, Slint/libmpv-free data model and client for word-by-word sentence analysis via a local Ollama instance — `WordAnalysis`/`WordEntry`, `AnalysisCache` with `cache_path_for`/`load_cache`/`save_cache` (a JSON sidecar file next to the subtitle, e.g. `subs.srt` -> `subs.wordanalysis.json`, missing/corrupt file falling back to an empty cache the same way `crates/app/src/config.rs` does), the `OllamaClient` trait plus an `ureq`-backed `HttpOllamaClient` (`list_models` via `GET /api/tags`, `analyze_sentence` via `POST /api/generate` with `format: "json"`), and `build_prompt`/response parsing as pure, independently testable functions. New dependencies `ureq` (synchronous HTTP client — trango has no async runtime, matching the existing `std::thread::spawn` background-work pattern) and `serde_json`, both approved by the user beforehand per CLAUDE.md
+
 ## [0.1.34] - 2026-07-16
 
 ### Fixed
