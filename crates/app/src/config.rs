@@ -19,6 +19,10 @@ pub struct TrangoConfig {
     /// reopening it doesn't always restart from a freshly autodiscovered
     /// default.
     pub whisper_model_folder: Option<PathBuf>,
+    /// The Ollama model last picked for word-by-word sentence analysis
+    /// (`TODO.md` Vaihe 24), reused as the default for the Ctrl+A popup
+    /// and "Analyze all sentences" on the next run.
+    pub ollama_model: Option<String>,
 }
 
 /// Resolves the config directory from `xdg_config_home`/`home` (as
@@ -162,6 +166,7 @@ mod tests {
         let config = TrangoConfig {
             whisper_model_path: Some(PathBuf::from("/models/ggml-medium.bin")),
             whisper_model_folder: Some(PathBuf::from("/models")),
+            ollama_model: Some("llama3.1:8b".to_string()),
         };
 
         save_to(&path, &config);

@@ -9,6 +9,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.36] - 2026-07-16
+
+### Added
+- `crates/app/src/config.rs`: `TrangoConfig.ollama_model` (TODO.md Vaihe 24, part 2/6) — persists the Ollama model picked for word-by-word sentence analysis across restarts, the same way `whisper_model_path` already does for whisper.cpp
+
 ## [0.1.35] - 2026-07-16
 
 ### Added

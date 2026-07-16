@@ -369,6 +369,7 @@ mod tests {
         let config = TrangoConfig {
             whisper_model_path: None,
             whisper_model_folder: Some(dir.clone()),
+            ollama_model: None,
         };
 
         assert_eq!(default_start_folder(&config), dir);
@@ -387,6 +388,7 @@ mod tests {
         let config = TrangoConfig {
             whisper_model_path: None,
             whisper_model_folder: Some(PathBuf::from("/no/such/trango-test-model-folder")),
+            ollama_model: None,
         };
 
         let folder = default_start_folder(&config);
