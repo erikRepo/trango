@@ -648,3 +648,43 @@ infrequent — not worth a debounce mechanism for the complexity it'd add.
 config layer — so the *shown default* (`word_analysis::DEFAULT_TARGET_LANGUAGE`)
 stays a single source of truth in the Rust code that uses it, rather than
 being duplicated into `TrangoConfig::default()` as well.
+
+## Word analysis: reasoning models need `"think": false`, and debug logging for diagnosing bad responses
+
+Found through real usage: with a real Ollama instance and a reasoning-
+capable model (`qwen3.5-32k` was the concrete case — the `qwen3` family
+supports an extended "thinking" mode before producing a final answer),
+every single "Analyze all sentences" call failed with `failed to parse
+Ollama response: EOF while parsing a value at line 1 column 0` — the
+exact `serde_json` error `serde_json::from_str::<T>("")` produces for a
+zero-length input. The outer `/api/generate` envelope parsed fine; the
+*inner* `response` field it carried was an empty string, because the
+`GenerateRequest` this crate sends never told Ollama to skip reasoning —
+the model spent its whole generation budget on internal "thinking"
+tokens instead of producing the JSON answer `build_prompt` asked for.
+gemhunter's `call_ollama` (the sibling project the whole `/api/generate`
+approach was modeled on) already sets `"think": False` for exactly this
+reason; `GenerateRequest` gained the same `think: false` field.
+
+Since an empty `response` is a real (if now much rarer) possibility with
+any model — not every failure mode is guaranteed fixed by one flag —
+`analyze_sentence` also checks for it explicitly before attempting to
+parse it as JSON, returning a clear `OllamaError::InvalidResponse`
+("Ollama returned an empty response...") instead of forwarding
+`serde_json`'s confusing zero-length-input message to the UI.
+
+**Debug logging**, requested directly after diagnosing the above (seeing
+`serde_json`'s raw parse error in the log wasn't enough to tell what
+Ollama had actually sent back): `analyze_sentence` now logs the full
+prompt and the raw `response` text at `tracing::debug!` level. Getting
+these to actually show up needed a second fix — `main.rs`'s
+`tracing_subscriber::fmt::init()` predates any real use of `RUST_LOG`
+(see `docs/src/technology/tracing.md`'s corrected "Pitfalls" section:
+the doc previously *claimed* `RUST_LOG` filtering worked, but
+`tracing-subscriber`'s `env-filter` feature — required for that — was
+never actually enabled, so it silently had no effect). `crates/app/Cargo.toml`
+now enables `env-filter`, and `main.rs`'s new `init_logging` builds an
+`EnvFilter` from `RUST_LOG` when set, falling back to the previous
+`info`-level default otherwise — `RUST_LOG=word_analysis=debug cargo run
+-p trango -- video.mp4` shows exactly what's sent to and received from
+Ollama without the rest of the app's (or `winit`'s) `debug`-level noise.

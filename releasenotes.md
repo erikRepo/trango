@@ -9,6 +9,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.42] - 2026-07-16
+
+### Added
+- `RUST_LOG` environment variable now actually filters log output (`crates/app/Cargo.toml` enables `tracing-subscriber`'s `env-filter` feature, `main.rs`'s new `init_logging`) — previously silently ignored despite `docs/src/technology/tracing.md` claiming it worked. `crates/word-analysis/src/ollama.rs`'s `analyze_sentence` logs the full prompt sent to Ollama and the raw response text at `debug` level, e.g. `RUST_LOG=word_analysis=debug cargo run -p trango -- video.mp4`
+
+### Fixed
+- Word analysis ("Analyze all sentences"/Ctrl+A) failed on every cue against a real Ollama instance running a reasoning-capable model (e.g. `qwen3.5`) — `failed to parse Ollama response: EOF while parsing a value at line 1 column 0`. The model spent its whole generation budget "thinking" instead of answering, leaving the `response` field empty, because `GenerateRequest` never disabled extended reasoning. Now sends `"think": false` (matching gemhunter's `call_ollama`), and an empty `response` is caught explicitly with a clear error message instead of forwarding `serde_json`'s zero-length-input parse error
+
 ## [0.1.41] - 2026-07-16
 
 ### Added

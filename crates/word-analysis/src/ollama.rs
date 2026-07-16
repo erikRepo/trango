@@ -69,13 +69,20 @@ fn parse_analysis_response(raw_text: &str) -> Result<WordAnalysis, OllamaError> 
 /// `POST /api/generate` request body — `stream: false` and `format:
 /// "json"` so the whole answer comes back as a single JSON object with a
 /// `response` string, rather than needing to reassemble a streamed NDJSON
-/// sequence.
+/// sequence. `think: false` disables extended reasoning for models that
+/// support it (e.g. the `qwen3` family): without it, a reasoning model can
+/// spend its entire generation budget on internal "thinking" tokens and
+/// leave `response` empty, which otherwise surfaces as a confusing JSON
+/// parse error rather than a clear "model returned nothing" one — the
+/// same reasoning gemhunter's `call_ollama` (the sibling project this was
+/// modeled on) sets `"think": False` for.
 #[derive(Debug, Serialize)]
 struct GenerateRequest<'a> {
     model: &'a str,
     prompt: String,
     stream: bool,
     format: &'a str,
+    think: bool,
 }
 
 /// The subset of `/api/generate`'s response body this crate reads.
@@ -141,18 +148,29 @@ impl OllamaClient for HttpOllamaClient {
         target_language: &str,
     ) -> Result<WordAnalysis, OllamaError> {
         let url = format!("{}/api/generate", self.base_url);
+        let prompt = build_prompt(sentence, target_language);
         let request_body = GenerateRequest {
             model,
-            prompt: build_prompt(sentence, target_language),
+            prompt: prompt.clone(),
             stream: false,
             format: "json",
+            think: false,
         };
+        tracing::debug!(%model, %prompt, "sending Ollama analyze_sentence request");
         let response: GenerateResponse = ureq::post(&url)
             .send_json(&request_body)
             .map_err(map_ureq_error)?
             .body_mut()
             .read_json()
             .map_err(|err| OllamaError::InvalidResponse(err.to_string()))?;
+        tracing::debug!(response = %response.response, "received Ollama analyze_sentence response");
+        if response.response.trim().is_empty() {
+            return Err(OllamaError::InvalidResponse(
+                "Ollama returned an empty response (the model may have spent its whole \
+                 budget \"thinking\" with no final answer — try a different model)"
+                    .to_string(),
+            ));
+        }
         parse_analysis_response(&response.response)
     }
 }
@@ -171,7 +189,9 @@ fn map_ureq_error(err: ureq::Error) -> OllamaError {
 mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
+    use std::sync::mpsc;
     use std::thread;
+    use std::time::Duration;
 
     use super::*;
     use crate::entry::WordEntry;
@@ -237,14 +257,45 @@ mod tests {
     /// request/response handling without depending on a real Ollama
     /// install. Returns the server's base URL (`http://127.0.0.1:<port>`).
     fn spawn_mock_json_server(response_body: &'static str) -> String {
+        let (base_url, _request_rx) = spawn_mock_json_server_capturing_request(response_body);
+        base_url
+    }
+
+    /// Like `spawn_mock_json_server`, but also hands back a receiver
+    /// carrying the raw bytes of whatever request the server received —
+    /// used to assert on the request body `HttpOllamaClient` actually
+    /// sends (e.g. that `analyze_sentence` sets `"think":false`), not just
+    /// on how it handles the response.
+    fn spawn_mock_json_server_capturing_request(
+        response_body: &'static str,
+    ) -> (String, mpsc::Receiver<Vec<u8>>) {
         let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind mock server");
         let addr = listener
             .local_addr()
             .expect("failed to read mock server addr");
+        let (tx, rx) = mpsc::channel();
         thread::spawn(move || {
             if let Ok((mut stream, _)) = listener.accept() {
+                // A single read() can return only the request's headers if
+                // the client's headers and body land in separate TCP
+                // segments (observed with ureq's real request writes,
+                // unlike the small fixed responses this mock server sends
+                // back) — loop with a short read timeout instead of
+                // assuming one read() captures the whole request.
+                let _ = stream.set_read_timeout(Some(Duration::from_millis(300)));
+                let mut captured = Vec::new();
                 let mut buf = [0u8; 4096];
-                let _ = stream.read(&mut buf);
+                loop {
+                    match stream.read(&mut buf) {
+                        Ok(0) => break,
+                        Ok(n) => captured.extend_from_slice(&buf[..n]),
+                        Err(_) => break,
+                    }
+                    if captured.len() >= buf.len() {
+                        break;
+                    }
+                }
+                let _ = tx.send(captured);
                 let response = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                     response_body.len(),
@@ -253,7 +304,7 @@ mod tests {
                 let _ = stream.write_all(response.as_bytes());
             }
         });
-        format!("http://{addr}")
+        (format!("http://{addr}"), rx)
     }
 
     #[test]
@@ -290,6 +341,55 @@ mod tests {
 
         assert_eq!(analysis.words.len(), 1);
         assert_eq!(analysis.words[0].word, "hola");
+    }
+
+    #[test]
+    fn test_analyze_sentence_sends_think_false() {
+        // Given: a mock server capturing the raw request it receives
+        // When:  analyzing a sentence
+        // Then:  the request body includes "think":false — without this,
+        //        reasoning-capable models (e.g. qwen3) can spend their
+        //        whole generation budget "thinking" and leave the actual
+        //        response empty
+        let (base_url, request_rx) = spawn_mock_json_server_capturing_request(
+            r#"{"model":"qwen3","response":"{\"words\":[]}","done":true}"#,
+        );
+        let client = HttpOllamaClient::new(base_url);
+
+        client.analyze_sentence("qwen3", "hola", "English").unwrap();
+
+        let request_bytes = request_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("mock server did not capture a request in time");
+        let request_text = String::from_utf8_lossy(&request_bytes);
+        let body_text = request_text
+            .split_once("\r\n\r\n")
+            .map(|(_headers, body)| body)
+            .expect("request had no header/body separator");
+        let body: serde_json::Value =
+            serde_json::from_str(body_text).expect("request body was not valid JSON");
+        assert_eq!(body["think"], false, "request body: {body_text}");
+    }
+
+    #[test]
+    fn test_analyze_sentence_reports_an_empty_response_clearly() {
+        // Given: a mock server whose /api/generate response has an empty
+        //        "response" field — e.g. a reasoning model that spent its
+        //        whole budget "thinking" with nothing left for the answer
+        // When:  analyzing a sentence against it
+        // Then:  a clear InvalidResponse error comes back, not the raw
+        //        "EOF while parsing a value" serde_json message
+        let base_url = spawn_mock_json_server(r#"{"model":"qwen3","response":"","done":true}"#);
+        let client = HttpOllamaClient::new(base_url);
+
+        let result = client.analyze_sentence("qwen3", "hola", "English");
+
+        match result {
+            Err(OllamaError::InvalidResponse(message)) => {
+                assert!(message.contains("empty"), "unexpected message: {message}");
+            }
+            other => panic!("expected InvalidResponse, got {other:?}"),
+        }
     }
 
     #[test]

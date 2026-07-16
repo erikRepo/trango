@@ -20,23 +20,35 @@ gives a ready-made formatter so no custom logging setup is needed.
 
 ## Usage in this project
 
-Currently used only in `crates/app/src/main.rs` (package `trango`):
+`crates/app/src/main.rs`'s `init_logging` (called once, first thing in
+`main`) installs the subscriber:
 
 ```rust
-tracing_subscriber::fmt::init();
-tracing::info!("trango starting");
+fn init_logging() {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    tracing_subscriber::fmt().with_env_filter(filter).init();
+}
 ```
 
-`tracing_subscriber::fmt::init()` installs a default subscriber that
-formats events to stdout. As more of the app is built out (libmpv
-integration, Slint event handlers), `tracing::debug!`/`warn!`/`error!`
-calls will be added at the relevant points — see e.g. `TODO.md` Vaihe 10,
-which uses a `tracing::debug!` log to verify state wiring.
+`tracing::debug!`/`warn!`/`error!` calls are used throughout the app at
+the relevant points — see e.g. `TODO.md` Vaihe 10's state-wiring log, or
+`crates/word-analysis/src/ollama.rs`'s `analyze_sentence`, which logs the
+full prompt sent to Ollama and the raw text it returned at `debug` level
+(`TODO.md` Vaihe 24) — useful for diagnosing a model that returns
+something `parse_analysis_response` can't make sense of, without needing
+to reproduce the call outside trango.
 
 ## Pitfalls
 
-- `tracing_subscriber::fmt::init()` must be called once, early in `main`,
-  before any `tracing::*!` calls — otherwise events are dropped silently.
+- `init_logging()` must be called once, early in `main`, before any
+  `tracing::*!` calls — otherwise events are dropped silently.
 - Log level filtering follows the `RUST_LOG` environment variable
-  convention (e.g. `RUST_LOG=debug cargo run -p trango`); no level filter
-  is configured explicitly yet, so the subscriber's default applies.
+  convention (e.g. `RUST_LOG=debug cargo run -p trango -- video.mp4`), via
+  `tracing-subscriber`'s `env-filter` feature (enabled explicitly in
+  `crates/app/Cargo.toml` — it's not part of `tracing-subscriber`'s
+  default feature set). Without `RUST_LOG` set, `info`-level logging
+  applies, matching the original un-filtered default. `RUST_LOG=debug`
+  also enables `debug`-level logs from dependencies (`winit`, etc.), which
+  can be noisy — scope it to just this crate's own logging with e.g.
+  `RUST_LOG=trango=debug,word_analysis=debug`.

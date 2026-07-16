@@ -171,3 +171,22 @@ run again after adding Ctrl+A analyses in between.
 Both features require a subtitle to be linked and an Ollama model to be
 selected first; trango shows a clear inline message rather than a
 generic error if either is missing.
+
+**Debugging a model that returns bad or empty analyses:** run with
+`RUST_LOG=word_analysis=debug` to see exactly what prompt was sent to
+Ollama and the raw text it returned, e.g.:
+
+```
+RUST_LOG=word_analysis=debug cargo run -p trango -- video.mp4 subs.srt
+```
+
+(`RUST_LOG=debug` alone also works, but additionally shows `debug`-level
+logs from every dependency — `winit` in particular is very chatty —
+so scoping to `word_analysis=debug`, or `trango=debug,word_analysis=debug`
+to also include this crate's own logging, is usually more useful.) This
+is also how "the model returned nothing" failures show up: some
+reasoning-capable models (e.g. the `qwen3` family) can spend their whole
+generation budget "thinking" instead of answering if not told not to —
+trango already disables this (`"think": false`), but if a similar issue
+turns up with a different model, the debug log shows the raw response
+that failed to parse.

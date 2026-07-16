@@ -29,6 +29,20 @@ fn print_version() {
     println!("trango {}", env!("CARGO_PKG_VERSION"));
 }
 
+/// Installs the `tracing` subscriber, honoring the `RUST_LOG` environment
+/// variable (e.g. `RUST_LOG=debug cargo run -p trango` — or
+/// `RUST_LOG=word_analysis=debug` to enable just the Ollama
+/// request/response logging in `crates/word-analysis/src/ollama.rs`
+/// without the rest of the app's `debug`-level noise) if set, falling
+/// back to `info`-level logging otherwise — the same default
+/// `tracing_subscriber::fmt::init()` used before `RUST_LOG` support was
+/// wired in explicitly (see `docs/src/technology/tracing.md`).
+fn init_logging() {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    tracing_subscriber::fmt().with_env_filter(filter).init();
+}
+
 /// Owns a fresh `PlayerState` — defaulting to `SentenceBySentence` mode, the
 /// primary language-learning use case — and mirrors that default into the
 /// window's `sentence-mode-active` property, since `app-window.slint`
@@ -1096,7 +1110,7 @@ fn wire_word_analysis_popup(
 }
 
 fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt::init();
+    init_logging();
     tracing::info!("trango starting");
     print_version();
 
