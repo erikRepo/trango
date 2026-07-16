@@ -436,9 +436,51 @@ Design Tokens -osioon kauttaaltaan.
 
 ---
 
+## Vaihe 24 — Sana-sanalta-analyysi paikallisella Ollamalla (Ctrl+A)
+
+**Tavoite:** README:n ulkopuolinen, myöhemmin päätetty ominaisuus:
+nykyisen lauseen sana-sanalta-analyysi (käännös + ääntämisohje) paikallisen
+[Ollama](https://ollama.com)-mallin kautta, Ctrl+A-popupissa. Sama analyysi
+voidaan ajaa kaikille lauseille kerralla ja tallentaa tiedostoon uudelleenkäyttöä
+varten. Ks. `docs/src/specs/`:n "Word analysis: local Ollama, not a cloud API"
+täydelle päätöksentekoketjulle (crate-jako, HTTP-client-valinta, prompt/JSON-
+skeema, cache-formaatti).
+
+- Uusi `crates/word-analysis`-kirjastocrate (ei Slint/libmpv-riippuvuutta,
+  kuten `subtitle`/`playback-state`): `WordEntry`/`WordAnalysis`-datamalli,
+  JSON-sivutiedosto-cache (`cache_path_for`/`load_cache`/`save_cache`,
+  avaimena `Cue::index`) ja `OllamaClient`-trait + `ureq`-pohjainen
+  `HttpOllamaClient` (`list_models`, `analyze_sentence`) — uudet
+  riippuvuudet `ureq` ja `serde_json`, kysytty ja hyväksytty käyttäjältä
+  ensin
+- `config.rs`: `ollama_model`-kenttä persistoi valitun mallin, samaan
+  tapaan kuin `whisper_model_path`
+- Open Subtitles -dialogi: "Ollama model" -rivi avaa mallilistan
+  (`crates/app/src/ollama_model_picker.rs`, uudelleenkäyttää
+  `FileListDialog`-kehystä), listaus taustasäikeessä koska verkkokutsu
+- Open Subtitles -dialogi: "Analyze all sentences" -nappi
+  (`crates/app/src/word_analysis.rs::spawn_batch_analyze`) looppaa kaikki
+  cuet taustasäikeessä, ohittaa jo cachetetut, tallentaa cachen levylle
+  jokaisen onnistuneen analyysin jälkeen (ei vasta lopussa)
+- Ctrl+A avaa `WordAnalysisPopup`-komponentin (`app-window.slint`) —
+  näyttää nykyisen senttenssikortin lauseen sana-sanalta-analyysin;
+  cache-hit näyttää tuloksen heti, cache-miss ajaa
+  `spawn_analyze_sentence`:n taustasäikeessä ja tallentaa tuloksen samaan
+  cache-tiedostoon. Ei moodiriippuvainen, kuten Ctrl+T
+
+**Voit ajaa/testata:** `cargo run -p trango -- video.mp4 subs.srt` — Open
+Subtitles -dialogissa Ollama-mallin valinta toimii ja persistoituu;
+"Analyze all sentences" ajaa koko subtitlen läpi ja kirjoittaa
+`subs.wordanalysis.json`:n; Ctrl+A näyttää nykyisen lauseen sana-sanalta
+-analyysin popupissa (cache-hit heti, cache-miss lyhyen latauksen
+jälkeen) sekä Normal- että Sentence-by-sentence-moodissa.
+
+---
+
 ## Ei tässä listassa (myöhempää harkintaa)
 
 - Kansion vaihto Open Video -dialogissa natiivilla kansiovalitsimella
 - Oikea on-device STT-toteutus (Vaihe 20 on vain rajapinta + stub)
 - Video/tiedostotyyppi-ikonien lopulliset assetit (README: "source real icons... when implementing")
 - Pelkän ruudunkaappaus-/pikselivertailu-automaation rakentaminen (Vaihe 22 tehdään manuaalisesti toistaiseksi)
+- Sana-analyysin kohdekielen valinta UI:sta (Vaihe 24: tällä hetkellä kiinteä `"English"`, ks. `docs/src/specs/`)

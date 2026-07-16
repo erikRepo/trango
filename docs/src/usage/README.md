@@ -121,3 +121,42 @@ inferred automatically from the model's filename (whisper.cpp's own
 `whisper-cli` itself can't be found (or the run otherwise fails),
 "Generate subtitles" ends in the dialog's `Error` state with a message
 explaining what went wrong, rather than a generic failure.
+
+## Word analysis with local Ollama
+
+Ctrl+A analyzes the sentence currently shown in the current-sentence
+card word-by-word — a translation and a pronunciation guide for each
+word — using a locally running [Ollama](https://ollama.com) instance.
+Like whisper-cli, this isn't bundled with trango: install Ollama
+separately and make sure it's running (`ollama serve`, or however your
+install starts it) with at least one model pulled (`ollama pull
+llama3.1` or similar) before using this feature. trango talks to
+Ollama's default local address, `http://localhost:11434` — no
+configuration needed if Ollama is running with its own defaults.
+
+**Picking a model:** the Open Subtitles dialog's "Ollama model" row
+(next to the whisper model row) opens a picker listing whatever models
+`ollama list` would show. The pick is remembered across restarts, the
+same way the whisper model is (see "Model selection" above) — stored in
+`config.toml`'s `ollama_model` field.
+
+**Ctrl+A** works in both Normal and Sentence-by-sentence mode, on
+whichever sentence the current-sentence card is showing. The first time
+a given sentence is analyzed, it calls Ollama (a few seconds, depending
+on the model and machine); every time after that — including across
+restarts — it's instant, since the result is cached to a
+`<subtitle-name>.wordanalysis.json` file right next to the subtitle
+file (e.g. `movie.srt` → `movie.wordanalysis.json`).
+
+**"Analyze all sentences"** (also in the Open Subtitles dialog, next to
+the Ollama model row) runs the same analysis for every sentence in the
+currently linked subtitle in one background pass, useful for
+pre-analyzing a whole video before watching it rather than one sentence
+at a time via Ctrl+A. It writes to the same cache file, skipping
+sentences already analyzed — safe to stop partway through (closing the
+app, or just deciding you have enough) and resume later, and safe to
+run again after adding Ctrl+A analyses in between.
+
+Both features require a subtitle to be linked and an Ollama model to be
+selected first; trango shows a clear inline message rather than a
+generic error if either is missing.

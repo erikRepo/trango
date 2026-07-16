@@ -472,3 +472,147 @@ rather than in `main.rs`'s handler, since "a bounded per-cue span is a
 `SentenceBySentence`-only concept" belongs in `playback_state`'s own
 definition of what `repeat_current_cue` means, not in a caller-side
 special case.
+
+## Word analysis: local Ollama, not a cloud API
+
+`TODO.md` Vaihe 24 is a step not called out in the original README
+handoff spec — added later, for a concrete language-learning need: given
+the sentence currently on screen, break it into words and show each
+word's translation and a pronunciation guide (the motivating case was
+Hebrew → English, but nothing about the design is Hebrew-specific).
+[Ollama](https://ollama.com) running locally (`http://localhost:11434` by
+default) was chosen over a cloud LLM API for the same reason whisper-cli
+was chosen for subtitle generation: no upload, no per-call cost, and
+consistent with trango's "everything runs on-device" posture so far.
+Ollama itself isn't a new Cargo dependency — like `whisper-cli`, it's an
+external program the user installs and runs separately; trango only talks
+to its already-running HTTP API.
+
+### Crate split: `word-analysis`
+
+Following the same reasoning as `subtitle`/`playback-state`
+(`docs/src/architecture/crates.md`), the HTTP/JSON/cache-file logic lives
+in its own crate (`crates/word-analysis`) with no Slint or libmpv
+dependency, so it's unit-testable — including against a hand-rolled local
+mock HTTP server — without a UI or a real Ollama install. `crates/app`
+only adds the thread-spawning and `AppWindow`-property wiring on top,
+mirroring `subtitle::SubtitleGenerator` (pure trait) vs.
+`subtitle_generation.rs` (UI wiring)'s split.
+
+One naming wrinkle from this: the app-local wiring module is also named
+`word_analysis` (`crates/app/src/word_analysis.rs`), which collides with
+the external crate `word_analysis` (Cargo's `word-analysis` package name,
+hyphens become underscores) at `main.rs`'s crate root, since `mod
+word_analysis;` there shadows the extern-prelude entry of the same name.
+Call sites in `main.rs` that need the *crate* (not the local module) use
+a leading `::` (e.g. `::word_analysis::HttpOllamaClient::default()`,
+`::word_analysis::cache_path_for(...)`) to force crate-root resolution;
+inside `word_analysis.rs` itself there's no collision, since that module
+has no local item of the same name in its own scope.
+
+### HTTP client: `ureq`, not `reqwest`
+
+trango has no async runtime anywhere — background work (whisper-cli,
+and now Ollama calls) runs via plain `std::thread::spawn` plus
+`slint::invoke_from_event_loop` to report back to the UI thread (see
+"Background thread, not the UI thread" above). `reqwest` would have
+pulled in `tokio` solely for this one feature; `ureq` is synchronous, so
+an Ollama call is just a blocking function call made from inside a
+`thread::spawn` closure. Asked and approved by the user before adding,
+along with `serde_json` (for both the cache file and parsing Ollama's
+JSON envelopes), per `CLAUDE.md`.
+
+### Prompt and response shape
+
+`word_analysis::build_prompt(sentence, target_language)`
+(`crates/word-analysis/src/ollama.rs`) asks the model to reply with
+*only* this JSON shape:
+
+```json
+{"words": [{"word": "...", "translation": "...", "pronunciation": "..."}]}
+```
+
+The request also sets Ollama's `format: "json"` (JSON-mode decoding) and
+`stream: false` — the whole answer comes back as one JSON object with a
+`response` string, rather than needing to reassemble a streamed NDJSON
+sequence the way gemhunter's `call_ollama` (the sibling project this was
+modeled on) does. Some local models still wrap their answer in a
+` ```json ` code fence despite `format: "json"`, so
+`parse_analysis_response` strips one defensively before parsing — the
+same defensive stripping gemhunter's `call_ollama` does.
+
+The target language (`crates/app/src/word_analysis.rs`'s
+`DEFAULT_TARGET_LANGUAGE`, currently hardcoded to `"English"`) isn't yet
+configurable from the UI — the source language needs no separate setting
+at all, since the model just reads it directly off the sentence text.
+Making the target language user-configurable is a natural, self-contained
+follow-up (a text field or dropdown next to the Ollama model row) left
+for a later step.
+
+### Cache file: one JSON sidecar per subtitle
+
+`word_analysis::cache_path_for(subtitle_path)` swaps the subtitle's
+extension for `.wordanalysis.json` in place — `subs.srt` becomes
+`subs.wordanalysis.json`, next to it on disk. `AnalysisCache { model,
+entries: HashMap<u32, WordAnalysis> }` is keyed by `Cue::index`, not by
+sentence text, so re-analyzing after minor subtitle edits doesn't
+silently reuse a stale entry for a shifted line. `load_cache`/`save_cache`
+follow the same robustness convention as `crates/app/src/config.rs`: a
+missing or corrupt cache file becomes an empty `AnalysisCache::default()`
+(logged, not an error) — a lost cache means re-analyzing some sentences,
+not trango refusing to start or open a subtitle.
+
+Both the Ctrl+A popup and the "Analyze all sentences" batch loop read and
+write the *same* cache file, so whichever ran first benefits the other:
+running the batch loop overnight, then pressing Ctrl+A the next day, is
+just a cache hit with no Ollama call at all.
+
+### Ctrl+A: analyze one sentence, cache-first
+
+`main.rs`'s `wire_word_analysis_popup` resolves the sentence currently
+shown in the current-sentence card
+(`PlayerState::current_cue_index`/`cues`) — not mode-gated, for the same
+reason Ctrl+T (translation toggle) isn't: it targets whatever's on screen
+right now, in either `Normal` or `SentenceBySentence` mode. It re-reads
+the cache file from disk on every press rather than keeping an in-memory
+copy synced across the popup and the batch loop — cheap for a small JSON
+file, and guarantees it always reflects the batch loop's latest writes
+without extra shared-state bookkeeping. On a cache hit, the popup opens
+immediately (`Done` status, no network call); on a miss, it opens
+`Loading` and `word_analysis::spawn_analyze_sentence` runs the single-
+sentence Ollama call on a background thread, writing the result into the
+same cache file once it reports back so the next lookup — Ctrl+A again,
+or a later "Analyze all sentences" run — is a cache hit too.
+
+### "Analyze all sentences": incremental saves, not all-or-nothing
+
+`word_analysis::spawn_batch_analyze` loops every cue in the currently
+loaded subtitle on a background thread, skipping any cue index already
+present in the cache (`HashMap::entry` — see the `clippy::map_entry` note
+in `crates/app/src/word_analysis.rs` for why it's written that way rather
+than a `contains_key`/`insert` pair) and saving the cache to disk after
+**every** newly analyzed cue, not just once at the end. A real subtitle
+can be dozens of sentences and each Ollama call can take real time —
+saving incrementally means closing the app, a crash, or just deciding to
+stop partway through loses nothing already finished; resuming later
+picks up exactly where it left off via the same cache-skip check. A cue
+that fails to analyze (e.g. a transient Ollama hiccup) is logged and
+skipped rather than aborting the whole run; `on_done` reports the *last*
+error seen, if any, so the UI can surface "finished, but N sentences
+failed" rather than silently declaring success.
+
+### Model selection: same pattern as the whisper model, adapted for a network listing
+
+The Open Subtitles dialog gained an "Ollama model" row next to the
+existing whisper-model row (`TODO.md` Vaihe 21.6), reusing the same
+`FileListDialog` chrome. The key difference:
+`model_picker::list_folder_entries` (whisper) reads a filesystem folder
+synchronously, since that's fast and local; Ollama's model list
+(`word_analysis::OllamaClient::list_models`, `GET /api/tags`) is a
+network call, so `crates/app/src/ollama_model_picker.rs`'s
+`spawn_list_models` runs it on a background thread the same way
+`subtitle_generation::spawn_generate` runs whisper-cli, with the picker
+showing a "Loading models…" state (reusing the existing `folder-label`
+text slot for status, rather than adding a new Slint property just for
+that) while it's in flight. The picked model persists to
+`config::TrangoConfig::ollama_model`, mirroring `whisper_model_path`.

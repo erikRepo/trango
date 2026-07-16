@@ -9,6 +9,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.40] - 2026-07-16
+
+### Added
+- TODO.md Vaihe 24 documented retroactively (word-by-word Ollama analysis via Ctrl+A and "Analyze all sentences"), part 6/6 — `docs/src/specs/README.md`'s "Word analysis: local Ollama, not a cloud API" section (crate split, HTTP client choice, prompt/cache design, Ctrl+A and batch-loop behavior), `docs/src/usage/README.md`'s "Word analysis with local Ollama" section (Ollama install/model requirements, usage), and TODO.md's own "Vaihe 24" entry
+
 ## [0.1.39] - 2026-07-16
 
 ### Added
