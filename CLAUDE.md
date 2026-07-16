@@ -39,9 +39,12 @@ Rust + [Slint](https://slint.dev) + `libmpv`-pohjainen kielenoppimisvideosoitin.
 - Käytä aina uusinta vakaata versiota
 
 ## Git-työnkulku
-- Jokaisen toimivan vaiheen jälkeen: **commit + push**
+- GitHubissa pull requestit ovat käytössä — **ei suoraa committia/pushia `master`-branchiin**
+- Jokaista toimivaa vaihetta varten: oma feature-branch kuvaavalla nimellä (esim. `normal-mode-hint-bar-and-scrub-seek`), commit + push sille branchille, sitten `gh pr create` masteria vasten
 - Ennen committia: `scripts/check.sh` ja `scripts/test.sh` molempien pitää olla `OK`
 - Commit-viesti kuvaa mitä ominaisuutta vaihe koskee
+- PR:n kuvaus (`gh pr create --body`) kertaa lyhyesti mitä muuttui ja miksi — ei tarvitse toistaa commit-viestejä sanasta sanaan
+- PR:n mergeaa käyttäjä GitHubissa (tai pyytää erikseen); älä mergeä tai pushita suoraan masteriin ilman lupaa
 
 ## Versiointi
 - `Cargo.toml`-versio kasvatetaan jokaisen vaiheen/committin yhteydessä (patch-taso, esim. `0.1.0` → `0.1.1`)
@@ -96,6 +99,35 @@ docs/
 - Uusi käyttäjälle näkyvä ominaisuus → oma tai olemassa olevaa sivua täydentävä sivu `docs/src/usage/`-hakemistoon, kirjoitettuna käyttäjälle (ei toteutusyksityiskohtia) — toteutuksen taustat/päätökset menevät `docs/src/developer/specs.md`:hen
 - Kuvaa nykytila, ei tavoitetta — älä dokumentoi asioita jotka eivät vielä ole totta
 - Päivitetään jokaisen koodimuutoksen yhteydessä joka siihen vaikuttaa
+
+### Ytimekkyys — pakollinen jokaisella päivityksellä
+
+mdBook kuluttaa tokeneita joka kerta kun sitä luetaan, eikä kukaan jaksa
+lukea pitkiä kertomuksia — tiiviys on tärkeämpää kuin kattavuus. Ennen
+kuin lisäät tai muokkaat mitä tahansa `docs/`-sivua:
+
+- **Pituusbudjetti (ohjeellinen yläraja, ei tavoite):** `technology/*.md`
+  ~20–30 riviä; yksi `specs.md`-päätös ~5–15 riviä; `usage/`-sivu ~30–60
+  riviä; `architecture/`-sivu ~60–120 riviä (mekaniikka saa olla
+  yksityiskohtaisempi, mutta ei toista samaa asiaa kahdesti). Jos sivu
+  kasvaa selvästi yli tämän, karsi ennen committia — älä vain lisää.
+- **Lopputulos, ei matka.** Kirjoita mitä päätettiin ja miksi — ei
+  kronologiaa epäonnistuneista yrityksistä, debug-sessioista tai "löytyi
+  testatessa X, sitten Y, sitten vasta Z toimi" -kerrontaa. Yksi lause
+  perustelulle ja yksi keskeiselle sudenkuopalle riittää useimmiten;
+  toisen/kolmannen yrityksen historia jätetään kokonaan pois, ellei se
+  ole ainoa tapa selittää *miksi* nykyinen ratkaisu on juuri tällainen.
+- **Ei koodilohkoja "havainnollistamaan" jotain minkä proosa jo sanoo** —
+  vain jos koodi itsessään on se olennainen asia (esim. tarkka
+  rajapintasignatuuri). Yksi lyhyt esimerkki per sivu on yleensä kaikki
+  mitä tarvitaan.
+- **Ei viittauksia `TODO.md`:n "Vaihe"-numeroihin tai muihin
+  kehitysvaiheisiin** dokumentaatiossa — ne eivät kestä ajan yli eivätkä
+  merkitse mitään lukijalle, jolla ei ole `TODO.md` auki. Kuvaa asia
+  suoraan, ilman kehitysjärjestystä.
+- Kun muokkaat olemassa olevaa sivua, tarkista samalla ettei se ole
+  kasvanut rönsyileväksi — pieni siivous (poista vanhentunut kohta,
+  yhdistä toistoa) kuuluu samaan committiin, ei erilliseen "siivous"-vaiheeseen.
 
 ## Vaaditut työkalut
 ```
