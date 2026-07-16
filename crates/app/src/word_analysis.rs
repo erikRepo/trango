@@ -1,23 +1,24 @@
 //! Wires `TODO.md` Vaihe 24's word-by-word sentence analysis to the UI:
-//! the Open Subtitles dialog's "Analyze all sentences" batch loop (part
-//! 4/6, this file's `spawn_batch_analyze`) and — in a later step — the
-//! Ctrl+A popup for a single sentence.
+//! the Open Subtitles dialog's "Analyze all sentences" batch loop
+//! (`spawn_batch_analyze`, part 4/6) and the Ctrl+A popup for a single
+//! sentence (`spawn_analyze_sentence`, part 5/6).
 //!
-//! `spawn_batch_analyze` runs on a background thread — like
-//! `subtitle_generation::spawn_generate`, a real Ollama call can take
-//! seconds per sentence and looping over a whole subtitle would freeze
-//! the UI thread if run directly on it — saving the growing
-//! `word_analysis::AnalysisCache` to disk after each newly analyzed cue,
-//! not just once at the end, so a long run interrupted partway through
-//! doesn't lose the sentences it already finished.
+//! Both run on a background thread — like `subtitle_generation::spawn_generate`,
+//! a real Ollama call can take seconds and would freeze the UI thread if
+//! run directly on it. `spawn_batch_analyze` additionally saves the
+//! growing `word_analysis::AnalysisCache` to disk after each newly
+//! analyzed cue, not just once at the end, so a long run interrupted
+//! partway through doesn't lose the sentences it already finished.
 
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::thread;
 
+use slint::VecModel;
 use subtitle::Cue;
-use word_analysis::{OllamaClient, OllamaError};
+use word_analysis::{OllamaClient, OllamaError, WordAnalysis};
 
-use crate::{AppWindow, WordAnalysisBatchStatus};
+use crate::{AppWindow, WordAnalysisBatchStatus, WordAnalysisRow, WordAnalysisStatus};
 
 /// Runs word-by-word analysis for every cue in `cues` not already present
 /// in the cache file at `cache_path`, calling `on_progress(done, total)`
@@ -100,6 +101,73 @@ pub fn apply_batch_result(window: &AppWindow, result: Result<(), OllamaError>) {
 /// iteration — see `docs/src/specs/word-analysis.md`); every learner-
 /// facing string Ollama is asked to produce uses this.
 pub const DEFAULT_TARGET_LANGUAGE: &str = "English";
+
+/// Runs `client.analyze_sentence(...)` on a background thread for a
+/// single `sentence`, calling `on_done` with its result once finished —
+/// the Ctrl+A popup's uncached-sentence path. Returns immediately without
+/// blocking the calling thread.
+pub fn spawn_analyze_sentence<C>(
+    client: C,
+    model: String,
+    sentence: String,
+    target_language: String,
+    on_done: impl FnOnce(Result<WordAnalysis, OllamaError>) + Send + 'static,
+) where
+    C: OllamaClient + Send + 'static,
+{
+    thread::spawn(move || {
+        on_done(client.analyze_sentence(&model, &sentence, &target_language));
+    });
+}
+
+/// Opens the Ctrl+A popup in a loading state — used when `sentence`'s
+/// analysis isn't already in the subtitle's cache file and
+/// `spawn_analyze_sentence` has just been kicked off for it.
+pub fn open_popup_loading(window: &AppWindow) {
+    window.set_word_analysis_status(WordAnalysisStatus::Loading);
+    window.set_word_analysis_rows(Rc::new(VecModel::from(Vec::<WordAnalysisRow>::new())).into());
+    window.set_word_analysis_error_message("".into());
+    window.set_is_word_analysis_popup_open(true);
+}
+
+/// Opens the Ctrl+A popup already showing `analysis` — used on a
+/// cache-hit, where there's no background call to wait for.
+pub fn open_popup_with_result(window: &AppWindow, analysis: &WordAnalysis) {
+    window.set_word_analysis_status(WordAnalysisStatus::Done);
+    window.set_word_analysis_rows(Rc::new(VecModel::from(analysis_rows(analysis))).into());
+    window.set_word_analysis_error_message("".into());
+    window.set_is_word_analysis_popup_open(true);
+}
+
+/// Applies a finished `spawn_analyze_sentence` call's `result` to the
+/// already-open (loading) popup. Must be called on the UI thread.
+pub fn apply_single_result(window: &AppWindow, result: &Result<WordAnalysis, OllamaError>) {
+    match result {
+        Ok(analysis) => {
+            window.set_word_analysis_status(WordAnalysisStatus::Done);
+            window.set_word_analysis_rows(Rc::new(VecModel::from(analysis_rows(analysis))).into());
+            window.set_word_analysis_error_message("".into());
+        }
+        Err(err) => {
+            tracing::warn!(%err, "word analysis failed");
+            window.set_word_analysis_status(WordAnalysisStatus::Error);
+            window.set_word_analysis_error_message(err.to_string().into());
+        }
+    }
+}
+
+/// Maps a `WordAnalysis`'s words into the popup's Slint row model.
+fn analysis_rows(analysis: &WordAnalysis) -> Vec<WordAnalysisRow> {
+    analysis
+        .words
+        .iter()
+        .map(|entry| WordAnalysisRow {
+            word: entry.word.clone().into(),
+            translation: entry.translation.clone().into(),
+            pronunciation: entry.pronunciation.clone().into(),
+        })
+        .collect()
+}
 
 #[cfg(test)]
 mod tests {
@@ -291,5 +359,87 @@ mod tests {
         assert!(cache.entries.contains_key(&1));
 
         let _ = std::fs::remove_file(&cache_path);
+    }
+
+    #[test]
+    fn test_spawn_analyze_sentence_runs_off_the_calling_thread_and_reports_success() {
+        // Given: a client that succeeds
+        // When:  spawning it and immediately reading the calling thread's id
+        // Then:  on_done fires on a different thread than the caller's,
+        //        carrying the client's analysis
+        let client = RecordingClient {
+            calls: std::sync::Mutex::new(Vec::new()),
+            fail_sentences: Vec::new(),
+        };
+        let caller_thread_id = thread::current().id();
+        let (tx, rx) = mpsc::channel();
+
+        spawn_analyze_sentence(
+            client,
+            "llama3.1:8b".to_string(),
+            "hola".to_string(),
+            "English".to_string(),
+            move |result| {
+                let _ = tx.send((thread::current().id(), result));
+            },
+        );
+
+        let (callback_thread_id, result) = recv_with_timeout(&rx);
+        assert_ne!(callback_thread_id, caller_thread_id);
+        assert_eq!(result.unwrap().words[0].word, "hola");
+    }
+
+    #[test]
+    fn test_spawn_analyze_sentence_reports_client_errors() {
+        // Given: a client that fails
+        // When:  spawning it
+        // Then:  on_done receives the same error
+        let client = RecordingClient {
+            calls: std::sync::Mutex::new(Vec::new()),
+            fail_sentences: vec!["hola".to_string()],
+        };
+        let (tx, rx) = mpsc::channel();
+
+        spawn_analyze_sentence(
+            client,
+            "llama3.1:8b".to_string(),
+            "hola".to_string(),
+            "English".to_string(),
+            move |result| {
+                let _ = tx.send(result);
+            },
+        );
+
+        assert!(recv_with_timeout(&rx).is_err());
+    }
+
+    #[test]
+    fn test_analysis_rows_maps_every_word_in_order() {
+        // Given: a WordAnalysis with two words
+        // When:  mapping it to popup rows
+        // Then:  both rows come back in the same order, fields carried
+        //        over unchanged
+        let analysis = WordAnalysis {
+            words: vec![
+                WordEntry {
+                    word: "hola".to_string(),
+                    translation: "hi".to_string(),
+                    pronunciation: "OH-lah".to_string(),
+                },
+                WordEntry {
+                    word: "mundo".to_string(),
+                    translation: "world".to_string(),
+                    pronunciation: "MOON-doh".to_string(),
+                },
+            ],
+        };
+
+        let rows = analysis_rows(&analysis);
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].word, "hola");
+        assert_eq!(rows[0].translation, "hi");
+        assert_eq!(rows[0].pronunciation, "OH-lah");
+        assert_eq!(rows[1].word, "mundo");
     }
 }

@@ -978,6 +978,102 @@ fn wire_word_analysis_batch(
     });
 }
 
+/// Wires the Ctrl+A word-analysis popup (`TODO.md` Vaihe 24, part 5/6):
+/// `show-word-analysis` resolves the sentence currently shown in the
+/// current-sentence card (`PlayerState::current_cue_index`), checks the
+/// subtitle's cache file — freshly read from disk each time, cheap for a
+/// small JSON file and always reflects whatever "Analyze all sentences"
+/// or an earlier Ctrl+A press already wrote, without needing a separate
+/// in-memory cache kept in sync across both paths — and either shows a
+/// cache hit immediately or kicks off `word_analysis::spawn_analyze_sentence`,
+/// writing its result into that same cache file once it reports back so
+/// the next lookup (Ctrl+A again, or a later "Analyze all sentences" run)
+/// is a cache hit too.
+fn wire_word_analysis_popup(
+    window: &AppWindow,
+    state: &Rc<RefCell<PlayerState>>,
+    current_media: &Rc<RefCell<CurrentMedia>>,
+    selected_ollama_model: Rc<RefCell<Option<String>>>,
+) {
+    let window_weak = window.as_weak();
+    let request_state = Rc::clone(state);
+    let request_media = Rc::clone(current_media);
+    window.on_show_word_analysis(move || {
+        let Some(window) = window_weak.upgrade() else {
+            return;
+        };
+        let Some(model) = selected_ollama_model.borrow().clone() else {
+            tracing::warn!("word analysis requested with no Ollama model selected");
+            window.set_word_analysis_status(WordAnalysisStatus::Error);
+            window.set_word_analysis_error_message("Select an Ollama model first.".into());
+            window.set_is_word_analysis_popup_open(true);
+            return;
+        };
+        let Some(subtitle_path) = request_media.borrow().subtitle_path.clone() else {
+            tracing::warn!("word analysis requested with no subtitle loaded");
+            window.set_word_analysis_status(WordAnalysisStatus::Error);
+            window.set_word_analysis_error_message("Link a subtitle first.".into());
+            window.set_is_word_analysis_popup_open(true);
+            return;
+        };
+        let cue = {
+            let state = request_state.borrow();
+            state
+                .current_cue_index
+                .and_then(|index| state.cues.get(index).cloned())
+        };
+        let Some(cue) = cue else {
+            tracing::warn!("word analysis requested with no sentence in focus");
+            window.set_word_analysis_status(WordAnalysisStatus::Error);
+            window.set_word_analysis_error_message("No sentence is currently in focus.".into());
+            window.set_is_word_analysis_popup_open(true);
+            return;
+        };
+
+        let cache_path = ::word_analysis::cache_path_for(&subtitle_path);
+        let cache = ::word_analysis::load_cache(&cache_path);
+        if let Some(analysis) = cache.entries.get(&cue.index) {
+            tracing::debug!(cue_index = cue.index, "word analysis cache hit");
+            word_analysis::open_popup_with_result(&window, analysis);
+            return;
+        }
+
+        word_analysis::open_popup_loading(&window);
+
+        // Only Send data may cross into the background thread and back via
+        // slint::invoke_from_event_loop below — see wire_ollama_model_picker's
+        // identical note.
+        let callback_window_weak = window_weak.clone();
+        let cue_index = cue.index;
+        word_analysis::spawn_analyze_sentence(
+            ::word_analysis::HttpOllamaClient::default(),
+            model,
+            cue.text.clone(),
+            word_analysis::DEFAULT_TARGET_LANGUAGE.to_string(),
+            move |result| {
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(window) = callback_window_weak.upgrade() else {
+                        return;
+                    };
+                    word_analysis::apply_single_result(&window, &result);
+                    if let Ok(analysis) = &result {
+                        let mut cache = ::word_analysis::load_cache(&cache_path);
+                        cache.entries.insert(cue_index, analysis.clone());
+                        ::word_analysis::save_cache(&cache_path, &cache);
+                    }
+                });
+            },
+        );
+    });
+
+    let close_window_weak = window.as_weak();
+    window.on_close_word_analysis_popup(move || {
+        if let Some(window) = close_window_weak.upgrade() {
+            window.set_is_word_analysis_popup_open(false);
+        }
+    });
+}
+
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
     tracing::info!("trango starting");
@@ -1048,6 +1144,12 @@ fn main() -> anyhow::Result<()> {
     }
     wire_ollama_model_picker(&window, Rc::clone(&selected_ollama_model));
     wire_word_analysis_batch(
+        &window,
+        &player_state,
+        &current_media,
+        Rc::clone(&selected_ollama_model),
+    );
+    wire_word_analysis_popup(
         &window,
         &player_state,
         &current_media,

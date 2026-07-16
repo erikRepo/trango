@@ -9,6 +9,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.39] - 2026-07-16
+
+### Added
+- Ctrl+A word-analysis popup (TODO.md Vaihe 24, part 5/6): analyzes the sentence currently shown in the current-sentence card word-by-word via a local Ollama model, showing each word's translation and pronunciation guide in a new modal (`WordAnalysisPopup` in `app-window.slint`). Checks the subtitle's `.wordanalysis.json` cache file first (read fresh from disk each time, so it always reflects whatever "Analyze all sentences" or an earlier Ctrl+A press already wrote) and only calls Ollama on a cache miss, writing the result back to the same cache file once it completes. Not mode-gated, same as Ctrl+T — works in both Normal and Sentence-by-sentence mode. Requires an Ollama model to be selected and a subtitle to be linked; shows a clear inline error otherwise
+
 ## [0.1.38] - 2026-07-16
 
 ### Added

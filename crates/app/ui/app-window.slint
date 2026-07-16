@@ -597,6 +597,216 @@ component FileListDialog {
     }
 }
 
+/// One word's analysis in the Ctrl+A popup below: the word as it appears
+/// in the sentence, its translation, and a pronunciation guide. Mirrors
+/// `word_analysis::WordEntry` (`crates/word-analysis/src/entry.rs`), set
+/// from Rust by `crates/app/src/word_analysis.rs`.
+struct WordAnalysisRow {
+    word: string,
+    translation: string,
+    pronunciation: string,
+}
+
+/// State of the Ctrl+A word-analysis popup (`TODO.md` Vaihe 24, part 5/6)
+/// — `Idle` before it's ever been opened, `Loading` while a background
+/// Ollama call for an uncached sentence is in flight, `Done` once
+/// `word-analysis-rows` has content to show, `Error` (with
+/// `word-analysis-error-message`) if no model/subtitle is available or
+/// the Ollama call failed.
+export enum WordAnalysisStatus {
+    Idle,
+    Loading,
+    Done,
+    Error,
+}
+
+/// Ctrl+A's word-by-word analysis popup for the sentence currently shown
+/// in the current-sentence card: header ("Word analysis" + "✕"), a
+/// scrollable list of `word · translation · pronunciation` rows (or a
+/// loading/error message in place of the list), footer "Close". Opened by
+/// `AppWindow`'s `show-word-analysis` (wired in `main.rs`'s
+/// `wire_word_analysis_popup` to Ctrl+A, see `nav-focus`'s `key-pressed`
+/// below); closed by the backdrop, header "✕", or footer "Close", all
+/// emitting `close`.
+component WordAnalysisPopup {
+    in property <WordAnalysisStatus> status: WordAnalysisStatus.Idle;
+    in property <[WordAnalysisRow]> rows: [];
+    in property <string> error-message: "";
+    callback close();
+
+    Rectangle {
+        background: rgba(0, 0, 0, 0.55);
+
+        TouchArea {
+            clicked => { root.close(); }
+        }
+
+        Rectangle {
+            width: 480px;
+            height: 420px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: Palette.modal-bg;
+            border-width: 1px;
+            border-radius: 12px;
+            border-color: Palette.border;
+            drop-shadow-color: rgba(0, 0, 0, 0.6);
+            drop-shadow-blur: 40px;
+            drop-shadow-offset-y: 16px;
+            clip: true;
+
+            TouchArea {
+                // Swallows clicks inside the card so they don't fall
+                // through to the backdrop's close handler above.
+            }
+
+            VerticalLayout {
+                Rectangle {
+                    height: 52px;
+                    border-width: 1px;
+                    border-color: Palette.border;
+
+                    HorizontalLayout {
+                        padding-left: 20px;
+                        padding-right: 20px;
+                        alignment: space-between;
+                        cross-axis-alignment: center;
+
+                        Text {
+                            text: "Word analysis";
+                            color: Palette.primary-text;
+                            font-family: "Inter";
+                            font-size: 15px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+
+                        TouchArea {
+                            width: 20px;
+                            height: 20px;
+                            clicked => { root.close(); }
+
+                            Text {
+                                text: "✕";
+                                color: Palette.muted-text;
+                                font-family: "Inter";
+                                font-size: 16px;
+                                font-weight: 600;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    vertical-stretch: 1;
+                    padding: 16px;
+                    spacing: 6px;
+
+                    if root.status == WordAnalysisStatus.Loading : Text {
+                        text: "Analyzing…";
+                        color: Palette.muted-text;
+                        font-family: "Inter";
+                        font-size: 13px;
+                    }
+
+                    if root.status == WordAnalysisStatus.Error : Text {
+                        text: root.error-message;
+                        color: Palette.error-text;
+                        font-family: "Inter";
+                        font-size: 13px;
+                        wrap: word-wrap;
+                    }
+
+                    if root.status == WordAnalysisStatus.Done : ListView {
+                        for row in root.rows : Rectangle {
+                            height: 56px;
+                            border-radius: 7px;
+
+                            HorizontalLayout {
+                                padding-left: 12px;
+                                padding-right: 12px;
+                                spacing: 10px;
+                                cross-axis-alignment: center;
+
+                                VerticalLayout {
+                                    alignment: center;
+
+                                    Text {
+                                        text: row.word;
+                                        color: Palette.primary-text;
+                                        font-family: "Inter";
+                                        font-size: 15px;
+                                        font-weight: 600;
+                                    }
+
+                                    Text {
+                                        text: row.pronunciation;
+                                        color: Palette.muted-text;
+                                        font-family: "JetBrains Mono";
+                                        font-size: 11px;
+                                    }
+                                }
+
+                                Text {
+                                    text: row.translation;
+                                    color: Palette.translation-text;
+                                    font-family: "Inter";
+                                    font-size: 14px;
+                                    font-weight: 500;
+                                    horizontal-stretch: 1;
+                                    horizontal-alignment: right;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    height: 60px;
+                    border-width: 1px;
+                    border-color: Palette.border;
+
+                    HorizontalLayout {
+                        padding-left: 20px;
+                        padding-right: 20px;
+                        alignment: end;
+                        cross-axis-alignment: center;
+
+                        Rectangle {
+                            border-width: 1px;
+                            border-radius: 6px;
+                            border-color: Palette.border;
+
+                            HorizontalLayout {
+                                padding-left: 16px;
+                                padding-right: 16px;
+                                padding-top: 8px;
+                                padding-bottom: 8px;
+
+                                Text {
+                                    text: "Close";
+                                    color: Palette.ghost-text;
+                                    font-family: "Inter";
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            TouchArea {
+                                clicked => { root.close(); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Bottom hint bar shown only in `SentenceBySentence` mode (see the `if`
 /// guard where it's instantiated in `AppWindow`), listing the Right/Left/
 /// Space keyboard shortcuts plus Ctrl+T. Right/Left/Space are handled by
@@ -1389,6 +1599,15 @@ export component AppWindow inherits Window {
     callback select-ollama-model-picker-row(int);
     callback cancel-ollama-model-picker-dialog();
     callback confirm-ollama-model-picker-dialog();
+    // Ctrl+A word-analysis popup (TODO.md Vaihe 24, part 5/6): analyzes the
+    // sentence currently shown in the current-sentence card. Set from Rust
+    // by crates/app/src/word_analysis.rs's wire_word_analysis_popup.
+    callback show-word-analysis();
+    callback close-word-analysis-popup();
+    in property <bool> is-word-analysis-popup-open: false;
+    in property <WordAnalysisStatus> word-analysis-status: WordAnalysisStatus.Idle;
+    in property <[WordAnalysisRow]> word-analysis-rows: [];
+    in property <string> word-analysis-error-message: "";
     // "Analyze all sentences" batch loop (TODO.md Vaihe 24, part 4/6): runs
     // word-by-word analysis for every cue not already in the subtitle's
     // cache file. Set from Rust by crates/app/src/word_analysis.rs.
@@ -1425,6 +1644,12 @@ export component AppWindow inherits Window {
                 // Right/Left which only make sense in SentenceBySentence
                 // mode.
                 root.toggle-translation();
+                accept
+            } else if (event.modifiers.control && (event.text == "a" || event.text == "A")) {
+                // Word analysis targets whatever sentence the
+                // current-sentence card is showing right now, same as
+                // Ctrl+T above — not mode-gated for the same reason.
+                root.show-word-analysis();
                 accept
             } else if (event.text == " ") {
                 // Space (play/pause) works in both modes — see
@@ -1681,6 +1906,18 @@ export component AppWindow inherits Window {
             row-clicked(index) => { root.select-ollama-model-picker-row(index); }
             cancel => { root.cancel-ollama-model-picker-dialog(); }
             confirm => { root.confirm-ollama-model-picker-dialog(); }
+        }
+
+        // Rendered last so it layers on top of everything else — Ctrl+A
+        // can be pressed from the main player screen regardless of which
+        // (if any) other dialog happens to be open.
+        if root.is-word-analysis-popup-open : WordAnalysisPopup {
+            width: parent.width;
+            height: parent.height;
+            status: root.word-analysis-status;
+            rows: root.word-analysis-rows;
+            error-message: root.word-analysis-error-message;
+            close => { root.close-word-analysis-popup(); }
         }
     }
 }
