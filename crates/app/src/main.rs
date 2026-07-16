@@ -6,6 +6,7 @@
 
 mod config;
 mod model_picker;
+mod ollama_model_picker;
 mod open_subtitles_dialog;
 mod open_video_dialog;
 mod sentence_card;
@@ -18,6 +19,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use playback_state::{PlaybackMode, PlayerState, SeekCommand};
+use slint::Model;
 
 slint::include_modules!();
 
@@ -806,6 +808,102 @@ fn wire_model_picker(window: &AppWindow, selected_model: Rc<RefCell<Option<PathB
     });
 }
 
+/// Wires the Open Subtitles dialog's Ollama model row (`TODO.md` Vaihe 24,
+/// part 3/6): `select-ollama-model-requested` opens a `FileListDialog`
+/// listing models a local Ollama instance reports installed
+/// (`word_analysis::OllamaClient::list_models`), fetched on a background
+/// thread via `ollama_model_picker::spawn_list_models` since it's a
+/// network call, unlike the whisper model picker's synchronous filesystem
+/// listing — see that module's doc comment. Picking a model persists it to
+/// `config::TrangoConfig::ollama_model`, the same way `wire_model_picker`
+/// persists the whisper model.
+///
+/// `selected_ollama_model` is shared with the Ctrl+A popup and "Analyze
+/// all sentences" wiring (`TODO.md` Vaihe 24, parts 5-6), which read it
+/// when building an `OllamaClient` call.
+fn wire_ollama_model_picker(
+    window: &AppWindow,
+    selected_ollama_model: Rc<RefCell<Option<String>>>,
+) {
+    let request_window_weak = window.as_weak();
+    let request_current_model = Rc::clone(&selected_ollama_model);
+    window.on_select_ollama_model_requested(move || {
+        let Some(window) = request_window_weak.upgrade() else {
+            return;
+        };
+        ollama_model_picker::open_dialog_loading(&window);
+
+        // Only Send data may cross into the background thread and back via
+        // slint::invoke_from_event_loop below (see subtitle_generation.rs's
+        // identical note) — an owned Option<String>, not the
+        // Rc<RefCell<...>> state above. The freshly listed models
+        // themselves end up in ollama-model-picker-rows (a Slint model,
+        // updated on the UI thread inside apply_models_result), so the
+        // select/confirm handlers below read model names back out of that
+        // instead of needing their own Rc<RefCell<Vec<String>>>.
+        let current_model = request_current_model.borrow().clone();
+        let callback_window_weak = request_window_weak.clone();
+        ollama_model_picker::spawn_list_models(
+            word_analysis::HttpOllamaClient::default(),
+            move |result| {
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(window) = callback_window_weak.upgrade() else {
+                        return;
+                    };
+                    ollama_model_picker::apply_models_result(
+                        &window,
+                        result,
+                        current_model.as_deref(),
+                    );
+                });
+            },
+        );
+    });
+
+    let select_window_weak = window.as_weak();
+    window.on_select_ollama_model_picker_row(move |index| {
+        let Some(window) = select_window_weak.upgrade() else {
+            return;
+        };
+        let models: Vec<String> = window
+            .get_ollama_model_picker_rows()
+            .iter()
+            .map(|row| row.name.to_string())
+            .collect();
+        ollama_model_picker::mark_selected(&window, &models, index);
+    });
+
+    let cancel_window_weak = window.as_weak();
+    window.on_cancel_ollama_model_picker_dialog(move || {
+        if let Some(window) = cancel_window_weak.upgrade() {
+            window.set_is_ollama_model_picker_open(false);
+        }
+    });
+
+    let confirm_window_weak = window.as_weak();
+    window.on_confirm_ollama_model_picker_dialog(move || {
+        let Some(window) = confirm_window_weak.upgrade() else {
+            return;
+        };
+        let model = usize::try_from(window.get_ollama_model_picker_selected_index())
+            .ok()
+            .and_then(|index| window.get_ollama_model_picker_rows().row_data(index))
+            .map(|row| row.name.to_string());
+        let Some(model) = model else {
+            return;
+        };
+        tracing::info!(%model, "Ollama model selected");
+        window.set_is_ollama_model_picker_open(false);
+        window.set_ollama_model_selected(true);
+        window.set_ollama_model_name(model.clone().into());
+        *selected_ollama_model.borrow_mut() = Some(model.clone());
+
+        let mut config = config::load();
+        config.ollama_model = Some(model);
+        config::save(&config);
+    });
+}
+
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
     tracing::info!("trango starting");
@@ -868,6 +966,14 @@ fn main() -> anyhow::Result<()> {
         window.set_whisper_model_name(model_picker::display_name(&model_path).into());
     }
     wire_model_picker(&window, Rc::clone(&selected_model));
+
+    let selected_ollama_model = Rc::new(RefCell::new(startup_config.ollama_model.clone()));
+    if let Some(model) = selected_ollama_model.borrow().clone() {
+        window.set_ollama_model_selected(true);
+        window.set_ollama_model_name(model.into());
+    }
+    wire_ollama_model_picker(&window, Rc::clone(&selected_ollama_model));
+
     let reload_video_player = Rc::clone(&video_player);
     wire_open_subtitles_dialog(
         &window,

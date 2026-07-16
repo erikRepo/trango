@@ -9,6 +9,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.37] - 2026-07-16
+
+### Added
+- Open Subtitles dialog: "Ollama model" row (TODO.md Vaihe 24, part 3/6) — opens a model picker (new `crates/app/src/ollama_model_picker.rs`, reusing `FileListDialog`'s chrome) listing models a local Ollama instance reports installed, fetched on a background thread since it's a network call (unlike the whisper model picker's synchronous filesystem listing). Picking a model persists it to `config.toml`'s new `ollama_model` field, the same way the whisper model is persisted
+
 ## [0.1.36] - 2026-07-16
 
 ### Added

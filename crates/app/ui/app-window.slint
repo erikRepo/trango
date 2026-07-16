@@ -818,8 +818,11 @@ component OpenSubtitlesDialog {
     in property <string> model-name: "";
     in property <bool> translation-linked;
     in property <string> translation-name;
+    in property <bool> ollama-model-selected: false;
+    in property <string> ollama-model-name: "";
     callback generate-subtitles();
     callback select-model();
+    callback select-ollama-model();
     callback link-translation();
     callback cancel();
     callback confirm();
@@ -833,7 +836,7 @@ component OpenSubtitlesDialog {
 
         Rectangle {
             width: 640px;
-            height: 420px;
+            height: 470px;
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
             background: Palette.modal-bg;
@@ -1034,6 +1037,38 @@ component OpenSubtitlesDialog {
 
                             TouchArea {
                                 clicked => { root.link-translation(); }
+                            }
+                        }
+                    }
+
+                    VerticalLayout {
+                        spacing: 6px;
+
+                        Text {
+                            text: "Word analysis (Ollama)";
+                            color: Palette.muted-text;
+                            font-family: "JetBrains Mono";
+                            font-size: 10px;
+                            font-weight: 600;
+                            letter-spacing: 0.8px;
+                        }
+
+                        Rectangle {
+                            HorizontalLayout {
+                                Text {
+                                    text: root.ollama-model-selected
+                                        ? "Ollama model: " + root.ollama-model-name + " (change)"
+                                        : "select an Ollama model for word analysis…";
+                                    color: Palette.accent;
+                                    font-family: "Inter";
+                                    font-size: 11px;
+                                    font-weight: 500;
+                                    wrap: word-wrap;
+                                }
+                            }
+
+                            TouchArea {
+                                clicked => { root.select-ollama-model(); }
                             }
                         }
                     }
@@ -1277,6 +1312,27 @@ export component AppWindow inherits Window {
     callback select-model-picker-row(int);
     callback cancel-model-picker-dialog();
     callback confirm-model-picker-dialog();
+    // Ollama model selection (TODO.md Vaihe 24): which locally installed
+    // Ollama model the Ctrl+A popup and "Analyze all sentences" batch loop
+    // run word-by-word sentence analysis against. Set from Rust by
+    // crates/app/src/ollama_model_picker.rs; persisted across restarts by
+    // crates/app/src/config.rs, the same way whisper-model-selected is.
+    in property <bool> ollama-model-selected: false;
+    in property <string> ollama-model-name: "";
+    // Invoked by the Open Subtitles dialog's Ollama model row. Opens the
+    // model picker (a FileListDialog listing models Ollama reports, no
+    // folder navigation — see ollama_model_picker.rs's module doc for why
+    // listing runs on a background thread unlike the whisper model
+    // picker's synchronous filesystem listing).
+    callback select-ollama-model-requested();
+    in property <bool> is-ollama-model-picker-open: false;
+    in property <bool> ollama-model-picker-loading: false;
+    in property <string> ollama-model-picker-error: "";
+    in property <[FileListRow]> ollama-model-picker-rows: [];
+    in property <int> ollama-model-picker-selected-index: -1;
+    callback select-ollama-model-picker-row(int);
+    callback cancel-ollama-model-picker-dialog();
+    callback confirm-ollama-model-picker-dialog();
 
     title: "TrangoPlayer v" + version;
     // `preferred-width`/`-height`, not `width`/`height`: per Slint's
@@ -1498,8 +1554,11 @@ export component AppWindow inherits Window {
             model-name: root.whisper-model-name;
             translation-linked: root.open-subtitles-translation-linked;
             translation-name: root.open-subtitles-translation-name;
+            ollama-model-selected: root.ollama-model-selected;
+            ollama-model-name: root.ollama-model-name;
             generate-subtitles => { root.generate-subtitles-requested(); }
             select-model => { root.select-whisper-model-requested(); }
+            select-ollama-model => { root.select-ollama-model-requested(); }
             link-translation => { root.link-translation-requested(); }
             cancel => { root.cancel-open-subtitles-dialog(); }
             confirm => { root.confirm-open-subtitles-dialog(); }
@@ -1534,6 +1593,25 @@ export component AppWindow inherits Window {
             row-clicked(index) => { root.select-model-picker-row(index); }
             cancel => { root.cancel-model-picker-dialog(); }
             confirm => { root.confirm-model-picker-dialog(); }
+        }
+
+        // Also reached from inside the Open Subtitles dialog, same as the
+        // whisper model picker above — but lists Ollama models rather than
+        // browsing a folder, so folder-label doubles as a loading/error
+        // status line instead of a path.
+        if root.is-ollama-model-picker-open : FileListDialog {
+            width: parent.width;
+            height: parent.height;
+            title: "Select Ollama model";
+            confirm-label: "Select";
+            folder-label: root.ollama-model-picker-loading
+                ? "Loading models…"
+                : (root.ollama-model-picker-error != "" ? root.ollama-model-picker-error : "Installed Ollama models");
+            rows: root.ollama-model-picker-rows;
+            selected-index: root.ollama-model-picker-selected-index;
+            row-clicked(index) => { root.select-ollama-model-picker-row(index); }
+            cancel => { root.cancel-ollama-model-picker-dialog(); }
+            confirm => { root.confirm-ollama-model-picker-dialog(); }
         }
     }
 }
