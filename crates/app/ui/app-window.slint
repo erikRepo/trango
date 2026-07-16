@@ -1848,8 +1848,17 @@ export component AppWindow inherits Window {
     // "No video" mode — gated to that mode in nav-focus's key-pressed
     // handler below, since capture has no meaning while a video is loaded.
     // Set from Rust by crates/app/src/system_audio_capture.rs. Only a
-    // start/stop signal for now; no capture-state UI yet (TODO.md Vaihe 29).
+    // start/stop signal for now; no rec/stop control or filename display
+    // yet (TODO.md Vaihe 29) — but a failure (e.g. missing pactl/ffmpeg)
+    // is surfaced via audio-capture-error-message below, rather than only
+    // logged, so a broken setup doesn't look like Ctrl+Space silently did
+    // nothing.
     callback toggle-audio-capture();
+    // Mirrors the most recent start/stop attempt's outcome: "" on success,
+    // an explanatory message on failure (e.g. "pactl not found...").
+    // Cleared again on the next successful attempt. Shown in the "No
+    // video" placeholder below.
+    in property <string> audio-capture-error-message: "";
     callback close-word-analysis-popup();
     in property <bool> is-word-analysis-popup-open: false;
     in property <WordAnalysisStatus> word-analysis-status: WordAnalysisStatus.Idle;
@@ -2059,16 +2068,29 @@ export component AppWindow inherits Window {
                         // overlay child instead.
                         background: root.video-loaded ? transparent : Palette.window-bg;
 
-                        if root.playback-mode == PlaybackModeUi.NoVideo : Text {
-                            // Placeholder for TODO.md Vaihe 25 — recording
-                            // controls and live transcript land here in
-                            // Vaihe 29.
-                            text: "No video — subtitle-only mode";
-                            color: Palette.muted-text;
-                            font-family: "Inter";
-                            font-size: 13px;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
+                        if root.playback-mode == PlaybackModeUi.NoVideo : VerticalLayout {
+                            // Placeholder for TODO.md Vaihe 25 — a rec/stop
+                            // control, filename, and live transcript land
+                            // here in Vaihe 29.
+                            alignment: center;
+                            spacing: 8px;
+
+                            Text {
+                                text: "No video — subtitle-only mode";
+                                color: Palette.muted-text;
+                                font-family: "Inter";
+                                font-size: 13px;
+                                horizontal-alignment: center;
+                            }
+
+                            if root.audio-capture-error-message != "" : Text {
+                                text: root.audio-capture-error-message;
+                                color: Palette.error-text;
+                                font-family: "Inter";
+                                font-size: 12px;
+                                horizontal-alignment: center;
+                                wrap: word-wrap;
+                            }
                         }
                     }
 

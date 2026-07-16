@@ -279,6 +279,14 @@ instead writes `q` to `ffmpeg`'s stdin — the same key it reads
 interactively to quit gracefully — and only falls back to `kill()` after
 `graceful_stop_timeout` (a test-injectable field; production uses 5s).
 
+A missing `pactl`/`ffmpeg` install only showed up in the log (usually
+invisible to a user running the packaged app), making Ctrl+Space look
+like it silently did nothing. `system_audio_capture::wire_audio_capture`
+now also mirrors every start/stop outcome into `audio-capture-error-message`
+(`AppWindow` property, shown in the "No video" placeholder), cleared on
+success — a small, targeted piece of Vaihe 29's UI pulled forward, without
+building the full rec/stop control it also adds.
+
 ## `PlaybackMode::NoVideo` and the segmented control's third segment
 
 `TODO.md` Vaihe 25 adds a third `PlaybackMode` variant for subtitle-only

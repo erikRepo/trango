@@ -45,9 +45,11 @@ analysis still work on whatever subtitle is linked.
 is currently playing on your PC — a browser video, for example) to a WAV
 file; pressing it again stops the recording. This is the first step
 toward live subtitle generation from that recording — nothing is
-transcribed yet, and there's no on-screen indicator of the recording
-in progress. See [Settings](settings.md) for where the monitor source
-comes from and how to override it, and note this only works on
+transcribed yet, and there's no on-screen indicator of an *in-progress*
+recording. If starting or stopping fails (e.g. `pactl`/`ffmpeg` aren't
+installed), an explanatory message appears in the placeholder instead of
+only being logged. See [Settings](settings.md) for where the monitor
+source comes from and how to override it, and note this only works on
 Linux with PulseAudio/PipeWire (see the developer docs' architecture
 section for why).
 

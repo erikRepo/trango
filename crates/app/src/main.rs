@@ -1961,12 +1961,14 @@ mod tests {
 
             window.invoke_toggle_audio_capture();
             assert!(audio_capture_state.borrow().is_recording());
+            assert_eq!(window.get_audio_capture_error_message(), "");
 
             // The fake ffmpeg writes its output file before blocking on
             // stdin, so checking only after stop() (which waits for it to
             // exit) avoids racing the subprocess's own timing.
             window.invoke_toggle_audio_capture();
             assert!(!audio_capture_state.borrow().is_recording());
+            assert_eq!(window.get_audio_capture_error_message(), "");
             let wav_files: Vec<_> = std::fs::read_dir(&audio_capture_dir)
                 .unwrap()
                 .filter_map(|entry| entry.ok())
@@ -1975,6 +1977,38 @@ mod tests {
             assert_eq!(wav_files.len(), 1);
 
             std::fs::remove_dir_all(&audio_capture_dir).expect("failed to clean up temp test dir");
+
+            // When:  toggle-audio-capture is wired to an AudioCapture whose
+            //        ffmpeg_path names a binary that doesn't exist (fake
+            //        pactl still autodetects fine)
+            // Then:  audio-capture-error-message surfaces the "ffmpeg not
+            //        found" explanation instead of only logging it — a
+            //        broken install shouldn't look like Ctrl+Space did
+            //        nothing
+            let broken_dir = std::env::temp_dir().join("trango-test-audio-capture-error");
+            let _ = std::fs::remove_dir_all(&broken_dir);
+            std::fs::create_dir_all(&broken_dir).expect("failed to create temp test dir");
+            let fake_pactl_path = broken_dir.join("fake-pactl.sh");
+            std::fs::write(&fake_pactl_path, "#!/bin/sh\necho 'fake-sink'\n")
+                .expect("failed to write fake pactl script");
+            std::fs::set_permissions(&fake_pactl_path, std::fs::Permissions::from_mode(0o755))
+                .expect("failed to make fake pactl executable");
+            let mut broken_audio_capture = audio_capture::AudioCapture::default();
+            broken_audio_capture.ffmpeg_path = broken_dir.join("no-such-ffmpeg-binary");
+            broken_audio_capture.pactl_path = fake_pactl_path;
+            let broken_audio_capture_state = system_audio_capture::wire_audio_capture(
+                &window,
+                broken_audio_capture,
+                broken_dir.clone(),
+            );
+
+            window.invoke_toggle_audio_capture();
+            assert!(!broken_audio_capture_state.borrow().is_recording());
+            assert!(window
+                .get_audio_capture_error_message()
+                .contains("ffmpeg not found"));
+
+            std::fs::remove_dir_all(&broken_dir).expect("failed to clean up temp test dir");
         }
     }
 }

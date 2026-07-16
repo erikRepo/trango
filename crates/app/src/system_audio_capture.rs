@@ -11,6 +11,7 @@ use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ::audio_capture::AudioCapture;
+use slint::ComponentHandle;
 
 use crate::{config, AppWindow};
 
@@ -22,6 +23,12 @@ use crate::{config, AppWindow};
 /// here) so tests can inject one pointed at fake `ffmpeg`/`pactl` binaries
 /// instead of the real ones. Returns the shared `AudioCapture` so callers/
 /// tests can inspect it.
+///
+/// Every outcome is mirrored into `window`'s `audio-capture-error-message`
+/// property: cleared on success, set to the error's message on failure — a
+/// missing `pactl`/`ffmpeg` install would otherwise only show up in the
+/// (usually invisible) log, making Ctrl+Space look like it silently did
+/// nothing.
 pub fn wire_audio_capture(
     window: &AppWindow,
     capture: AudioCapture,
@@ -30,12 +37,22 @@ pub fn wire_audio_capture(
     let capture = Rc::new(RefCell::new(capture));
 
     let capture_for_callback = Rc::clone(&capture);
+    let window_weak = window.as_weak();
     window.on_toggle_audio_capture(move || {
+        let Some(window) = window_weak.upgrade() else {
+            return;
+        };
         let mut capture = capture_for_callback.borrow_mut();
         if capture.is_recording() {
             match capture.stop() {
-                Ok(()) => tracing::info!("system audio capture stopped"),
-                Err(err) => tracing::warn!(%err, "failed to stop system audio capture"),
+                Ok(()) => {
+                    tracing::info!("system audio capture stopped");
+                    window.set_audio_capture_error_message("".into());
+                }
+                Err(err) => {
+                    tracing::warn!(%err, "failed to stop system audio capture");
+                    window.set_audio_capture_error_message(err.to_string().into());
+                }
             }
             return;
         }
@@ -46,6 +63,7 @@ pub fn wire_audio_capture(
                 Ok(source) => source,
                 Err(err) => {
                     tracing::warn!(%err, "failed to detect default monitor source");
+                    window.set_audio_capture_error_message(err.to_string().into());
                     return;
                 }
             },
@@ -53,8 +71,14 @@ pub fn wire_audio_capture(
 
         let output_path = capture_output_path(&output_dir);
         match capture.start(&monitor_source, &output_path) {
-            Ok(()) => tracing::info!(?output_path, "system audio capture started"),
-            Err(err) => tracing::warn!(%err, "failed to start system audio capture"),
+            Ok(()) => {
+                tracing::info!(?output_path, "system audio capture started");
+                window.set_audio_capture_error_message("".into());
+            }
+            Err(err) => {
+                tracing::warn!(%err, "failed to start system audio capture");
+                window.set_audio_capture_error_message(err.to_string().into());
+            }
         }
     });
 
