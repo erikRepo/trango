@@ -9,6 +9,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.45] - 2026-07-16
+
+### Fixed
+- Space (and arrow-key/sentence-list navigation) could stop responding entirely after using the Open Subtitles dialog's "Target language" field (added in 0.1.41, the app's first editable text input) — that `LineEdit` grabs keyboard focus while the dialog is open, and since the dialog is destroyed on close, nothing reclaimed focus for `nav-focus` afterward, so all keyboard shortcuts silently went nowhere. `app-window.slint` now returns focus to `nav-focus` whenever the Open Subtitles dialog closes
+- Playing a video to its end in Normal mode left mpv's core idle (unloaded), breaking every subsequent seek — Space, arrow-key/sentence-list navigation, even the scrub bar — until the video was reloaded from scratch. This exact failure mode was already known and worked around for one specific trigger (generating subtitles mid-playback, see `docs/src/specs/README.md`), but a video simply reaching its own natural end had no such recovery. mpv is now initialized with `keep-open=yes`, so it stays loaded and seekable after EOF instead of going idle
+
 ## [0.1.44] - 2026-07-16
 
 ### Changed

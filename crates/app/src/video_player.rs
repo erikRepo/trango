@@ -138,6 +138,20 @@ impl VideoPlayer {
     ) -> anyhow::Result<Self> {
         let mpv = Mpv::with_initializer(|init| {
             init.set_property("vo", "libmpv")?;
+            // Without this, mpv's core goes idle the moment playback
+            // reaches EOF — unloading the file outright rather than
+            // pausing on its last frame — and every subsequent seek
+            // (arrow-key/sentence-list navigation, Space's repeat-cue, even
+            // the scrub bar) fails with mpv error Raw(-12) until the video
+            // is reloaded from scratch. That failure mode is already
+            // documented and specifically worked around for one trigger
+            // (generating subtitles mid-playback — see
+            // `docs/src/specs/README.md`'s "Generating subtitles for an
+            // already-open video reloads it"), but any video that simply
+            // plays to its own end in Normal mode hit the same wall with
+            // no recovery. `keep-open=yes` keeps the core loaded and
+            // paused at the last frame instead, so it stays seekable.
+            init.set_property("keep-open", "yes")?;
             Ok(())
         })
         .map_err(|err| anyhow::anyhow!("failed to create mpv core: {err}"))?;

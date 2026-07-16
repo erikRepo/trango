@@ -275,6 +275,14 @@ documentation/guidance only, trango doesn't enforce or check it.
 
 ## Generating subtitles for an already-open video reloads it
 
+(Superseded as the sole fix for the underlying idle-core problem by
+`keep-open=yes` on the mpv core itself — see
+`docs/src/architecture/video-playback.md`'s "EOF leaves the core idle
+unless `keep-open` is set". The reload described below is still done, but
+now as a bonus (it also re-arms the sentence-by-sentence start-of-playback
+seek onto the newly-generated subtitle's first cue) rather than the only
+thing standing between EOF and a permanently broken player.)
+
 Found through real end-to-end testing: generating subtitles for a video
 that's already open and playing (not just freshly opened) can leave
 cue-navigation (arrow keys / sentence list) permanently broken afterward

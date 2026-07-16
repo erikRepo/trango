@@ -8,9 +8,11 @@ this page covers the mechanism.
 
 ## Mechanism
 
-1. `Mpv::with_initializer` creates an mpv core with `vo=libmpv`, telling it
-   not to open a native window — output only happens through the render
-   API we drive ourselves.
+1. `Mpv::with_initializer` creates an mpv core with `vo=libmpv` (no native
+   window of its own — output only happens through the render API we
+   drive ourselves) and `keep-open=yes` (stays loaded and paused on the
+   last frame at EOF instead of unloading the file — see "EOF leaves the
+   core idle unless `keep-open` is set" below).
 2. `VideoPlayer::attach` registers a closure via
    `slint::Window::set_rendering_notifier`, which Slint calls at four
    points in its own render loop: `RenderingSetup`, `BeforeRendering`,
@@ -253,6 +255,33 @@ deferred to `apply_pending_start_seek`, called on every existing
 finished), it issues the seek and clears `pending_start_seek`. Playback
 stays paused throughout — pausing happens up front, the seek only moves
 *where* it's paused once possible.
+
+## EOF leaves the core idle unless `keep-open` is set
+
+Without `keep-open=yes` (see "Mechanism" above), mpv's default behavior at
+end-of-file is to unload the file entirely and return the core to the same
+kind of idle state it starts in before any `loadfile` — not just pause on
+the last frame. An idle core rejects every `seek` command outright with
+mpv error `Raw(-12)` (`MPV_ERROR_COMMAND`), the same failure mode
+documented above for a `seek` issued right after `loadfile` before
+anything has actually loaded. Concretely, playing a video to its own end
+in `Normal` mode used to permanently break Space (`repeat-cue`/`toggle_playback`
+in `video_player.rs`), arrow-key/sentence-list navigation, and the scrub
+bar for the rest of the session — no code path recovered from it.
+
+This was independently discovered and worked around once already, for one
+specific trigger: generating subtitles for an already-playing video can
+take long enough for it to reach EOF mid-generation, and the fix there
+was to reload the video via `VideoPlayer::load_video` once generation
+finishes (see `docs/src/specs/README.md`'s "Generating subtitles for an
+already-open video reloads it"). That workaround only ever covered its
+one trigger — a video reaching EOF on its own in normal use had no
+equivalent recovery. `keep-open=yes` fixes it at the source instead: mpv
+now stays loaded and paused on the last frame at EOF, so it remains
+seekable, and the subtitle-generation reload above is no longer covering
+for a gap but is still worth keeping (it also re-arms the
+sentence-by-sentence start-of-playback seek onto the newly-generated
+subtitle's first cue).
 
 ## `attach` always runs at startup — `RenderingSetup` only ever fires once
 

@@ -1678,6 +1678,23 @@ export component AppWindow inherits Window {
     preferred-height: 660px;
     forward-focus: nav-focus;
 
+    // Restores keyboard focus to `nav-focus` once the Open Subtitles dialog
+    // closes. That dialog's target-language `LineEdit` (see
+    // OpenSubtitlesDialog below, the "Word analysis (Ollama)" section) can
+    // grab keyboard focus while the dialog is open; since the dialog is a
+    // conditionally-instantiated child (`if is-open-subtitles-dialog-open`
+    // below), closing it destroys the focused `LineEdit` outright, leaving
+    // no item focused. Without this, nav-focus's `key-pressed` (Space,
+    // Right/Left) never fires again until the user happens to click
+    // somewhere else — reported as "Space does nothing" after generating
+    // subtitles and then running word analysis, both driven from this
+    // dialog.
+    changed is-open-subtitles-dialog-open => {
+        if (!root.is-open-subtitles-dialog-open) {
+            nav-focus.focus();
+        }
+    }
+
     nav-focus := FocusScope {
         key-pressed(event) => {
             if (event.modifiers.control && (event.text == "t" || event.text == "T")) {
