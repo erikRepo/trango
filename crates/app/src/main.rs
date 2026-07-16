@@ -311,13 +311,15 @@ struct CurrentMedia {
 /// Resolves the folder the Open Video dialog lists by default: the CLI
 /// video path's parent directory if one was given (Vaihe 11's
 /// `trango <path/to/video>` usage — likely where the user keeps other
-/// videos too), otherwise the current working directory. An in-dialog
-/// folder switcher is out of scope for Vaihe 18 — see
-/// `docs/src/specs/README.md`.
-fn default_video_folder(args: &[String]) -> PathBuf {
+/// videos too), otherwise `config`'s last-opened video folder
+/// (`TrangoConfig::video_folder`, kept up to date by `open_selected_video`),
+/// otherwise the current working directory. An in-dialog folder switcher is
+/// out of scope for Vaihe 18 — see `docs/src/specs/README.md`.
+fn default_video_folder(args: &[String], config: &config::TrangoConfig) -> PathBuf {
     video_path_from_args(args)
         .and_then(|path| path.parent().map(Path::to_path_buf))
         .filter(|parent| !parent.as_os_str().is_empty())
+        .or_else(|| config.video_folder.clone())
         .unwrap_or_else(|| {
             std::env::current_dir().unwrap_or_else(|err| {
                 tracing::warn!(%err, "failed to read current directory; falling back to \".\"");
@@ -427,7 +429,10 @@ fn wire_open_video_dialog(
 /// `wire_open_video_dialog`'s `confirm-open-video` handler. Also resets
 /// `current_media` to the new video (clearing any translation link from a
 /// previously opened video), so the Open Subtitles dialog (Vaihe 19)
-/// reflects the newly opened video the next time it's shown.
+/// reflects the newly opened video the next time it's shown. Persists
+/// `video_path`'s parent folder to `config::TrangoConfig::video_folder`
+/// (`config::save`), so the Open Video dialog defaults to wherever the user
+/// last opened a video from, on the next run.
 fn open_selected_video(
     window: &AppWindow,
     state: &Rc<RefCell<PlayerState>>,
@@ -435,6 +440,15 @@ fn open_selected_video(
     video_path: &Path,
     current_media: &Rc<RefCell<CurrentMedia>>,
 ) {
+    if let Some(folder) = video_path
+        .parent()
+        .filter(|folder| !folder.as_os_str().is_empty())
+    {
+        let mut config = config::load();
+        config.video_folder = Some(folder.to_path_buf());
+        config::save(&config);
+    }
+
     let subtitle_path = open_video_dialog::matching_subtitle_path(video_path);
     let mut subtitle_loaded = false;
     if let Some(subtitle_path) = &subtitle_path {
@@ -1173,15 +1187,16 @@ fn main() -> anyhow::Result<()> {
     )?);
     wire_cue_navigation(&window, &player_state, Rc::clone(&video_player));
 
+    let startup_config = config::load();
+
     wire_open_video_dialog(
         &window,
         &player_state,
         Rc::clone(&video_player),
-        default_video_folder(&args),
+        default_video_folder(&args, &startup_config),
         Rc::clone(&current_media),
     );
 
-    let startup_config = config::load();
     let selected_model = Rc::new(RefCell::new(
         startup_config
             .whisper_model_path
@@ -1376,23 +1391,49 @@ mod tests {
 
     #[test]
     fn test_default_video_folder_with_cli_video_path() {
-        // Given: argv with a video path that has a parent directory
+        // Given: argv with a video path that has a parent directory, and a
+        //        config with a different saved video folder
         let args = vec!["trango".to_string(), "some/folder/video.mp4".to_string()];
+        let config = config::TrangoConfig {
+            video_folder: Some(PathBuf::from("/saved/folder")),
+            ..Default::default()
+        };
 
         // When:  resolving the default Open Video dialog folder
-        // Then:  it's that video's parent directory
-        assert_eq!(default_video_folder(&args), PathBuf::from("some/folder"));
+        // Then:  the CLI video's parent directory wins over the saved folder
+        assert_eq!(
+            default_video_folder(&args, &config),
+            PathBuf::from("some/folder")
+        );
     }
 
     #[test]
-    fn test_default_video_folder_without_cli_video_path() {
-        // Given: argv with no video path
+    fn test_default_video_folder_without_cli_video_path_uses_saved_folder() {
+        // Given: argv with no video path, and a config with a saved video
+        //        folder from a previous run
+        let args = vec!["trango".to_string()];
+        let config = config::TrangoConfig {
+            video_folder: Some(PathBuf::from("/saved/folder")),
+            ..Default::default()
+        };
+
+        // When:  resolving the default Open Video dialog folder
+        // Then:  it's the saved folder
+        assert_eq!(
+            default_video_folder(&args, &config),
+            PathBuf::from("/saved/folder")
+        );
+    }
+
+    #[test]
+    fn test_default_video_folder_without_cli_video_path_or_saved_folder() {
+        // Given: argv with no video path, and no saved video folder either
         let args = vec!["trango".to_string()];
 
         // When:  resolving the default Open Video dialog folder
         // Then:  it falls back to the current working directory
         assert_eq!(
-            default_video_folder(&args),
+            default_video_folder(&args, &config::TrangoConfig::default()),
             std::env::current_dir().expect("failed to read current directory")
         );
     }
@@ -1400,14 +1441,14 @@ mod tests {
     #[test]
     fn test_default_video_folder_with_bare_filename_falls_back_to_cwd() {
         // Given: argv with a video path that has no parent directory
-        //        component (a bare filename)
+        //        component (a bare filename), and no saved video folder
         let args = vec!["trango".to_string(), "video.mp4".to_string()];
 
         // When:  resolving the default Open Video dialog folder
         // Then:  it falls back to the current working directory, since
         //        "video.mp4"'s parent is the empty path, not a real folder
         assert_eq!(
-            default_video_folder(&args),
+            default_video_folder(&args, &config::TrangoConfig::default()),
             std::env::current_dir().expect("failed to read current directory")
         );
     }

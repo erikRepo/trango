@@ -10,9 +10,11 @@ sentence-panel behavior).
 
 The Open Video dialog (`TODO.md` Vaihe 18) opens on a default folder
 (`main.rs`'s `default_video_folder`: the CLI video path's parent directory
-if one was given, otherwise the current working directory), but isn't
-limited to it: an "‥ Up" row and clicking a listed subfolder navigate the
-dialog in place, re-listing that folder's contents
+if one was given, otherwise `config.toml`'s `video_folder` — the folder the
+last successfully opened video lived in, kept up to date by
+`open_selected_video` on every video open — otherwise the current working
+directory), but isn't limited to it: an "‥ Up" row and clicking a listed
+subfolder navigate the dialog in place, re-listing that folder's contents
 (`open_video_dialog::list_folder_entries`). This was chosen over a
 native OS folder picker to stay consistent with README's "no OS-native
 file picker — mockin oma UI" direction for the dialog as a whole, and

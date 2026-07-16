@@ -9,6 +9,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.46] - 2026-07-16
+
+### Added
+- The Open Video dialog now remembers the last folder a video was successfully opened from (`config.toml`'s new `video_folder` field) and defaults to it on the next run, instead of always resetting to the CLI argument's folder or the current working directory. Still overridden by an explicit `trango <path/to/video>` CLI argument for that run; updates every time a different folder's video is opened, so it always reflects the most recent one
+
 ## [0.1.45] - 2026-07-16
 
 ### Fixed

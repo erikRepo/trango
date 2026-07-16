@@ -29,6 +29,11 @@ pub struct TrangoConfig {
     /// means "never edited yet", so `word_analysis::DEFAULT_TARGET_LANGUAGE`
     /// is used as the starting value instead of an empty field.
     pub ollama_target_language: Option<String>,
+    /// The folder the last successfully opened video lived in, reused as
+    /// the Open Video dialog's default folder on the next run so it keeps
+    /// opening wherever the user last was, not always the CLI/`cwd`
+    /// default.
+    pub video_folder: Option<PathBuf>,
 }
 
 /// Resolves the config directory from `xdg_config_home`/`home` (as
@@ -174,6 +179,7 @@ mod tests {
             whisper_model_folder: Some(PathBuf::from("/models")),
             ollama_model: Some("llama3.1:8b".to_string()),
             ollama_target_language: Some("Finnish".to_string()),
+            video_folder: Some(PathBuf::from("/videos")),
         };
 
         save_to(&path, &config);
