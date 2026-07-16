@@ -430,3 +430,29 @@ never moves the cursor. If `Normal` mode or scrub-bar dragging need
 live cue tracking later, that should be designed and tested fresh against
 whatever their actual seek/playback model turns out to be, not by
 reviving this removed mechanism as-is.
+
+## Space works in every mode, as a plain toggle when there's no cue to bound it to
+
+A direct consequence of "no mode autoplays": once opening a video always
+lands paused (see above), `Normal` mode had no way to ever start playback
+at all — Right/Left/Space were gated behind `sentence-mode-active` in
+`app-window.slint`'s `key-pressed` handler, a leftover from before
+autoplay-on-open was removed there too. `Right`/`Left` stay gated (cue
+navigation has no meaning without a full `Normal` mode implementation,
+still `TODO.md` Vaihe 21), but Space is pulled out from behind that guard
+and now works in both modes, unconditionally.
+
+On the Rust side, `main.rs`'s `repeat-cue` handler was already the one
+callback Space always invokes; it now branches on whether
+`PlayerState::repeat_current_cue` returns a cue at all:
+`Some` (`SentenceBySentence` mode with a subtitle linked) hands the
+`PlaySpanCommand` to `VideoPlayer::toggle_play_span` exactly as before —
+bounded playback of that one cue's span. `None` (`Normal` mode, or
+`SentenceBySentence` before any subtitle exists) instead calls the new
+`VideoPlayer::toggle_playback` — a plain, unbounded play/pause toggle
+with no seek and no `pause_at` armed, since there's no particular cue's
+span to stop at. Reusing the same Slint callback for both, rather than
+adding a second one, keeps "Space always means play/pause, but the exact
+shape depends on whether a sentence is in focus" as a single decision
+point instead of two independently-triggered code paths that could drift
+out of sync with each other.

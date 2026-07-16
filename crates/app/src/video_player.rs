@@ -235,6 +235,28 @@ impl VideoPlayer {
         inner.pause_at = Some(command.end);
     }
 
+    /// Plain play/pause toggle, unbounded — no seek, no `pause_at` armed to
+    /// auto-stop at any particular point. Used for Space when there's no
+    /// current cue to bound playback to: `Normal` mode (no per-sentence
+    /// span makes sense there), or `SentenceBySentence` mode before any
+    /// subtitle is linked. Called from `main.rs`'s `repeat-cue` callback
+    /// handler alongside [`toggle_play_span`](Self::toggle_play_span) — see
+    /// its doc comment for which of the two a given Space press uses.
+    pub fn toggle_playback(&self) {
+        let mut inner = self.inner.borrow_mut();
+        let mpv = inner.mpv;
+        let is_playing = mpv
+            .get_property::<bool>("pause")
+            .map(|paused| !paused)
+            .unwrap_or(false);
+        if let Err(err) = mpv.set_property("pause", is_playing) {
+            tracing::error!(%err, "failed to toggle mpv playback");
+        }
+        if is_playing {
+            inner.pause_at = None;
+        }
+    }
+
     /// Loads `video_path` into this already-attached `VideoPlayer` — used
     /// for every video load, including the one `attach`'s `video_path` names
     /// (if any) as well as later Open Video dialog picks (`TODO.md` Vaihe

@@ -580,10 +580,11 @@ component FileListDialog {
 /// `AppWindow`'s `key-pressed` callback and drive
 /// `next-cue`/`previous-cue`/`repeat-cue`, wired to `playback-state`
 /// navigation and mpv seeking in `crates/app/src/main.rs` and
-/// `video_player.rs`. Ctrl+T calls `toggle-translation` directly — it also
-/// works outside `SentenceBySentence` mode (translation visibility is
-/// purely visual, per README), it's just only *advertised* here since this
-/// is the app's only hint surface so far.
+/// `video_player.rs`. Ctrl+T calls `toggle-translation` directly, and Space
+/// (play/pause) also works outside `SentenceBySentence` mode — both are
+/// just only *advertised* here since this is the app's only hint surface
+/// so far (`Normal` mode's own hint bar content is `TODO.md` Vaihe 21,
+/// still open).
 component HintBar {
     height: 34px;
 
@@ -1144,7 +1145,8 @@ export component AppWindow inherits Window {
     // playback_state::PlayerState::toggle_translation().
     callback toggle-translation();
     // Sentence-by-sentence navigation, invoked by `nav-focus`'s key-pressed
-    // handler below for Right/Left/Space respectively — see
+    // handler below for Right/Left (SentenceBySentence mode only) and
+    // Space (both modes, repeat-cue only) respectively — see
     // `crates/app/src/main.rs` for how they drive `playback-state` and mpv.
     callback next-cue();
     callback previous-cue();
@@ -1268,9 +1270,18 @@ export component AppWindow inherits Window {
                 // Translation visibility is purely visual and independent
                 // of playback mode (see README), so Ctrl+T is handled
                 // before the sentence-mode-active guard below, unlike
-                // Right/Left/Space which only make sense in
-                // SentenceBySentence mode.
+                // Right/Left which only make sense in SentenceBySentence
+                // mode.
                 root.toggle-translation();
+                accept
+            } else if (event.text == " ") {
+                // Space (play/pause) works in both modes — see
+                // repeat-cue's doc comment for why it's the same callback
+                // as Sentence-by-sentence's "replay current cue": the Rust
+                // handler falls back to a plain toggle when there's no
+                // current cue to bound playback to (Normal mode, or no
+                // subtitle linked yet).
+                root.repeat-cue();
                 accept
             } else if (!root.sentence-mode-active) {
                 reject
@@ -1279,9 +1290,6 @@ export component AppWindow inherits Window {
                 accept
             } else if (event.text == Key.LeftArrow) {
                 root.previous-cue();
-                accept
-            } else if (event.text == " ") {
-                root.repeat-cue();
                 accept
             } else {
                 reject

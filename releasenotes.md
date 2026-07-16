@@ -9,6 +9,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.32] - 2026-07-15
+
+### Added
+- `crates/app/src/video_player.rs`: `VideoPlayer::toggle_playback` — a plain, unbounded play/pause toggle (no seek, no `pause_at` armed), used when there's no current cue to bound playback to
+
+### Fixed
+- Space (play/pause) didn't work in `Normal` mode at all — combined with "no mode autoplays" (0.1.30/0.1.29), this meant a video opened in `Normal` mode, or in `SentenceBySentence` mode before any subtitle was linked, could never be started. Right/Left/Space were all gated behind `sentence-mode-active` in `app-window.slint`'s `key-pressed` handler; Space is now pulled out from behind that guard (Right/Left stay gated — cue navigation still needs `TODO.md` Vaihe 21's `Normal` mode work). `main.rs`'s `repeat-cue` handler (the one callback Space always invokes) now falls back to `toggle_playback` when `PlayerState::repeat_current_cue` returns `None`, instead of doing nothing
+
 ## [0.1.31] - 2026-07-15
 
 ### Fixed

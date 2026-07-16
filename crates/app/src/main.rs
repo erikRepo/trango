@@ -76,8 +76,8 @@ fn wire_player_state(window: &AppWindow) -> Rc<RefCell<PlayerState>> {
 
 /// Wires the window's `next-cue`, `previous-cue`, `repeat-cue`, and
 /// `jump-to-cue` callbacks — invoked by `app-window.slint`'s `key-pressed`
-/// handler for Right/Left/Space while in `SentenceBySentence` mode, and by
-/// the sentence list's row clicks, respectively.
+/// handler for Right/Left (`SentenceBySentence` mode only) and Space
+/// (both modes), and by the sentence list's row clicks, respectively.
 ///
 /// `next-cue`/`previous-cue`/`jump-to-cue` land on a different cue's start
 /// and always leave mpv paused there — no mode autoplays on navigation
@@ -86,10 +86,14 @@ fn wire_player_state(window: &AppWindow) -> Rc<RefCell<PlayerState>> {
 /// produced `SeekCommand` to `video_player::VideoPlayer::seek_and_pause`.
 ///
 /// `repeat-cue` (Space) doesn't move the cursor, so it skips the sentence
-/// card/list refresh entirely: it hands `PlayerState::repeat_current_cue`'s
-/// `PlaySpanCommand` straight to `video_player::VideoPlayer::toggle_play_span`,
-/// which decides whether that means starting playback or pausing an
-/// already-playing span early based on mpv's live state.
+/// card/list refresh entirely. If a cue is currently in focus
+/// (`PlayerState::repeat_current_cue` returns `Some`), it hands that
+/// `PlaySpanCommand` to `video_player::VideoPlayer::toggle_play_span`,
+/// which plays/replays that cue's bounded span. Otherwise — `Normal` mode,
+/// or `SentenceBySentence` mode before any subtitle is linked, where no
+/// single cue's span is the relevant unit — it falls back to
+/// `video_player::VideoPlayer::toggle_playback`, a plain unbounded
+/// play/pause toggle.
 fn wire_cue_navigation(
     window: &AppWindow,
     state: &Rc<RefCell<PlayerState>>,
@@ -110,10 +114,9 @@ fn wire_cue_navigation(
 
     let repeat_state = Rc::clone(state);
     let repeat_video_player = Rc::clone(&video_player);
-    window.on_repeat_cue(move || {
-        if let Some(command) = repeat_state.borrow().repeat_current_cue() {
-            repeat_video_player.toggle_play_span(command);
-        }
+    window.on_repeat_cue(move || match repeat_state.borrow().repeat_current_cue() {
+        Some(command) => repeat_video_player.toggle_play_span(command),
+        None => repeat_video_player.toggle_playback(),
     });
 
     let jump_state = Rc::clone(state);
