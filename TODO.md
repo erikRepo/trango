@@ -522,9 +522,187 @@ kieltä Ollama-promptissa.
 
 ---
 
+## Huom: Vaiheet 25–31 jakavat yhden työhaaran
+
+Poiketen CLAUDE.md:n oletustyönkulusta (oma feature-branch + PR per vaihe):
+Vaiheet 25–31 tehdään **samalla työhaaralla** alusta loppuun, koska ne
+muodostavat yhden loogisen kokonaisuuden (system-audio-pohjainen
+live-tekstitysgenerointi). Jokaisen vaiheen jälkeen tehdään silti commit +
+push samalle haaralle normaalisti (CLAUDE.md:n "valmis"-kriteerit pätevät
+muuten sellaisenaan). `gh pr create` ajetaan vasta kun käyttäjä erikseen
+pyytää PR:n avaamista — ei automaattisesti minkään yksittäisen vaiheen
+jälkeen.
+
+---
+
+## Vaihe 25 — `PlaybackMode`: kolmas tila "No video" (pelkkä tekstitys)
+
+**Tavoite:** `PlaybackMode`-enumiin kolmas variantti pelkän tekstitystiedoston
+ajamiselle ilman videota — puhdas tilalaajennus, ei vielä audiokaappausta
+eikä generointia. Pohjustaa Vaiheet 26–31.
+
+Taustaa (keskusteltu, ei alun perin SPEC.md:ssä): tavoite on tuottaa
+tekstitystiedosto ilman että sovellus koskaan lataa tai tallentaa itse
+videota/audiota mistään ulkopuolisesta lähteestä (esim. YouTube) — vain
+käyttäjän omalta koneelta jo soivan äänen kaappaus, ja pelkkä lopputulos-
+`.srt` jää talteen. Sekä YouTuben videon suora toisto/lataus (`yt-dlp`) että
+YouTuben valmiiden tekstitysten kaappaaminen harkittiin ja hylättiin
+tekijänoikeussyistä (kirjaa päätös `docs/src/developer/specs.md`:hen tämän
+vaiheen yhteydessä, ks. myös alla "Ei tässä listassa").
+
+- `crates/playback-state`: `PlaybackMode { Normal, SentenceBySentence, NoVideo }`
+  (tai vastaava nimi — päätä tässä vaiheessa), `PlayerState` toimii jo nyt
+  ilman video-riippuvuutta (`cues`-kenttä ei koskaan viitannut videoon),
+  joten tämä on lähinnä UI-puolen laajennus
+- Top bar segmented control: kolmas segmentti "No video" (tai oma nappi
+  erillään Normal/SbS-parista — päätä visuaalinen ratkaisu tässä vaiheessa,
+  ei ole mockissa valmiina)
+- Slint: video-widgetin paikalle vaihtoehtoinen paneeli tässä tilassa (tyhjä
+  placeholder riittää tässä vaiheessa — sisältö tulee Vaiheessa 29)
+- Sentence list ja Ctrl+A pysyvät kytkettyinä samaan `PlayerState.cues`:iin
+  kuin ennenkin — ei muutoksia niihin tässä vaiheessa (validointi Vaihe 31:ssä)
+
+**Voit ajaa/testata:** `cargo test -p playback-state` kattaa uuden
+tilavaihdon; `cargo run -p trango` — top barista voi valita "No video"
+-tilan, video-alue korvautuu placeholderilla, sentence list pysyy tyhjänä
+kunnes cueita on ladattu.
+
+---
+
+## Vaihe 26 — Järjestelmä-audion kaappaus taustalla (ilman VAD/whisperia)
+
+**Tavoite:** Taustaprosessi joka nauhoittaa PC:n ulostulevan äänen (esim.
+selaimessa soivan YouTube-videon) WAV-tiedostoon/-virtaan, ilman
+transkriptiota vielä — puhdas kaappauskomponentti, testattavissa erikseen
+tallentamalla lyhyt nauhoite ja tarkistamalla tiedosto syntyy.
+
+- Kaappaus `ffmpeg -f pulse -i <monitor-source>` -aliprosessina (sama
+  kuvio kuin `extract_audio`:ssa Vaiheessa 21.5, ei uutta Cargo-
+  riippuvuutta) — monitorilähteen tunnistus/oletus `pactl`:n kautta tai
+  konfiguroitava `config.toml`:iin jos autodetect ei ole luotettava.
+  **Kysy käyttäjältä ensin** jos päädytään käyttämään audiokirjastoa
+  (esim. `cpal`) suoran ffmpeg-subprosessin sijaan
+- Vain Linux/PulseAudio-PipeWire tässä vaiheessa — dokumentoi
+  `docs/src/architecture/`-sivulla ettei Windows/macOS-tukea ole vielä
+  (poikkeus CLAUDE.md:n "molemmat alustat" -periaatteeseen, koska
+  audiokaappaus on alustariippuvaisempi kuin `Command::new`-kutsu)
+- Ctrl+Space käynnistää/pysäyttää kaappauksen (pelkkä start/stop-signaali
+  tässä vaiheessa, ei vielä UI-tilaa näkyvissä — se on Vaihe 29)
+
+**Voit ajaa/testata:** `cargo run -p trango` No video -tilassa, Ctrl+Space
+käynnistää ja pysäyttää nauhoituksen — manuaalisesti todennettavissa että
+WAV-tiedosto syntyy ja sisältää soineen äänen (kuten Vaihe 11, ei helposti
+yksikkötestattavissa laitteistoriippuvuuden takia).
+
+---
+
+## Vaihe 27 — VAD-segmentointi kaapatusta audiosta
+
+**Tavoite:** Jatkuva audiovirta pilkotaan puhesegmenteiksi taukojen
+kohdalta, jotta whisper saa järkevän kokoisia, lauserajoihin osuvia paloja
+(ei kiinteää liukuvaa ikkunaa — kiinteä ikkuna tuottaa katkonaisia/
+toistuvia tuloksia lauserajoilla).
+
+- Selvitä ja **kysy käyttäjältä** ennen valintaa: whisper.cpp:n oma
+  `--vad`/`--vad-model`-tuki (jos ajettavassa whisper-cli-versiossa
+  saatavilla) vs. erillinen VAD-kirjasto/-crate (esim. `webrtc-vad`) vs.
+  yksinkertainen energiakynnys-pohjainen oma toteutus. Ensimmäinen
+  vaihtoehto olisi linjassa Vaiheen 21.5 periaatteen kanssa (ei uutta
+  Cargo-riippuvuutta, ulkoinen työkalu hoitaa raskaan työn)
+- Segmentin raja tuottaa audiopätkän + aikaleiman (suhteessa nauhoituksen
+  alkuun) seuraavalle vaiheelle
+
+**Voit ajaa/testata:** Yksikkötestit segmentointilogiikalle syntetisoidulla/
+testifixtuuri-audiolla (hiljaisuus-puhe-hiljaisuus-kuvio) — tarkistaa että
+segmenttirajat osuvat odotettuihin kohtiin.
+
+---
+
+## Vaihe 28 — Per-segmentti whisper-cli-transkriptio → live cue-lista
+
+**Tavoite:** Jokainen VAD:n tuottama segmentti transkriboidaan omana
+whisper-cli-kutsunaan (sama kuvio kuin Vaihe 21.5:ssä, vain useammin ja
+lyhyemmille pätkille), tulos liitetään `PlayerState.cues`:iin lennossa —
+sentence list päivittyy automaattisesti koska se lukee samaa dataa.
+
+- Segmentin WAV poistetaan heti transkription jälkeen — **ei audiota jää
+  levylle prosessin päätyttyä**, vain lopullinen `.srt` (sama periaate
+  kuin `generate()`:n siivous Vaiheessa 21.5, mutta per-segmentti eikä
+  vain lopussa)
+- Cuen `start`/`end`-aikaleimat suhteessa nauhoituksen alkuhetkeen
+- Taustasäie (kuten Vaihe 21.5), UI ei jäädy pitkän nauhoituksen aikana
+
+**Voit ajaa/testata:** `cargo run -p trango` No video -tilassa — puhuttu
+ääni (tai toistettu testivideo taustalla) tuottaa uusia rivejä sentence
+listiin muutaman sekunnin viiveellä; levyltä tarkistettavissa ettei
+väliaikaisia WAV-tiedostoja jää roikkumaan ajon jälkeen.
+
+---
+
+## Vaihe 29 — Rec/stop-ohjaus, tiedostonimi ja tallennuskansio
+
+**Tavoite:** No video -tilan paneeliin näkyvä rec/stop-kontrolli,
+tiedostonimen näyttö ja hallinta, kansion persistointi.
+
+- Video-widgetin paikalla oleva paneeli näyttää: rec/stop-tila (Ctrl+Space
+  kytkettynä samaan komentoon kuin nappi), kohdetiedoston nimi
+- Oletustiedostonimi päiväys+aikaleima (esim. `2026-07-16_18-42-05.srt`),
+  lukittu nauhoituksen ajaksi; uudelleennimeäminen sallittu vasta stopin
+  jälkeen
+- `config.rs`: uusi `subtitle_recording_folder: Option<PathBuf>` samalla
+  periaatteella kuin `video_folder` — muistaa viimeksi käytetyn kansion,
+  oletuksena sinne seuraavallakin kerralla
+
+**Voit ajaa/testata:** `cargo run -p trango` — Ctrl+Space tai nappi
+käynnistää nauhoituksen, tiedostonimi näkyy paneelissa koko ajan, stopin
+jälkeen nimeä voi muokata, ja seuraava nauhoitus ehdottaa oletuksena
+samaa kansiota kuin edellinen.
+
+---
+
+## Vaihe 30 — Jäljessä-mittari (transkription lag-indikaattori)
+
+**Tavoite:** Näkyvä indikaattori siitä kuinka paljon transkriptio on
+jäljessä kaapatusta äänestä (kaapattu aika − viimeksi transkriboidun cuen
+loppuaika).
+
+- Yksinkertainen teksti tai palkki paneelissa ("7s jäljessä"), päivittyy
+  jokaisen uuden cuen myötä (Vaihe 28:n dataa, ei uutta laskentaa
+  tarvitse muualta)
+
+**Voit ajaa/testata:** `cargo run -p trango` — nopeasti puhuttu pätkä
+kasvattaa lag-lukemaa hetkellisesti, palautuu kun whisper saa kiinni.
+
+---
+
+## Vaihe 31 — Validointi: sentence list ja Ctrl+A ilman videota
+
+**Tavoite:** Varmista ja dokumentoi (ei uutta toiminnallisuutta
+odotettavasti) että kaikki cue-pohjaiset ominaisuudet — sentence list,
+Ctrl+A-sana-analyysi, käännöstoggle — toimivat identtisesti No video
+-tilassa kuin video-tiloissa, koska ne eivät koskaan riippuneet videosta.
+
+- E2E-testi (kuten Vaihe 13): lataa/generoi cuet ilman videota, aja
+  navigointi + Ctrl+A-analyysi läpi samalla tavalla kuin video-tiloissa
+- Jos jokin osa yllättäen riippuukin videon olemassaolosta (esim. joku
+  `Option`-purku joka olettaa videon ladatuksi), korjaa se tässä vaiheessa
+
+**Voit ajaa/testata:** `scripts/test.sh` — uusi E2E-testi vahvistaa cue-
+pohjaisten ominaisuuksien toimivan ilman videota; manuaalinen läpikäynti
+No video -tilassa: sentence list scrollautuu/korostaa, Ctrl+A avaa
+analyysin, käännöstoggle toimii jos käännösanalyysi on ajettu.
+
+---
+
 ## Ei tässä listassa (myöhempää harkintaa)
 
 - Kansion vaihto Open Video -dialogissa natiivilla kansiovalitsimella
 - Oikea on-device STT-toteutus (Vaihe 20 on vain rajapinta + stub)
 - Video/tiedostotyyppi-ikonien lopulliset assetit (README: "source real icons... when implementing")
 - Pelkän ruudunkaappaus-/pikselivertailu-automaation rakentaminen (Vaihe 22 tehdään manuaalisesti toistaiseksi)
+- YouTuben videon suora lataus/toisto (esim. `yt-dlp` + mpv:n `ytdl_hook`) —
+  harkittu ja hylätty tekijänoikeussyistä (ks. Vaihe 25 tausta)
+- YouTuben valmiiden tekstitysten kaappaus (`yt-dlp --write-auto-sub
+  --skip-download`) — harkittu, ei valittu; järjestelmä-audion kaappaus
+  (Vaiheet 26–31) valittiin sen sijaan, koska se toimii kaikille
+  äänilähteille eikä riipu YouTube-spesifisestä rajapinnasta
