@@ -38,6 +38,16 @@ export enum SubtitleGenerationStatus {
     Error,
 }
 
+/// State of the "Analyze all sentences" batch loop (`TODO.md` Vaihe 24,
+/// part 4/6) — mirrors `SubtitleGenerationStatus`'s Idle/running/Done/Error
+/// shape. Set from Rust by `crates/app/src/word_analysis.rs`.
+export enum WordAnalysisBatchStatus {
+    Idle,
+    Running,
+    Done,
+    Error,
+}
+
 /// One pill in the top bar's Normal / Sentence-by-sentence segmented
 /// control; filled with the accent color while `active`, muted otherwise.
 component SegmentButton {
@@ -820,9 +830,14 @@ component OpenSubtitlesDialog {
     in property <string> translation-name;
     in property <bool> ollama-model-selected: false;
     in property <string> ollama-model-name: "";
+    in property <WordAnalysisBatchStatus> word-analysis-batch-status: WordAnalysisBatchStatus.Idle;
+    in property <int> word-analysis-batch-progress-current: 0;
+    in property <int> word-analysis-batch-progress-total: 0;
+    in property <string> word-analysis-batch-error-message: "";
     callback generate-subtitles();
     callback select-model();
     callback select-ollama-model();
+    callback analyze-all-sentences();
     callback link-translation();
     callback cancel();
     callback confirm();
@@ -836,7 +851,7 @@ component OpenSubtitlesDialog {
 
         Rectangle {
             width: 640px;
-            height: 470px;
+            height: 520px;
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
             background: Palette.modal-bg;
@@ -1070,6 +1085,47 @@ component OpenSubtitlesDialog {
                             TouchArea {
                                 clicked => { root.select-ollama-model(); }
                             }
+                        }
+
+                        Rectangle {
+                            border-radius: 6px;
+                            background: Palette.accent;
+                            opacity: root.word-analysis-batch-status == WordAnalysisBatchStatus.Running || !root.ollama-model-selected ? 0.55 : 1.0;
+
+                            HorizontalLayout {
+                                padding-left: 14px;
+                                padding-right: 14px;
+                                padding-top: 8px;
+                                padding-bottom: 8px;
+
+                                Text {
+                                    text: root.word-analysis-batch-status == WordAnalysisBatchStatus.Running
+                                        ? "Analyzing " + root.word-analysis-batch-progress-current + " / " + root.word-analysis-batch-progress-total + "…"
+                                        : root.word-analysis-batch-status == WordAnalysisBatchStatus.Error
+                                            ? "Try again"
+                                            : root.word-analysis-batch-status == WordAnalysisBatchStatus.Done
+                                                ? "Analyzed all sentences"
+                                                : "Analyze all sentences";
+                                    color: white;
+                                    font-family: "Inter";
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            TouchArea {
+                                enabled: root.word-analysis-batch-status != WordAnalysisBatchStatus.Running && root.ollama-model-selected;
+                                clicked => { root.analyze-all-sentences(); }
+                            }
+                        }
+
+                        if root.word-analysis-batch-status == WordAnalysisBatchStatus.Error && root.word-analysis-batch-error-message != "" : Text {
+                            text: root.word-analysis-batch-error-message;
+                            color: Palette.error-text;
+                            font-family: "Inter";
+                            font-size: 12px;
+                            wrap: word-wrap;
                         }
                     }
 
@@ -1333,6 +1389,14 @@ export component AppWindow inherits Window {
     callback select-ollama-model-picker-row(int);
     callback cancel-ollama-model-picker-dialog();
     callback confirm-ollama-model-picker-dialog();
+    // "Analyze all sentences" batch loop (TODO.md Vaihe 24, part 4/6): runs
+    // word-by-word analysis for every cue not already in the subtitle's
+    // cache file. Set from Rust by crates/app/src/word_analysis.rs.
+    callback analyze-all-requested();
+    in property <WordAnalysisBatchStatus> word-analysis-batch-status: WordAnalysisBatchStatus.Idle;
+    in property <int> word-analysis-batch-progress-current: 0;
+    in property <int> word-analysis-batch-progress-total: 0;
+    in property <string> word-analysis-batch-error-message: "";
 
     title: "TrangoPlayer v" + version;
     // `preferred-width`/`-height`, not `width`/`height`: per Slint's
@@ -1556,9 +1620,14 @@ export component AppWindow inherits Window {
             translation-name: root.open-subtitles-translation-name;
             ollama-model-selected: root.ollama-model-selected;
             ollama-model-name: root.ollama-model-name;
+            word-analysis-batch-status: root.word-analysis-batch-status;
+            word-analysis-batch-progress-current: root.word-analysis-batch-progress-current;
+            word-analysis-batch-progress-total: root.word-analysis-batch-progress-total;
+            word-analysis-batch-error-message: root.word-analysis-batch-error-message;
             generate-subtitles => { root.generate-subtitles-requested(); }
             select-model => { root.select-whisper-model-requested(); }
             select-ollama-model => { root.select-ollama-model-requested(); }
+            analyze-all-sentences => { root.analyze-all-requested(); }
             link-translation => { root.link-translation-requested(); }
             cancel => { root.cancel-open-subtitles-dialog(); }
             confirm => { root.confirm-open-subtitles-dialog(); }

@@ -13,6 +13,7 @@ mod sentence_card;
 mod sentence_list;
 mod subtitle_generation;
 mod video_player;
+mod word_analysis;
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -844,7 +845,7 @@ fn wire_ollama_model_picker(
         let current_model = request_current_model.borrow().clone();
         let callback_window_weak = request_window_weak.clone();
         ollama_model_picker::spawn_list_models(
-            word_analysis::HttpOllamaClient::default(),
+            ::word_analysis::HttpOllamaClient::default(),
             move |result| {
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(window) = callback_window_weak.upgrade() else {
@@ -901,6 +902,79 @@ fn wire_ollama_model_picker(
         let mut config = config::load();
         config.ollama_model = Some(model);
         config::save(&config);
+    });
+}
+
+/// Wires the Open Subtitles dialog's "Analyze all sentences" button
+/// (`TODO.md` Vaihe 24, part 4/6): `analyze-all-requested` runs
+/// `word_analysis::spawn_batch_analyze` over every cue in the currently
+/// loaded subtitle, saving newly analyzed cues to that subtitle's
+/// `word_analysis::cache_path_for` file as it goes. A no-op (with a
+/// user-visible error) if no Ollama model is selected or no subtitle is
+/// loaded — the button is disabled for the former case already
+/// (`ollama-model-selected`), but the callback still guards it
+/// defensively since Slint's `enabled` is advisory, not enforced.
+fn wire_word_analysis_batch(
+    window: &AppWindow,
+    state: &Rc<RefCell<PlayerState>>,
+    current_media: &Rc<RefCell<CurrentMedia>>,
+    selected_ollama_model: Rc<RefCell<Option<String>>>,
+) {
+    let window_weak = window.as_weak();
+    let state = Rc::clone(state);
+    let current_media = Rc::clone(current_media);
+    window.on_analyze_all_requested(move || {
+        let Some(window) = window_weak.upgrade() else {
+            return;
+        };
+        let Some(model) = selected_ollama_model.borrow().clone() else {
+            tracing::warn!("analyze-all requested with no Ollama model selected");
+            window.set_word_analysis_batch_status(WordAnalysisBatchStatus::Error);
+            window.set_word_analysis_batch_error_message("Select an Ollama model first.".into());
+            return;
+        };
+        let Some(subtitle_path) = current_media.borrow().subtitle_path.clone() else {
+            tracing::warn!("analyze-all requested with no subtitle loaded");
+            window.set_word_analysis_batch_status(WordAnalysisBatchStatus::Error);
+            window.set_word_analysis_batch_error_message("Link a subtitle first.".into());
+            return;
+        };
+        let cues = state.borrow().cues.clone();
+        let cache_path = ::word_analysis::cache_path_for(&subtitle_path);
+        window.set_word_analysis_batch_status(WordAnalysisBatchStatus::Running);
+        window.set_word_analysis_batch_progress_current(0);
+        window.set_word_analysis_batch_progress_total(cues.len() as i32);
+        window.set_word_analysis_batch_error_message("".into());
+
+        // Only Send data may cross into the background thread and back via
+        // slint::invoke_from_event_loop below — see wire_ollama_model_picker's
+        // identical note.
+        let progress_window_weak = window_weak.clone();
+        let done_window_weak = window_weak.clone();
+        word_analysis::spawn_batch_analyze(
+            ::word_analysis::HttpOllamaClient::default(),
+            model,
+            word_analysis::DEFAULT_TARGET_LANGUAGE.to_string(),
+            cues,
+            cache_path,
+            move |done, total| {
+                let progress_window_weak = progress_window_weak.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(window) = progress_window_weak.upgrade() else {
+                        return;
+                    };
+                    word_analysis::apply_batch_progress(&window, done, total);
+                });
+            },
+            move |result| {
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(window) = done_window_weak.upgrade() else {
+                        return;
+                    };
+                    word_analysis::apply_batch_result(&window, result);
+                });
+            },
+        );
     });
 }
 
@@ -973,6 +1047,12 @@ fn main() -> anyhow::Result<()> {
         window.set_ollama_model_name(model.into());
     }
     wire_ollama_model_picker(&window, Rc::clone(&selected_ollama_model));
+    wire_word_analysis_batch(
+        &window,
+        &player_state,
+        &current_media,
+        Rc::clone(&selected_ollama_model),
+    );
 
     let reload_video_player = Rc::clone(&video_player);
     wire_open_subtitles_dialog(

@@ -9,6 +9,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.38] - 2026-07-16
+
+### Added
+- Open Subtitles dialog: "Analyze all sentences" button (TODO.md Vaihe 24, part 4/6) — new `crates/app/src/word_analysis.rs`'s `spawn_batch_analyze` loops every cue in the currently linked subtitle on a background thread, skipping cues already present in that subtitle's `.wordanalysis.json` cache file and saving newly analyzed ones to it as it goes (not just once at the end, so an interrupted run keeps what it already finished). A cue that fails to analyze is logged and skipped rather than aborting the whole run. Progress ("Analyzing N / M…") and errors surface inline on the button; disabled until an Ollama model is selected
+
 ## [0.1.37] - 2026-07-16
 
 ### Added
