@@ -35,3 +35,15 @@ for the rest.
   interactions, state).
 - [STYLE.md](STYLE.md) — the original visual design reference and design
   tokens.
+
+## License and Contributions
+
+Copyright (C) 2026 Erik Repo. All rights reserved.
+
+- This code is public for viewing only. No permission is granted to copy,
+  modify, or distribute this software in other projects.
+- Contributions (Pull Requests) are welcome! By submitting a Pull Request,
+  you agree that your contributions will be licensed under the same terms
+  as the rest of the project.
+
+See [LICENSE](LICENSE) for the full text.
