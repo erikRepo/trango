@@ -774,3 +774,52 @@ Two deliberate differences from the cue-navigation seeks
 `toggle_play_span`'s doc comment), the same as `seek_and_pause` — a
 manual seek elsewhere invalidates whatever bounded cue-span Space last
 armed, regardless of which of the three seek paths caused it.
+
+## Normal mode's sentence-panel behavior: live time-pos syncing
+
+The last open item of `TODO.md` Vaihe 21. Reported directly: in `Normal`
+mode, Ctrl+A word analysis showed the wrong sentence once the video had
+played past the one that was current when the mode was entered (or last
+navigated to) — because `current_cue_index` genuinely never moved on its
+own outside of explicit navigation (`next_cue`/`previous_cue`/
+`jump_to_cue`), and `Normal` mode has no such navigation wired to arrow
+keys. `wire_word_analysis_popup` (`main.rs`) reads `current_cue_index`
+directly, so a stale cursor meant a stale analysis — and the
+current-sentence card itself was equally stale, just less noticeable
+since nothing else depended on it being right in `Normal` mode until now.
+
+This is exactly the scenario "`sync_current_sentence` removed entirely"
+(above) anticipated: `Normal` mode's continuous, un-bounded playback is
+the one case where the cursor needs to be *rediscovered* from mpv's live
+`time-pos` rather than only being set by an explicit action. Per that
+section's own conclusion, this was designed fresh rather than reviving
+the removed `sync_current_sentence`/`sync_cue_to_time` as-is:
+
+- `playback_state::PlayerState` gained a new `sync_cue_to_time(time) ->
+  bool` — the same "latest cue whose start is at-or-before `time`" lookup
+  the old, removed method used (the math itself was never the bug), but
+  now returning whether the cursor actually changed, so the caller can
+  skip rebuilding the sentence list on ticks where it didn't.
+- `video_player.rs` gained `sync_current_sentence_normal_mode`, called on
+  every `SCRUB_BAR_POLL_INTERVAL` tick alongside `poll_scrub_bar`/
+  `apply_pending_pause`/`apply_pending_start_seek`. It's a no-op outside
+  `Normal` mode — the exact guard the old, removed mechanism was missing
+  when it broke `SentenceBySentence`'s Space replay. Crucially, `Normal`
+  mode never arms a bounded `pause_at` span in the first place
+  (`repeat_current_cue` returns `None` there, so `main.rs`'s `repeat-cue`
+  handler falls back to the unbounded `toggle_playback`), so the specific
+  race that broke the old mechanism — this sync and `apply_pending_pause`
+  both reading/mutating state in the same poll tick, one clearing
+  `pause_at` a moment too late — structurally cannot happen here: there's
+  no `pause_at` in `Normal` mode for it to race against.
+- On a change, it mirrors the new cue into both the current-sentence card
+  and the sentence list (via `sentence_card::update_sentence_card`/
+  `sentence_list::update_sentence_list`, imported into `video_player.rs`
+  directly — restoring the same cross-module wiring the original
+  `sync_current_sentence` used, before it was removed).
+
+Scope note: this only fixes *live tracking during continuous playback and
+scrub-bar seeking* in `Normal` mode. It doesn't change what the
+sentence-panel *looks like* or whether it should be hidden/collapsed in
+`Normal` mode at all — that broader "should the panel even show while not
+in `SentenceBySentence` mode" design question remains open.

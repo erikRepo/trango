@@ -339,7 +339,12 @@ käytöksen tekijän päätettäväksi — dokumentoi valinta `docs/src/specs/`)
   `docs/src/developer/specs.md` "Normal mode's own hint bar content")
 - [x] Scrub bar raahattavissa/klikattavissa seekaamiseen (ks.
   `docs/src/developer/specs.md` "Scrub bar drag-to-seek")
-- [ ] Sentence-panelin käytös Normal-moodissa — avoin päätös yhä
+- [x] Sentence-panel (current-sentence card, sentence list, Ctrl+A word
+  analysis) seuraa nyt jatkuvaa toistoa Normal-moodissa live time-pos:in
+  perusteella (ks. `docs/src/developer/specs.md` "Normal mode's
+  sentence-panel behavior: live time-pos syncing"). Avoimena vain
+  laajempi kysymys pitäisikö paneeli ylipäätään näyttää/piiloutua
+  Normal-moodissa — nykyinen käytös (aina näkyvissä) säilyy toistaiseksi
 
 **Voit ajaa/testata:** `cargo run -p trango -- video.mp4 subs.srt` — Normal-moodissa toisto jatkuu keskeytyksettä, hint bar näyttää oikean sisällön moodin mukaan, scrub baria voi raahata/klikata seekatakseen.
 

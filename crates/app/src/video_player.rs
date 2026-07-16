@@ -13,11 +13,13 @@
 //! just drew remains visible.
 //!
 //! Separately, a repeating `slint::Timer` polls mpv's `time-pos`/`duration`
-//! properties (see `poll_scrub_bar`) to drive the scrub bar. This is a
-//! second, independent way of talking to mpv alongside the rendering
-//! notifier above — plain property reads, not tied to the render/GL loop —
-//! kept simple rather than wiring up `Mpv`'s event-context/`observe_property`
-//! API for just two properties.
+//! properties (see `poll_scrub_bar`) to drive the scrub bar, and — in
+//! `Normal` mode — the current-sentence card/list (see
+//! `sync_current_sentence_normal_mode`). This is a second, independent way
+//! of talking to mpv alongside the rendering notifier above — plain
+//! property reads, not tied to the render/GL loop — kept simple rather than
+//! wiring up `Mpv`'s event-context/`observe_property` API for just a
+//! handful of properties.
 
 mod gl_proc_address_bridge;
 mod gl_video_surface;
@@ -38,6 +40,8 @@ use gl_proc_address_bridge::{
 };
 use gl_video_surface::{GlFns, VideoSurface};
 
+use crate::sentence_card::update_sentence_card;
+use crate::sentence_list::update_sentence_list;
 use crate::AppWindow;
 
 /// How often the scrub bar's `Timer` re-reads mpv's `time-pos`/`duration`
@@ -201,10 +205,12 @@ impl VideoPlayer {
         let scrub_bar_timer = Timer::default();
         let poll_inner = Rc::clone(&inner);
         let poll_window_weak = window.as_weak();
+        let poll_player_state = Rc::clone(&player_state);
         scrub_bar_timer.start(TimerMode::Repeated, SCRUB_BAR_POLL_INTERVAL, move || {
             poll_scrub_bar(&poll_inner, &poll_window_weak);
             apply_pending_pause(&poll_inner);
             apply_pending_start_seek(&poll_inner);
+            sync_current_sentence_normal_mode(&poll_inner, &poll_player_state, &poll_window_weak);
         });
 
         Ok(Self {
@@ -424,6 +430,50 @@ fn apply_pending_start_seek(inner: &Rc<RefCell<VideoPlayerInner>>) {
         tracing::error!(%err, "failed to seek mpv to first cue's start");
     }
     inner.pending_start_seek = None;
+}
+
+/// While `player_state` is in `Normal` mode, syncs `current_cue_index` to
+/// mpv's live `time-pos` (`PlayerState::sync_cue_to_time`) and mirrors the
+/// resulting cue into the window's current-sentence card — and, only when
+/// the cursor actually moved, the sentence list too, since rebuilding its
+/// model on every tick regardless would be pointless churn. This is what
+/// makes Ctrl+A word analysis (`main.rs`'s `wire_word_analysis_popup`, which
+/// reads `current_cue_index` directly) track the sentence actually playing
+/// in `Normal` mode's continuous playback, instead of staying stuck on
+/// whichever cue was current when the mode was last entered or navigated.
+///
+/// A no-op in `SentenceBySentence` mode — see `docs/src/developer/specs.md`'s
+/// "`sync_current_sentence` removed entirely" for why a near-identical
+/// mechanism, run unconditionally on every tick regardless of mode, broke
+/// Space's replay behavior there. `Normal` mode never arms a bounded
+/// `pause_at` span (`repeat_current_cue` returns `None` there, so
+/// `main.rs`'s `repeat-cue` handler falls back to
+/// [`toggle_playback`](VideoPlayer::toggle_playback), which never touches
+/// `pause_at`), so that failure mode doesn't apply here — there's no
+/// bounded span whose end-of-span pause this could race with. Also a no-op
+/// before mpv has started decoding a file (`time-pos` unavailable). Called
+/// on every `SCRUB_BAR_POLL_INTERVAL` tick by the timer started in
+/// [`VideoPlayer::attach`].
+fn sync_current_sentence_normal_mode(
+    inner: &Rc<RefCell<VideoPlayerInner>>,
+    player_state: &Rc<RefCell<PlayerState>>,
+    window_weak: &Weak<AppWindow>,
+) {
+    let Some(window) = window_weak.upgrade() else {
+        return;
+    };
+    let mut state = player_state.borrow_mut();
+    if state.mode != PlaybackMode::Normal {
+        return;
+    }
+    let Ok(time_pos) = inner.borrow().mpv.get_property::<f64>("time-pos") else {
+        return;
+    };
+    let changed = state.sync_cue_to_time(Duration::from_secs_f64(time_pos.max(0.0)));
+    update_sentence_card(&window, &state);
+    if changed {
+        update_sentence_list(&window, &state);
+    }
 }
 
 /// Maps a scrub-bar `fraction` (0.0-1.0 of the track's width) to an absolute
