@@ -303,6 +303,24 @@ video area's `Rectangle` stays unconditionally instantiated even in
 overlay child inside it, not a swapped-out sibling. Scrub bar and speed
 slider are hidden in `NoVideo` mode since there's no mpv position to show.
 
+## Live transcription: raw PCM pipe, not a growing WAV file
+
+`TODO.md` Vaihe 28 needed samples flowing into `VadSegmenter` as capture
+happens, not just after the fact. Rather than have `ffmpeg` keep writing
+a WAV file that a second thread tails, `AudioCapture::start` now has
+`ffmpeg` stream raw PCM straight to its stdout — no header/buffering
+fragility to reason about, and no audio ever touches disk. `VadSegmenter`
+is constructed *inside* that reader thread rather than passed in:
+`webrtc_vad::Vad` wraps a raw FFI pointer and isn't `Send`, so it can
+never cross into the thread from outside, only be built fresh there.
+Per-segment transcription results reach `PlayerState` through an
+`mpsc` channel drained by a polling `slint::Timer`
+(`live_transcription.rs`), not a Slint invokable callback like subtitle
+generation's `on_subtitle_generated` — `PlayerState` lives behind a
+non-`Send` `Rc<RefCell<_>>`, and segments can complete concurrently in
+any order, which a single invokable-per-result doesn't fit as naturally
+as a drain loop.
+
 ## CI: PR checks and .deb release automation
 
 Pull requests against `master` run `.github/workflows/ci.yml`: fmt +

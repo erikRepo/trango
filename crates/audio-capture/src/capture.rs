@@ -1,20 +1,30 @@
-//! Capturing the system's own audio output as a WAV file.
+//! Capturing the system's own audio output as a live stream of speech
+//! segments.
 
-use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::io::{self, Read, Write};
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crate::error::AudioCaptureError;
+use crate::vad::{SpeechSegment, VadSegmenter};
 
 /// Records the system's outgoing audio (e.g. a video playing in a
-/// browser) to a WAV file via an `ffmpeg -f pulse` subprocess (`TODO.md`
-/// Vaihe 26) — the same external-process pattern as
+/// browser) via an `ffmpeg -f pulse` subprocess (`TODO.md` Vaihe 26) — the
+/// same external-process pattern as
 /// `subtitle::WhisperCliGenerator::extract_audio`, so no new Cargo
 /// dependency was needed. Linux/PulseAudio-PipeWire only for now (see
 /// `docs/src/developer/architecture/system-audio-capture.md`): `pactl` and
 /// `ffmpeg -f pulse` have no equivalent wired up on Windows/macOS.
+///
+/// Rather than writing a container file to disk, `ffmpeg` streams raw
+/// 16kHz mono 16-bit PCM to its stdout, which a background thread reads and
+/// runs through a fresh [`VadSegmenter`] (`TODO.md` Vaihe 27/28) — no audio
+/// ever touches disk here, only the completed [`SpeechSegment`]s handed to
+/// [`AudioCapture::start`]'s callback (per-segment `whisper-cli`
+/// transcription, and any resulting temp WAV, is the caller's concern —
+/// see `subtitle::WhisperCliGenerator::transcribe_segment`).
 pub struct AudioCapture {
     /// Path or bare name of the `ffmpeg` binary used to capture audio.
     /// [`Default::default`] uses `"ffmpeg"`, resolved via `PATH`.
@@ -31,6 +41,9 @@ pub struct AudioCapture {
     pub graceful_stop_timeout: Duration,
     /// The running `ffmpeg` child process, if a capture is in progress.
     child: Option<Child>,
+    /// The thread reading and segmenting `child`'s stdout, if a capture is
+    /// in progress.
+    reader_thread: Option<JoinHandle<()>>,
 }
 
 impl Default for AudioCapture {
@@ -40,6 +53,7 @@ impl Default for AudioCapture {
             pactl_path: PathBuf::from("pactl"),
             graceful_stop_timeout: Duration::from_secs(5),
             child: None,
+            reader_thread: None,
         }
     }
 }
@@ -91,16 +105,20 @@ impl AudioCapture {
         Ok(format!("{sink}.monitor"))
     }
 
-    /// Starts capturing `monitor_source` to `output_path` as a 16kHz mono
-    /// 16-bit PCM WAV file (the same format `subtitle::WhisperCliGenerator`
-    /// extracts for `whisper-cli`, since this capture is meant to feed the
-    /// same pipeline later). Returns [`AudioCaptureError::AlreadyRunning`]
-    /// if a capture is already in progress — call [`AudioCapture::stop`]
-    /// first.
+    /// Starts capturing `monitor_source`'s raw 16kHz mono 16-bit PCM audio,
+    /// running it through a fresh [`VadSegmenter`] on a background thread
+    /// and invoking `on_segment` for each completed [`SpeechSegment`] —
+    /// including, once the stream ends (`stop` is called), whatever
+    /// trailing speech was still in progress. `on_segment` runs on that
+    /// background thread, not the caller's — it should return quickly
+    /// (spawning further work of its own if transcription is needed) so it
+    /// doesn't stall the capture. Returns
+    /// [`AudioCaptureError::AlreadyRunning`] if a capture is already in
+    /// progress — call [`AudioCapture::stop`] first.
     pub fn start(
         &mut self,
         monitor_source: &str,
-        output_path: &Path,
+        mut on_segment: impl FnMut(SpeechSegment) + Send + 'static,
     ) -> Result<(), AudioCaptureError> {
         if self.child.is_some() {
             return Err(AudioCaptureError::AlreadyRunning);
@@ -108,7 +126,6 @@ impl AudioCapture {
 
         tracing::info!(
             monitor_source,
-            ?output_path,
             ffmpeg = ?self.ffmpeg_path,
             "starting system audio capture"
         );
@@ -123,13 +140,13 @@ impl AudioCapture {
             .arg("16000")
             .arg("-ac")
             .arg("1")
-            .arg("-c:a")
-            .arg("pcm_s16le")
-            .arg(output_path)
+            .arg("-f")
+            .arg("s16le")
+            .arg("pipe:1")
             .stdin(Stdio::piped())
-            .stdout(Stdio::null())
+            .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        let child = run_spawn(&mut command).map_err(|err| {
+        let mut child = run_spawn(&mut command).map_err(|err| {
             if err.kind() == io::ErrorKind::NotFound {
                 AudioCaptureError::CaptureFailed(format!(
                     "ffmpeg not found (looked for \"{}\"). Install ffmpeg and make sure \
@@ -142,16 +159,27 @@ impl AudioCapture {
             }
         })?;
 
+        let stdout = child.stdout.take().ok_or_else(|| {
+            AudioCaptureError::CaptureFailed("ffmpeg's stdout was not piped".to_string())
+        })?;
+        let reader_thread = thread::spawn(move || {
+            feed_pcm_stream(stdout, &mut on_segment);
+        });
+
         self.child = Some(child);
+        self.reader_thread = Some(reader_thread);
         Ok(())
     }
 
     /// Stops the running capture, returning [`AudioCaptureError::NotRunning`]
     /// if none is in progress. Asks `ffmpeg` to quit gracefully by writing
-    /// `q` to its stdin — the same key it reads interactively — so it
-    /// finalizes the WAV file's header correctly instead of leaving it
-    /// truncated; if it hasn't exited by [`Self::graceful_stop_timeout`],
-    /// it's killed outright.
+    /// `q` to its stdin — the same key it reads interactively — before
+    /// falling back to killing it outright if it hasn't exited by
+    /// [`Self::graceful_stop_timeout`]. Either way, `ffmpeg` exiting closes
+    /// its stdout, which lets the reader thread finish (reporting any
+    /// still-in-progress speech segment via `flush`) — `stop` joins that
+    /// thread before returning, so any final segment is always delivered
+    /// before the capture is considered fully stopped.
     pub fn stop(&mut self) -> Result<(), AudioCaptureError> {
         let mut child = self.child.take().ok_or(AudioCaptureError::NotRunning)?;
         tracing::info!("stopping system audio capture");
@@ -161,28 +189,90 @@ impl AudioCapture {
         }
 
         let deadline = Instant::now() + self.graceful_stop_timeout;
-        loop {
+        let result = loop {
             match child.try_wait() {
-                Ok(Some(_status)) => return Ok(()),
+                Ok(Some(_status)) => break Ok(()),
                 Ok(None) if Instant::now() < deadline => {
                     thread::sleep(Duration::from_millis(20));
                 }
                 Ok(None) => {
                     tracing::warn!("ffmpeg did not exit after quit signal, killing it");
                     let _ = child.kill();
-                    return child.wait().map(|_| ()).map_err(|err| {
+                    break child.wait().map(|_| ()).map_err(|err| {
                         AudioCaptureError::CaptureFailed(format!(
                             "failed to wait for ffmpeg after killing it: {err}"
                         ))
                     });
                 }
                 Err(err) => {
-                    return Err(AudioCaptureError::CaptureFailed(format!(
+                    break Err(AudioCaptureError::CaptureFailed(format!(
                         "failed to wait for ffmpeg: {err}"
                     )))
                 }
             }
+        };
+
+        if let Some(handle) = self.reader_thread.take() {
+            let _ = handle.join();
         }
+        result
+    }
+}
+
+/// Decodes a stream of raw little-endian 16-bit PCM bytes into `i16`
+/// samples across arbitrarily-sized reads, carrying over a trailing odd
+/// byte between calls so a sample split across two reads is decoded
+/// correctly instead of dropped.
+#[derive(Default)]
+struct PcmDecoder {
+    leftover: Option<u8>,
+}
+
+impl PcmDecoder {
+    /// Decodes `bytes` into samples, prepending any byte carried over from
+    /// a previous call and carrying over a new trailing odd byte, if any.
+    fn decode(&mut self, bytes: &[u8]) -> Vec<i16> {
+        let mut buf = Vec::with_capacity(bytes.len() + 1);
+        if let Some(leftover) = self.leftover.take() {
+            buf.push(leftover);
+        }
+        buf.extend_from_slice(bytes);
+
+        let mut chunks = buf.chunks_exact(2);
+        let samples = chunks
+            .by_ref()
+            .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect();
+        if let [leftover] = *chunks.remainder() {
+            self.leftover = Some(leftover);
+        }
+        samples
+    }
+}
+
+/// Reads raw little-endian 16-bit PCM from `stream` until it ends, feeding
+/// it through a fresh [`VadSegmenter`] and calling `on_segment` for each
+/// completed speech segment; once `stream` ends, any still-in-progress
+/// speech is flushed and reported too. Pulled out of
+/// [`AudioCapture::start`]'s reader thread as its own function so the
+/// PCM-decoding/segmentation wiring can be unit-tested directly against an
+/// in-memory reader, without spawning a real `ffmpeg` subprocess.
+fn feed_pcm_stream(mut stream: impl Read, on_segment: &mut impl FnMut(SpeechSegment)) {
+    let mut decoder = PcmDecoder::default();
+    let mut segmenter = VadSegmenter::new();
+    let mut buf = [0u8; 4096];
+    loop {
+        match stream.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                for segment in segmenter.push_samples(&decoder.decode(&buf[..n])) {
+                    on_segment(segment);
+                }
+            }
+        }
+    }
+    if let Some(segment) = segmenter.flush() {
+        on_segment(segment);
     }
 }
 
@@ -237,6 +327,9 @@ fn last_stderr_line(stderr: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+    use std::sync::{Arc, Mutex};
+
     use super::*;
 
     /// A fresh temp dir for a test, named after `name` — used as a place
@@ -335,59 +428,70 @@ mod tests {
         std::fs::remove_dir_all(dir).expect("failed to clean up temp test dir");
     }
 
-    /// A fake `ffmpeg` that logs its argv to `"<output path>.args"`, writes
-    /// a marker to the output path, then blocks reading a line from stdin
-    /// (mirroring real `ffmpeg`'s graceful-quit-on-`q` behavior) before
-    /// exiting.
+    /// A fake `ffmpeg` that logs its argv to `dir/args.log` (the raw-PCM
+    /// stdout stream leaves no output path to derive a log name from
+    /// anymore, unlike the old WAV-file version), writes a few PCM sample
+    /// bytes to stdout, then blocks reading a line from stdin (mirroring
+    /// real `ffmpeg`'s graceful-quit-on-`q` behavior) before exiting. Bytes
+    /// are chosen with no zero bytes (`\001\001\002\002\003\003` — i16 LE
+    /// samples 257, 514, 771) since POSIX `printf`'s octal escapes for NUL
+    /// bytes aren't reliably portable across shells.
     #[cfg(unix)]
-    const FAKE_FFMPEG_CAPTURE_SCRIPT: &str = r#"#!/bin/sh
-last=""
-for arg in "$@"; do
-    last="$arg"
-done
-echo "$@" > "${last}.args"
-printf 'fake wav content' > "$last"
-read -r _line
-exit 0
-"#;
+    fn fake_ffmpeg_capture_script(dir: &Path) -> String {
+        format!(
+            "#!/bin/sh\necho \"$@\" > {}/args.log\nprintf '\\001\\001\\002\\002\\003\\003'\nread -r _line\nexit 0\n",
+            dir.display()
+        )
+    }
 
     #[test]
     #[cfg(unix)]
     fn test_start_runs_ffmpeg_with_expected_flags_and_stop_waits_for_graceful_exit() {
-        // Given: a fake ffmpeg (see FAKE_FFMPEG_CAPTURE_SCRIPT) started
-        //        against a monitor source and output path
+        // Given: a fake ffmpeg (see fake_ffmpeg_capture_script) started
+        //        against a monitor source
         // When:  starting, then stopping the capture
         // Then:  ffmpeg was invoked with -f pulse -i <source>, the 16kHz
-        //        mono PCM flags, and the output path; stop() returns Ok
-        //        once the fake process reads the quit signal and exits
+        //        mono raw-PCM-to-stdout flags; stop() returns Ok once the
+        //        fake process reads the quit signal and exits, and the
+        //        samples it wrote to stdout were decoded and delivered
         let dir = test_dir("start-stop-happy-path");
-        let output_path = dir.join("captured.wav");
-        let ffmpeg_path = write_fake_binary(&dir, "fake-ffmpeg.sh", FAKE_FFMPEG_CAPTURE_SCRIPT);
+        let ffmpeg_path =
+            write_fake_binary(&dir, "fake-ffmpeg.sh", &fake_ffmpeg_capture_script(&dir));
         let mut capture = AudioCapture {
             ffmpeg_path,
             graceful_stop_timeout: Duration::from_millis(500),
             ..AudioCapture::default()
         };
+        let received_samples = Arc::new(Mutex::new(Vec::new()));
+        let received_for_callback = Arc::clone(&received_samples);
 
         capture
-            .start("alsa_output.analog-stereo.monitor", &output_path)
+            .start("alsa_output.analog-stereo.monitor", move |segment| {
+                received_for_callback
+                    .lock()
+                    .unwrap()
+                    .extend(segment.samples);
+            })
             .unwrap();
         assert!(capture.is_recording());
 
         capture.stop().unwrap();
         assert!(!capture.is_recording());
 
-        let logged_args = std::fs::read_to_string(format!("{}.args", output_path.display()))
+        let logged_args = std::fs::read_to_string(dir.join("args.log"))
             .expect("fake ffmpeg should have logged its args");
         assert!(logged_args.contains("-f pulse"));
         assert!(logged_args.contains("-i alsa_output.analog-stereo.monitor"));
         assert!(logged_args.contains("-ar 16000"));
         assert!(logged_args.contains("-ac 1"));
-        assert!(logged_args.contains("pcm_s16le"));
-        assert_eq!(
-            std::fs::read_to_string(&output_path).unwrap(),
-            "fake wav content"
-        );
+        assert!(logged_args.contains("-f s16le"));
+        assert!(logged_args.contains("pipe:1"));
+        // The 3 written samples are below VadSegmenter's minimum speech
+        // duration, so they never surface as a SpeechSegment — this test's
+        // job is only to prove the PCM bytes flowed through ffmpeg's stdout
+        // and were captured, not to exercise segmentation (see
+        // feed_pcm_stream's own tests for that).
+        assert!(received_samples.lock().unwrap().is_empty());
 
         std::fs::remove_dir_all(dir).expect("failed to clean up temp test dir");
     }
@@ -405,7 +509,7 @@ exit 0
             ..AudioCapture::default()
         };
 
-        let result = capture.start("some.monitor", &dir.join("out.wav"));
+        let result = capture.start("some.monitor", |_segment| {});
 
         let Err(AudioCaptureError::CaptureFailed(message)) = result else {
             panic!("expected CaptureFailed, got {result:?}");
@@ -425,17 +529,16 @@ exit 0
         // Then:  AlreadyRunning is returned, and the first process is
         //        still the one running (cleaned up via stop() after)
         let dir = test_dir("start-twice");
-        let ffmpeg_path = write_fake_binary(&dir, "fake-ffmpeg.sh", FAKE_FFMPEG_CAPTURE_SCRIPT);
+        let ffmpeg_path =
+            write_fake_binary(&dir, "fake-ffmpeg.sh", &fake_ffmpeg_capture_script(&dir));
         let mut capture = AudioCapture {
             ffmpeg_path,
             graceful_stop_timeout: Duration::from_millis(500),
             ..AudioCapture::default()
         };
-        capture
-            .start("some.monitor", &dir.join("out1.wav"))
-            .unwrap();
+        capture.start("some.monitor", |_segment| {}).unwrap();
 
-        let result = capture.start("some.monitor", &dir.join("out2.wav"));
+        let result = capture.start("some.monitor", |_segment| {});
 
         assert!(matches!(result, Err(AudioCaptureError::AlreadyRunning)));
         capture.stop().unwrap();
@@ -470,12 +573,114 @@ exit 0
             graceful_stop_timeout: Duration::from_millis(100),
             ..AudioCapture::default()
         };
-        capture.start("some.monitor", &dir.join("out.wav")).unwrap();
+        capture.start("some.monitor", |_segment| {}).unwrap();
 
         capture.stop().unwrap();
 
         assert!(!capture.is_recording());
 
         std::fs::remove_dir_all(dir).expect("failed to clean up temp test dir");
+    }
+
+    #[test]
+    fn test_pcm_decoder_carries_partial_sample_across_chunks() {
+        // Given: two i16 LE samples (0x1234, 0x5678) split across two
+        //        decode() calls at a byte boundary that lands mid-sample
+        // When:  decoding both chunks in sequence
+        // Then:  both samples are recovered correctly — the second chunk's
+        //        leading byte is combined with the first chunk's carried
+        //        leftover byte
+        let mut decoder = PcmDecoder::default();
+
+        let first = decoder.decode(&[0x34, 0x12, 0x78]);
+        let second = decoder.decode(&[0x56]);
+
+        assert_eq!(first, vec![0x1234]);
+        assert_eq!(second, vec![0x5678]);
+    }
+
+    #[test]
+    fn test_pcm_decoder_handles_whole_chunks_with_no_leftover() {
+        // Given: a byte stream containing exactly two whole samples
+        // When:  decoding it in one call
+        // Then:  both samples come back and nothing is carried over
+        let mut decoder = PcmDecoder::default();
+
+        let samples = decoder.decode(&[0x01, 0x00, 0x02, 0x00]);
+
+        assert_eq!(samples, vec![1, 2]);
+        assert_eq!(decoder.decode(&[]), Vec::<i16>::new());
+    }
+
+    /// `duration_ms` of silence (all-zero samples) at 16kHz.
+    fn synth_silence(duration_ms: u64) -> Vec<i16> {
+        vec![0i16; duration_ms as usize * 16]
+    }
+
+    /// `duration_ms` of a synthesized multi-harmonic tone, reliably
+    /// classified as voice by `webrtc_vad` — identical technique to
+    /// `vad.rs`'s own tests, since `VadSegmenter`'s `Aggressive` mode
+    /// needs this exact harmonic mix to classify it as speech reliably.
+    fn synth_speech(duration_ms: u64) -> Vec<i16> {
+        let n = duration_ms as usize * 16;
+        (0..n)
+            .map(|i| {
+                let t = i as f32 / 16_000.0;
+                let s = 0.5 * (2.0 * std::f32::consts::PI * 150.0 * t).sin()
+                    + 0.3 * (2.0 * std::f32::consts::PI * 300.0 * t).sin()
+                    + 0.2 * (2.0 * std::f32::consts::PI * 450.0 * t).sin()
+                    + 0.1 * (2.0 * std::f32::consts::PI * 900.0 * t).sin();
+                (s * 8000.0) as i16
+            })
+            .collect()
+    }
+
+    fn samples_to_le_bytes(samples: &[i16]) -> Vec<u8> {
+        samples.iter().flat_map(|s| s.to_le_bytes()).collect()
+    }
+
+    #[test]
+    fn test_feed_pcm_stream_decodes_and_segments_a_synthesized_recording() {
+        // Given: a raw PCM byte stream — silence, then a speech-like tone,
+        //        then closing silence — read from an in-memory Cursor
+        //        instead of a real ffmpeg subprocess
+        // When:  feeding it through feed_pcm_stream
+        // Then:  exactly one SpeechSegment is reported, starting around the
+        //        tone's onset — proving the byte-decode -> VadSegmenter ->
+        //        callback wiring works end to end
+        let mut audio = synth_silence(300);
+        audio.extend(synth_speech(600));
+        audio.extend(synth_silence(900));
+        let bytes = samples_to_le_bytes(&audio);
+
+        let mut segments = Vec::new();
+        feed_pcm_stream(std::io::Cursor::new(bytes), &mut |segment| {
+            segments.push(segment)
+        });
+
+        assert_eq!(segments.len(), 1);
+        assert!(
+            (250..=350).contains(&segments[0].start_ms),
+            "start_ms was {}",
+            segments[0].start_ms
+        );
+    }
+
+    #[test]
+    fn test_feed_pcm_stream_flushes_in_progress_segment_at_end_of_stream() {
+        // Given: a stream that ends mid-speech, without enough trailing
+        //        silence to close the segment on its own
+        // When:  feeding it through feed_pcm_stream
+        // Then:  the in-progress segment is still reported, via flush()
+        let mut audio = synth_silence(300);
+        audio.extend(synth_speech(600));
+        let bytes = samples_to_le_bytes(&audio);
+
+        let mut segments = Vec::new();
+        feed_pcm_stream(std::io::Cursor::new(bytes), &mut |segment| {
+            segments.push(segment)
+        });
+
+        assert_eq!(segments.len(), 1);
     }
 }

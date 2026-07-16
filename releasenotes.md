@@ -9,6 +9,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.54] - 2026-07-16
+
+### Added
+- Per-segment `whisper-cli` transcription wired into "No video" mode's live capture (`TODO.md` Vaihe 28): each speech segment `audio_capture::VadSegmenter` detects is transcribed on its own background thread and appended to the sentence list as it finishes, so speaking (or playing audio) while Ctrl+Space recording is active grows the sentence list live, a few seconds behind. Each segment's temporary WAV/`.srt` is deleted right after parsing — nothing but cues in memory (and the app's own log) survives a segment's transcription. Requires a whisper model to already be selected; starting without one now shows "Select a whisper model first." instead of silently doing nothing
+- `playback_state::PlayerState::push_cues` appends newly transcribed cues to the end of the loaded track, re-indexing them and moving the cursor onto the newest one
+- `subtitle::WhisperCliGenerator::transcribe_segment` transcribes a raw PCM segment directly (no `ffmpeg` extraction needed) and offsets the resulting cues' timestamps by the segment's position in the recording
+
+### Changed
+- `audio_capture::AudioCapture::start`/`stop` no longer write a continuous WAV file to disk — `ffmpeg` now streams raw PCM straight to its stdout, decoded and fed through a `VadSegmenter` on a background thread, with completed speech segments delivered via callback instead. This is what makes live transcription (above) possible; no audio ever touches disk in `audio-capture` anymore
+
 ## [0.1.53] - 2026-07-16
 
 ### Added

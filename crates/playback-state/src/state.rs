@@ -49,6 +49,24 @@ impl PlayerState {
         self.show_translation = !self.show_translation;
     }
 
+    /// Appends live-transcribed cues (`TODO.md` Vaihe 28) to the end of the
+    /// already-loaded ones, re-indexing them to continue the existing
+    /// sequence, and moves the cursor onto the last newly appended cue —
+    /// the most recently transcribed sentence becomes the one shown as
+    /// current, since "No video" mode has no mpv position to sync from.
+    /// Does nothing if `new_cues` is empty.
+    pub fn push_cues(&mut self, new_cues: Vec<Cue>) {
+        if new_cues.is_empty() {
+            return;
+        }
+        let first_index = self.cues.len() as u32 + 1;
+        for (offset, mut cue) in new_cues.into_iter().enumerate() {
+            cue.index = first_index + offset as u32;
+            self.cues.push(cue);
+        }
+        self.current_cue_index = Some(self.cues.len() - 1);
+    }
+
     /// Updates `current_cue_index` to the cue whose start timestamp is the
     /// latest one at or before `time` — i.e. the sentence currently
     /// playing, or the most recently started one if `time` falls in a gap
@@ -160,6 +178,54 @@ mod tests {
 
         assert!(state.cues.is_empty());
         assert_eq!(state.current_cue_index, None);
+    }
+
+    #[test]
+    fn test_push_cues_onto_empty_state_selects_last_cue() {
+        // Given: a fresh state with no cues
+        // When:  pushing two newly transcribed cues
+        // Then:  they're stored, re-indexed from 1, and the cursor selects
+        //        the last one
+        let mut state = PlayerState::new();
+
+        state.push_cues(vec![cue(1, 0, 1_000, "one"), cue(1, 1_000, 2_000, "two")]);
+
+        assert_eq!(state.cues.len(), 2);
+        assert_eq!(state.cues[0].index, 1);
+        assert_eq!(state.cues[1].index, 2);
+        assert_eq!(state.current_cue_index, Some(1));
+    }
+
+    #[test]
+    fn test_push_cues_appends_after_existing_cues_and_continues_indexing() {
+        // Given: a state with one cue already loaded (cursor on it)
+        // When:  pushing one more live-transcribed cue
+        // Then:  the original cue is untouched, the new one is appended
+        //        with the next index, and the cursor moves onto it
+        let mut state = PlayerState::new();
+        state.set_cues(vec![cue(1, 0, 1_000, "one")]);
+
+        state.push_cues(vec![cue(1, 1_000, 2_000, "two")]);
+
+        assert_eq!(state.cues.len(), 2);
+        assert_eq!(state.cues[0].text, "one");
+        assert_eq!(state.cues[1].index, 2);
+        assert_eq!(state.cues[1].text, "two");
+        assert_eq!(state.current_cue_index, Some(1));
+    }
+
+    #[test]
+    fn test_push_cues_with_empty_vec_does_nothing() {
+        // Given: a state with one cue loaded
+        // When:  pushing an empty vec of new cues
+        // Then:  cues and cursor are unchanged
+        let mut state = PlayerState::new();
+        state.set_cues(vec![cue(1, 0, 1_000, "one")]);
+
+        state.push_cues(vec![]);
+
+        assert_eq!(state.cues.len(), 1);
+        assert_eq!(state.current_cue_index, Some(0));
     }
 
     #[test]
