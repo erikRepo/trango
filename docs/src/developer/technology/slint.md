@@ -15,11 +15,13 @@ types `main.rs` instantiates with `slint::include_modules!()`.
   another thread (e.g. a second `#[test]`) fails ("platform was
   initialized in another thread"). All assertions needing a real
   `AppWindow` must live in one test function.
-- `AppWindow::new()` can be constructed and its properties read/set
-  without ever showing a window, which is what makes property-wiring
-  tests possible without a display. Actually *displaying* one still needs
-  a windowing backend + X11/Wayland connection — not guaranteed in CI, so
-  visual checks stay manual (`cargo run -p trango`).
+- `AppWindow::new()` needs a working windowing backend + X11/Wayland
+  connection to construct at all (winit initializes its event loop
+  immediately, even without ever showing the window) — it's not
+  display-free. CI runs `scripts/test.sh` under `xvfb-run` for this
+  reason (`.github/workflows/ci.yml`). Property-wiring tests never call
+  `.show()`, so no compositor/renderer work happens beyond that; actual
+  pixels-on-screen checks stay manual (`cargo run -p trango`).
 - Custom fonts (`"Inter"`, `"JetBrains Mono"`) only render if installed as
   system fonts; Slint falls back silently otherwise — no fonts are
   bundled.

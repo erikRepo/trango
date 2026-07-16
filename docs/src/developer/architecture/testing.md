@@ -5,8 +5,11 @@
 Every crate carries its own `#[cfg(test)] mod tests` alongside the code they
 cover (`crates/subtitle`, `crates/playback-state`, `crates/app`), plus
 `crates/subtitle/tests/srt_parsing.rs` reading real `.srt` fixtures from
-`crates/subtitle/tests/fixtures/`. These stay fast and isolated: no Slint
-window, no libmpv core, no real video file.
+`crates/subtitle/tests/fixtures/`. These stay fast and isolated: no
+libmpv core, no real video file, and no window ever shown on screen —
+`crates/app`'s tests do construct a real `AppWindow`, which alone needs a
+windowing backend (see [slint](../technology/slint.md#pitfalls)),
+satisfied in CI via `xvfb-run`.
 
 ## E2E: `crates/app/tests/e2e_sentence_navigation.rs`
 

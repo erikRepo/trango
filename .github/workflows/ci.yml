@@ -40,10 +40,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install libmpv
+      - name: Install libmpv and a virtual display
         run: |
           sudo apt-get update
-          sudo apt-get install -y libmpv-dev
+          sudo apt-get install -y libmpv-dev xvfb
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -52,7 +52,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run scripts/test.sh
-        run: scripts/test.sh
+        run: xvfb-run --auto-servernum scripts/test.sh
 
   build:
     name: build (release)
