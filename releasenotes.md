@@ -9,6 +9,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.41] - 2026-07-16
+
+### Added
+- Open Subtitles dialog: "Target language" field (TODO.md Vaihe 24.1) — a free-text `LineEdit` (Slint's `std-widgets`, the first editable text input anywhere in trango) next to the Ollama model row, replacing word analysis's previously hardcoded `"English"` target language. Saves on every keystroke to `config.toml`'s new `ollama_target_language` field, the same way picking an Ollama/whisper model persists immediately; both the Ctrl+A popup and "Analyze all sentences" now read the typed language instead of the fixed default
+
 ## [0.1.40] - 2026-07-16
 
 ### Added

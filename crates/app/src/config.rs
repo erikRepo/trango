@@ -23,6 +23,12 @@ pub struct TrangoConfig {
     /// (`TODO.md` Vaihe 24), reused as the default for the Ctrl+A popup
     /// and "Analyze all sentences" on the next run.
     pub ollama_model: Option<String>,
+    /// The target language last typed into the Open Subtitles dialog's
+    /// language field (`TODO.md` Vaihe 24.1) — what word analyses are
+    /// translated/pronounced into. `None` (rather than an empty string)
+    /// means "never edited yet", so `word_analysis::DEFAULT_TARGET_LANGUAGE`
+    /// is used as the starting value instead of an empty field.
+    pub ollama_target_language: Option<String>,
 }
 
 /// Resolves the config directory from `xdg_config_home`/`home` (as
@@ -167,6 +173,7 @@ mod tests {
             whisper_model_path: Some(PathBuf::from("/models/ggml-medium.bin")),
             whisper_model_folder: Some(PathBuf::from("/models")),
             ollama_model: Some("llama3.1:8b".to_string()),
+            ollama_target_language: Some("Finnish".to_string()),
         };
 
         save_to(&path, &config);

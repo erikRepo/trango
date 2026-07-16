@@ -96,10 +96,10 @@ pub fn apply_batch_result(window: &AppWindow, result: Result<(), OllamaError>) {
     }
 }
 
-/// The language word analyses are translated/pronounced into. Not yet
-/// configurable from the UI (`TODO.md` Vaihe 24 leaves that for a later
-/// iteration — see `docs/src/specs/word-analysis.md`); every learner-
-/// facing string Ollama is asked to produce uses this.
+/// The target language used until the user types a different one into the
+/// Open Subtitles dialog's language field (`TODO.md` Vaihe 24.1) — also
+/// the fallback shown in that field on first run, before
+/// `config::TrangoConfig::ollama_target_language` has ever been set.
 pub const DEFAULT_TARGET_LANGUAGE: &str = "English";
 
 /// Runs `client.analyze_sentence(...)` on a background thread for a

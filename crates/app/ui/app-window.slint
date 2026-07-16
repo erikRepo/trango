@@ -8,7 +8,7 @@
 // into `sentence-mode-active`. Body/bottom-hint-bar content arrives in
 // later steps.
 
-import { ListView, ScrollView } from "std-widgets.slint";
+import { LineEdit, ListView, ScrollView } from "std-widgets.slint";
 
 /// Color tokens from README.md's "Design Tokens" section, shared across the
 /// top bar components below.
@@ -1040,6 +1040,7 @@ component OpenSubtitlesDialog {
     in property <string> translation-name;
     in property <bool> ollama-model-selected: false;
     in property <string> ollama-model-name: "";
+    in property <string> ollama-target-language: "";
     in property <WordAnalysisBatchStatus> word-analysis-batch-status: WordAnalysisBatchStatus.Idle;
     in property <int> word-analysis-batch-progress-current: 0;
     in property <int> word-analysis-batch-progress-total: 0;
@@ -1047,6 +1048,7 @@ component OpenSubtitlesDialog {
     callback generate-subtitles();
     callback select-model();
     callback select-ollama-model();
+    callback set-ollama-target-language(string);
     callback analyze-all-sentences();
     callback link-translation();
     callback cancel();
@@ -1061,7 +1063,7 @@ component OpenSubtitlesDialog {
 
         Rectangle {
             width: 640px;
-            height: 520px;
+            height: 560px;
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
             background: Palette.modal-bg;
@@ -1294,6 +1296,28 @@ component OpenSubtitlesDialog {
 
                             TouchArea {
                                 clicked => { root.select-ollama-model(); }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 8px;
+                            cross-axis-alignment: center;
+
+                            Text {
+                                text: "Target language:";
+                                color: Palette.muted-text;
+                                font-family: "Inter";
+                                font-size: 11px;
+                                font-weight: 500;
+                                vertical-alignment: center;
+                            }
+
+                            LineEdit {
+                                horizontal-stretch: 1;
+                                text: root.ollama-target-language;
+                                placeholder-text: "e.g. English";
+                                font-size: 12px;
+                                edited(text) => { root.set-ollama-target-language(text); }
                             }
                         }
 
@@ -1599,6 +1623,15 @@ export component AppWindow inherits Window {
     callback select-ollama-model-picker-row(int);
     callback cancel-ollama-model-picker-dialog();
     callback confirm-ollama-model-picker-dialog();
+    // Target language for word analysis (TODO.md Vaihe 24.1): what
+    // translations/pronunciations are produced in. Free-text field (the
+    // Open Subtitles dialog's LineEdit) rather than a fixed list, since
+    // any language name is valid input. Set from Rust by
+    // crates/app/src/main.rs's wire_ollama_target_language; persisted
+    // across restarts by crates/app/src/config.rs, the same way the
+    // Ollama model is.
+    in property <string> ollama-target-language: "";
+    callback set-ollama-target-language(string);
     // Ctrl+A word-analysis popup (TODO.md Vaihe 24, part 5/6): analyzes the
     // sentence currently shown in the current-sentence card. Set from Rust
     // by crates/app/src/word_analysis.rs's wire_word_analysis_popup.
@@ -1845,6 +1878,7 @@ export component AppWindow inherits Window {
             translation-name: root.open-subtitles-translation-name;
             ollama-model-selected: root.ollama-model-selected;
             ollama-model-name: root.ollama-model-name;
+            ollama-target-language: root.ollama-target-language;
             word-analysis-batch-status: root.word-analysis-batch-status;
             word-analysis-batch-progress-current: root.word-analysis-batch-progress-current;
             word-analysis-batch-progress-total: root.word-analysis-batch-progress-total;
@@ -1852,6 +1886,7 @@ export component AppWindow inherits Window {
             generate-subtitles => { root.generate-subtitles-requested(); }
             select-model => { root.select-whisper-model-requested(); }
             select-ollama-model => { root.select-ollama-model-requested(); }
+            set-ollama-target-language(text) => { root.set-ollama-target-language(text); }
             analyze-all-sentences => { root.analyze-all-requested(); }
             link-translation => { root.link-translation-requested(); }
             cancel => { root.cancel-open-subtitles-dialog(); }

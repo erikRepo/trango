@@ -905,6 +905,25 @@ fn wire_ollama_model_picker(
     });
 }
 
+/// Wires the Open Subtitles dialog's target-language field (`TODO.md`
+/// Vaihe 24.1): `set-ollama-target-language`, invoked on every keystroke
+/// (the `LineEdit`'s `edited` callback), updates the shared
+/// `target_language` state `wire_word_analysis_batch`/
+/// `wire_word_analysis_popup` read from and persists it to
+/// `config::TrangoConfig::ollama_target_language`, the same way picking
+/// an Ollama model persists immediately rather than waiting for a
+/// separate "Save" action.
+fn wire_ollama_target_language(window: &AppWindow, target_language: Rc<RefCell<String>>) {
+    window.on_set_ollama_target_language(move |language| {
+        let language = language.to_string();
+        *target_language.borrow_mut() = language.clone();
+
+        let mut config = config::load();
+        config.ollama_target_language = Some(language);
+        config::save(&config);
+    });
+}
+
 /// Wires the Open Subtitles dialog's "Analyze all sentences" button
 /// (`TODO.md` Vaihe 24, part 4/6): `analyze-all-requested` runs
 /// `word_analysis::spawn_batch_analyze` over every cue in the currently
@@ -919,6 +938,7 @@ fn wire_word_analysis_batch(
     state: &Rc<RefCell<PlayerState>>,
     current_media: &Rc<RefCell<CurrentMedia>>,
     selected_ollama_model: Rc<RefCell<Option<String>>>,
+    target_language: Rc<RefCell<String>>,
 ) {
     let window_weak = window.as_weak();
     let state = Rc::clone(state);
@@ -954,7 +974,7 @@ fn wire_word_analysis_batch(
         word_analysis::spawn_batch_analyze(
             ::word_analysis::HttpOllamaClient::default(),
             model,
-            word_analysis::DEFAULT_TARGET_LANGUAGE.to_string(),
+            target_language.borrow().clone(),
             cues,
             cache_path,
             move |done, total| {
@@ -994,6 +1014,7 @@ fn wire_word_analysis_popup(
     state: &Rc<RefCell<PlayerState>>,
     current_media: &Rc<RefCell<CurrentMedia>>,
     selected_ollama_model: Rc<RefCell<Option<String>>>,
+    target_language: Rc<RefCell<String>>,
 ) {
     let window_weak = window.as_weak();
     let request_state = Rc::clone(state);
@@ -1049,7 +1070,7 @@ fn wire_word_analysis_popup(
             ::word_analysis::HttpOllamaClient::default(),
             model,
             cue.text.clone(),
-            word_analysis::DEFAULT_TARGET_LANGUAGE.to_string(),
+            target_language.borrow().clone(),
             move |result| {
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(window) = callback_window_weak.upgrade() else {
@@ -1143,17 +1164,29 @@ fn main() -> anyhow::Result<()> {
         window.set_ollama_model_name(model.into());
     }
     wire_ollama_model_picker(&window, Rc::clone(&selected_ollama_model));
+
+    let target_language = Rc::new(RefCell::new(
+        startup_config
+            .ollama_target_language
+            .clone()
+            .unwrap_or_else(|| word_analysis::DEFAULT_TARGET_LANGUAGE.to_string()),
+    ));
+    window.set_ollama_target_language(target_language.borrow().clone().into());
+    wire_ollama_target_language(&window, Rc::clone(&target_language));
+
     wire_word_analysis_batch(
         &window,
         &player_state,
         &current_media,
         Rc::clone(&selected_ollama_model),
+        Rc::clone(&target_language),
     );
     wire_word_analysis_popup(
         &window,
         &player_state,
         &current_media,
         Rc::clone(&selected_ollama_model),
+        Rc::clone(&target_language),
     );
 
     let reload_video_player = Rc::clone(&video_player);

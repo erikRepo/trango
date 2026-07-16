@@ -541,13 +541,12 @@ modeled on) does. Some local models still wrap their answer in a
 `parse_analysis_response` strips one defensively before parsing — the
 same defensive stripping gemhunter's `call_ollama` does.
 
-The target language (`crates/app/src/word_analysis.rs`'s
-`DEFAULT_TARGET_LANGUAGE`, currently hardcoded to `"English"`) isn't yet
-configurable from the UI — the source language needs no separate setting
-at all, since the model just reads it directly off the sentence text.
-Making the target language user-configurable is a natural, self-contained
-follow-up (a text field or dropdown next to the Ollama model row) left
-for a later step.
+The source language needs no separate setting at all, since the model
+just reads it directly off the sentence text. The target language is a
+free-text field in the Open Subtitles dialog (`TODO.md` Vaihe 24.1, see
+"Target language: free text, not a fixed list" below) —
+`crates/app/src/word_analysis.rs`'s `DEFAULT_TARGET_LANGUAGE` (`"English"`)
+is only the value shown before the user has ever typed something else.
 
 ### Cache file: one JSON sidecar per subtitle
 
@@ -616,3 +615,36 @@ showing a "Loading models…" state (reusing the existing `folder-label`
 text slot for status, rather than adding a new Slint property just for
 that) while it's in flight. The picked model persists to
 `config::TrangoConfig::ollama_model`, mirroring `whisper_model_path`.
+
+### Target language: free text, not a fixed list
+
+`TODO.md` Vaihe 24.1 fills in the target-language gap the initial Vaihe
+24 left open (hardcoded `"English"`). Two options were considered: a
+`FileListDialog`-style picker over a fixed list of common languages (no
+new UI element, but limited to whatever's on the list), or a free-text
+field (any language name, but the first editable text input anywhere in
+trango — every other input so far is a button, toggle, or list row).
+Asked and the user picked free text: a target language is exactly the
+kind of open-ended value a fixed list would keep needing updates for.
+
+The Open Subtitles dialog's Word-analysis section gained a `LineEdit`
+(from Slint's `std-widgets`, newly imported — no other component in
+`app-window.slint` used one before) next to the Ollama model row,
+bound to a new `ollama-target-language` string property. Its `edited`
+callback (fires on every keystroke, not just on Enter/blur) invokes
+`AppWindow::set-ollama-target-language`, which `main.rs`'s
+`wire_ollama_target_language` uses to update the shared
+`Rc<RefCell<String>>` `spawn_batch_analyze`/`spawn_analyze_sentence`
+read their `target_language` argument from, and persist immediately to
+`config::TrangoConfig::ollama_target_language` — the same
+"save-on-every-confirmed-change" pattern the Ollama/whisper model rows
+already use, just triggered by typing instead of a picker selection.
+Saving a whole small TOML file on every keystroke is more disk I/O than
+strictly necessary, but the file is tiny and edits to this field are
+infrequent — not worth a debounce mechanism for the complexity it'd add.
+
+`ollama_target_language` is `Option<String>` in the config (`None` means
+"never edited"), not a plain `String` defaulting to `"English"` at the
+config layer — so the *shown default* (`word_analysis::DEFAULT_TARGET_LANGUAGE`)
+stays a single source of truth in the Rust code that uses it, rather than
+being duplicated into `TrangoConfig::default()` as well.

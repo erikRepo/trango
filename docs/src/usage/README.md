@@ -140,6 +140,17 @@ configuration needed if Ollama is running with its own defaults.
 same way the whisper model is (see "Model selection" above) — stored in
 `config.toml`'s `ollama_model` field.
 
+**Target language:** the "Target language" field below the model row
+(defaults to "English") is what translations/pronunciations are
+produced in — type any language name. It saves as you type and is
+remembered across restarts (`config.toml`'s `ollama_target_language`
+field). Changing it only affects sentences analyzed *after* the change;
+already-cached entries in a subtitle's `.wordanalysis.json` keep
+whatever language they were analyzed in until re-analyzed (there's no
+separate "language" tag on cached entries — delete the cache file, or
+the specific subtitle's cache file, to force re-analysis in a new
+language).
+
 **Ctrl+A** works in both Normal and Sentence-by-sentence mode, on
 whichever sentence the current-sentence card is showing. The first time
 a given sentence is analyzed, it calls Ollama (a few seconds, depending

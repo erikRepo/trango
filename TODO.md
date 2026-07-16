@@ -477,10 +477,39 @@ jälkeen) sekä Normal- että Sentence-by-sentence-moodissa.
 
 ---
 
+## Vaihe 24.1 — Sana-analyysin kohdekielen valinta UI:sta
+
+**Tavoite:** Vaihe 24:n kiinteä `"English"`-kohdekieli korvataan
+käyttäjän muokattavalla arvolla — sana-analyysin käännökset/ääntämisohjeet
+voidaan tuottaa mihin tahansa kieleen, ei vain englanniksi. Ks.
+`docs/src/specs/`:n "Target language: free text, not a fixed list"
+päätöksenteolle (vapaa tekstikenttä vs. kiinteä kielilista — käyttäjältä
+kysytty, valittu vapaa tekstikenttä).
+
+- Open Subtitles -dialogin Word analysis -osioon uusi tekstikenttä
+  ("Target language:", Slintin `std-widgets`-`LineEdit` — ensimmäinen
+  editoitava tekstikenttä sovelluksessa) Ollama-mallirivin alle
+- `config.rs`: `ollama_target_language: Option<String>` persistoi
+  syötetyn kielen, samaan tapaan kuin `ollama_model`
+- `main.rs::wire_ollama_target_language`: `LineEdit`:n `edited`-callback
+  päivittää jaetun `Rc<RefCell<String>>`-tilan ja tallentaa configiin
+  jokaisen näppäinpainalluksen jälkeen
+- `spawn_batch_analyze`/`spawn_analyze_sentence`-kutsut käyttävät
+  kiinteän `word_analysis::DEFAULT_TARGET_LANGUAGE`:n sijaan tätä
+  jaettua tilaa — oletusarvo `"English"` näkyy kentässä vain kunnes
+  käyttäjä kirjoittaa jotain muuta
+
+**Voit ajaa/testata:** `cargo run -p trango -- video.mp4 subs.srt` — Open
+Subtitles -dialogissa "Target language"-kenttä näyttää oletuksena
+"English", kirjoitettu arvo säilyy sovelluksen uudelleenkäynnistyksen
+yli, ja Ctrl+A/"Analyze all sentences" käyttävät kenttään kirjoitettua
+kieltä Ollama-promptissa.
+
+---
+
 ## Ei tässä listassa (myöhempää harkintaa)
 
 - Kansion vaihto Open Video -dialogissa natiivilla kansiovalitsimella
 - Oikea on-device STT-toteutus (Vaihe 20 on vain rajapinta + stub)
 - Video/tiedostotyyppi-ikonien lopulliset assetit (README: "source real icons... when implementing")
 - Pelkän ruudunkaappaus-/pikselivertailu-automaation rakentaminen (Vaihe 22 tehdään manuaalisesti toistaiseksi)
-- Sana-analyysin kohdekielen valinta UI:sta (Vaihe 24: tällä hetkellä kiinteä `"English"`, ks. `docs/src/specs/`)
