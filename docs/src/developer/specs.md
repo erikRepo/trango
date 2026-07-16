@@ -219,14 +219,32 @@ is still open.
 
 ## Current-sentence card: bounded, scrollable sentence text
 
-Reported as long cues getting visually cut off mid-word in the
-current-sentence card. Cause: the original-language `Text` had no bounded
-height, so `CurrentSentenceCard`'s `vertical-stretch: 0` asked its
-`VerticalLayout` parent for exactly the wrapped text's natural height —
-whenever the sentence panel column ran short on room, the layout squeezed
-the card below that, silently clipping the bottom line(s) instead of
-showing or scrolling to them. Fixed the same way `translation-height`
-already fixes the same class of bug for the translation line below it: a
-fixed-height `ScrollView` (`sentence-height`, 150px ≈ 4 lines) so long
-sentences scroll instead of clipping, and the card's height stays
-predictable regardless of cue length.
+The original-language `Text` had no bounded height, so
+`CurrentSentenceCard`'s `vertical-stretch: 0` asked its `VerticalLayout`
+parent for exactly the wrapped text's natural height — whenever the
+sentence panel column ran short on room, the layout could squeeze the
+card below that, clipping the bottom line(s) instead of showing or
+scrolling to them. Fixed the same way `translation-height` already fixes
+the same class of bug for the translation line below it: a fixed-height
+`ScrollView` (`sentence-height`, 150px ≈ 4 lines) so long sentences
+scroll instead of clipping. This does **not** fix mixed-script bidi
+rendering glitches — see "Known limitation: bidi text wrapping" below,
+which turned out to be the actual cause of the originally reported bug
+report this investigation started from.
+
+## Known limitation: bidi text wrapping (Slint/femtovg)
+
+A cue mixing Hebrew (RTL) with an embedded Latin word (e.g. "co-working")
+renders garbled characters at the line-wrap boundary when the Latin word
+falls across a wrap point — not a height/clipping issue (ruled out above),
+but character-level bidi reordering going wrong in Slint's text shaping.
+`video_player.rs` requires Slint's OpenGL (femtovg) renderer for the mpv
+render context, so switching renderer isn't an available workaround.
+Slint's RTL/bidi support is itself incomplete upstream — see
+[slint-ui/slint#2294](https://github.com/slint-ui/slint/issues/2294) and
+[#7267](https://github.com/slint-ui/slint/issues/7267). Accepted as a
+known limitation for now; no in-repo workaround attempted. Revisit if
+Slint's bidi support improves, or if this affects enough real subtitle
+content to justify manually inserting Unicode directional-isolate marks
+(U+2066/U+2069) around embedded Latin runs before handing cue text to
+`sentence_card.rs`.

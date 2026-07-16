@@ -12,7 +12,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ## [0.1.50] - 2026-07-16
 
 ### Fixed
-- Current-sentence card's original-language text had no bounded height to wrap against, so long cues could get squeezed shorter than their wrapped line count (whenever the sentence panel ran low on vertical room) and lose their bottom line(s) without any indication. It now scrolls inside a fixed-height box, same pattern already used for the translation line below it, so long sentences are always fully reachable instead of silently clipped
+- Current-sentence card's original-language text had no bounded height to wrap against, so long cues could get squeezed shorter than their wrapped line count (whenever the sentence panel ran low on vertical room) and lose their bottom line(s) without any indication. It now scrolls inside a fixed-height box, same pattern already used for the translation line below it, so long sentences are always fully reachable instead of silently clipped. Note: this does not fix the separate bidi text-rendering glitch with mixed Hebrew/Latin cues — see `docs/src/developer/specs.md`, accepted as a known upstream Slint limitation for now
 
 ## [0.1.49] - 2026-07-16
 
