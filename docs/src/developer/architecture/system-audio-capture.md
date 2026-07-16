@@ -34,3 +34,15 @@ revisit if trango needs to support those platforms.
 Autodetection can also be wrong for setups with multiple audio outputs —
 `crates/app/src/config.rs`'s `audio_monitor_source` overrides it with an
 exact source name (see `docs/src/usage/settings.md`).
+
+## Speech segmentation
+
+`audio_capture::VadSegmenter` (`TODO.md` Vaihe 27) chops the captured
+stream into speech segments at pauses, so `TODO.md` Vaihe 28 can
+transcribe sentence-sized chunks with `whisper-cli` instead of a fixed
+sliding window. It's a standalone algorithm for now — samples are pushed
+in and completed `SpeechSegment`s (start/end timestamps plus PCM audio)
+come out — not yet wired to read from `AudioCapture`'s growing WAV file
+live; that wiring is part of Vaihe 28. See
+`docs/src/developer/technology/webrtc-vad.md` for why `webrtc-vad` was
+chosen over whisper.cpp's own `--vad` support or a hand-rolled detector.

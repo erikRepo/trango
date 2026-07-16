@@ -9,6 +9,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.53] - 2026-07-16
+
+### Added
+- `audio_capture::VadSegmenter` (`TODO.md` Vaihe 27): chops a continuous stream of captured 16kHz mono PCM samples into speech segments at pauses, using the `webrtc-vad` crate frame-by-frame. Each completed segment carries its start/end timestamps relative to the recording's start plus its raw PCM samples — the input Vaihe 28's per-segment `whisper-cli` transcription will consume. Not wired into the app yet, no UI-visible change (see `docs/src/developer/technology/webrtc-vad.md` for why `webrtc-vad` was chosen over whisper.cpp's own `--vad` support or a hand-rolled energy-threshold detector)
+
 ## [0.1.52] - 2026-07-16
 
 ### Added

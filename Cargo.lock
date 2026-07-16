@@ -455,10 +455,11 @@ dependencies = [
 
 [[package]]
 name = "audio-capture"
-version = "0.1.52"
+version = "0.1.53"
 dependencies = [
  "thiserror 2.0.18",
  "tracing",
+ "webrtc-vad",
 ]
 
 [[package]]
@@ -3699,7 +3700,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "playback-state"
-version = "0.1.52"
+version = "0.1.53"
 dependencies = [
  "subtitle",
 ]
@@ -4771,7 +4772,7 @@ dependencies = [
 
 [[package]]
 name = "subtitle"
-version = "0.1.52"
+version = "0.1.53"
 dependencies = [
  "thiserror 2.0.18",
  "tracing",
@@ -5212,7 +5213,7 @@ dependencies = [
 
 [[package]]
 name = "trango"
-version = "0.1.52"
+version = "0.1.53"
 dependencies = [
  "anyhow",
  "audio-capture",
@@ -5756,6 +5757,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "webrtc-vad"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "39a1e40fd6ca90be95459152a2537f2ba4286ee1b13073f7ebcaa74fc94e3008"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "weezl"
 version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6112,7 +6122,7 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "word-analysis"
-version = "0.1.52"
+version = "0.1.53"
 dependencies = [
  "serde",
  "serde_json",

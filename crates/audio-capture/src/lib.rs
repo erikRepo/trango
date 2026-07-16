@@ -8,6 +8,8 @@
 
 mod capture;
 mod error;
+mod vad;
 
 pub use capture::AudioCapture;
 pub use error::AudioCaptureError;
+pub use vad::{SpeechSegment, VadSegmenter};
