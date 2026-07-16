@@ -9,6 +9,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.33] - 2026-07-16
+
+### Fixed
+- `crates/playback-state/src/navigation.rs`: `PlayerState::repeat_current_cue` never checked `self.mode`, so in `Normal` mode with a subtitle linked (`current_cue_index` is set to `Some(0)` by `set_cues` regardless of mode), Space still routed to the bounded `toggle_play_span` instead of the unbounded `toggle_playback` added in 0.1.32 — playback would start, then immediately auto-pause at the end of whatever cue happened to be in focus, instead of continuing normally. `repeat_current_cue` now returns `None` outright in `Normal` mode
+
 ## [0.1.32] - 2026-07-15
 
 ### Added

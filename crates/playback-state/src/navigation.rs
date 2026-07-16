@@ -4,6 +4,7 @@
 //! logic. These methods only move `PlayerState`'s cursor and report what
 //! the player should do next — they never touch mpv themselves.
 
+use crate::mode::PlaybackMode;
 use crate::seek_command::{PlaySpanCommand, SeekCommand};
 use crate::state::PlayerState;
 
@@ -31,11 +32,21 @@ impl PlayerState {
 
     /// Returns the command to play the current cue's span, without moving
     /// the cursor. Calling this repeatedly always yields the same command
-    /// for the same cue. `None` if no cue is in focus. Whether this
-    /// actually starts playback (versus pausing an already-playing span
-    /// early) is decided by the caller against live mpv state — see
-    /// [`PlaySpanCommand`]'s doc comment.
+    /// for the same cue. `None` in `Normal` mode — bounding playback to one
+    /// cue's span is a `SentenceBySentence`-only concept, so `Normal` mode
+    /// ignores `current_cue_index` here even if a subtitle happens to be
+    /// loaded, letting the caller fall back to a plain, unbounded play/pause
+    /// toggle instead (see `crates/app/src/main.rs`'s `repeat-cue` handler)
+    /// — otherwise `Normal` mode playback would auto-pause at the end of
+    /// whatever cue is currently in focus instead of continuing. Also
+    /// `None` if no cue is in focus. Whether this actually starts playback
+    /// (versus pausing an already-playing span early) is decided by the
+    /// caller against live mpv state — see [`PlaySpanCommand`]'s doc
+    /// comment.
     pub fn repeat_current_cue(&self) -> Option<PlaySpanCommand> {
+        if self.mode != PlaybackMode::SentenceBySentence {
+            return None;
+        }
         let cue = self.cues.get(self.current_cue_index?)?;
         Some(PlaySpanCommand {
             start: cue.start,
@@ -200,6 +211,24 @@ mod tests {
                 end: Duration::from_millis(2_000),
             })
         );
+    }
+
+    #[test]
+    fn test_repeat_current_cue_in_normal_mode_returns_none() {
+        // Given: a state in Normal mode with cues loaded (e.g. a subtitle
+        //        linked while the user happens to be in Normal mode)
+        // When:  calling repeat_current_cue
+        // Then:  it returns None, even though a cue is technically in
+        //        focus — bounding Space to one cue's span only makes sense
+        //        in SentenceBySentence mode, so the caller (main.rs) can
+        //        fall back to a plain, unbounded play/pause toggle instead
+        //        of auto-pausing Normal-mode playback at a sentence's end
+        let mut state = PlayerState::new();
+        state.set_cues(three_cues());
+        state.toggle_mode();
+        assert_eq!(state.mode, PlaybackMode::Normal);
+
+        assert_eq!(state.repeat_current_cue(), None);
     }
 
     #[test]

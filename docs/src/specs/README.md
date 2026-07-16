@@ -456,3 +456,19 @@ adding a second one, keeps "Space always means play/pause, but the exact
 shape depends on whether a sentence is in focus" as a single decision
 point instead of two independently-triggered code paths that could drift
 out of sync with each other.
+
+**First pass got the `None` case wrong for `Normal` mode with a subtitle
+loaded.** `repeat_current_cue`'s original guard was only `self.cues.get(self.current_cue_index?)?`
+— it never checked `self.mode` at all. `current_cue_index` is set to
+`Some(0)` by `set_cues` regardless of mode, so a video with a subtitle
+linked *while in `Normal` mode* still had a "current cue" in the state
+sense, and `repeat_current_cue` happily returned `Some`, routing Space to
+the bounded `toggle_play_span` instead of the intended unbounded
+`toggle_playback` — Normal-mode playback would start, then immediately
+auto-pause at the end of whatever cue happened to be in focus, instead of
+continuing. The fix adds the missing mode check directly to
+`repeat_current_cue` (`if self.mode != PlaybackMode::SentenceBySentence { return None; }`)
+rather than in `main.rs`'s handler, since "a bounded per-cue span is a
+`SentenceBySentence`-only concept" belongs in `playback_state`'s own
+definition of what `repeat_current_cue` means, not in a caller-side
+special case.
