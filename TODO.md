@@ -533,6 +533,12 @@ muuten sellaisenaan). `gh pr create` ajetaan vasta kun käyttäjä erikseen
 pyytää PR:n avaamista — ei automaattisesti minkään yksittäisen vaiheen
 jälkeen.
 
+**Poikkeus versiointiin:** `Cargo.toml`-versio bumpataan **kertaalleen**
+koko Vaiheet 25–31 -kokonaisuudelle, ei joka vaiheessa erikseen — tehty jo
+Vaihe 25:ssä (0.1.52). Vaiheet 26–31 **eivät** bumppaa versiota uudelleen;
+ne vain täydentävät samaa `releasenotes.md`:n `[0.1.52]`-merkintää omilla
+`Added`/`Changed`/`Fixed`-riveillään sitä mukaa kun kukin vaihe valmistuu.
+
 ---
 
 ## Vaihe 25 — `PlaybackMode`: kolmas tila "No video" (pelkkä tekstitys)

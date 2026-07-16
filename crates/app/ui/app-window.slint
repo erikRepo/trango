@@ -2,10 +2,11 @@
 //
 // Top bar in its full visual form per STYLE.md's design tokens (wordmark,
 // segmented control, ghost buttons) — pixel reference is
-// sketch/design_reference.dc.html#1c. The segmented control's `toggle-mode`
-// callback is handled in Rust (crates/app/src/main.rs), which drives
-// playback-state::PlayerState::toggle_mode() and mirrors the result back
-// into `sentence-mode-active`, which also drives the bottom `HintBar`'s
+// sketch/design_reference.dc.html#1c, extended with a third "No video"
+// segment (TODO.md Vaihe 25, not in the mock). The segmented control's
+// `select-mode` callback is handled in Rust (crates/app/src/main.rs), which
+// drives playback-state::PlayerState::set_mode() and mirrors the result back
+// into `playback-mode`, which also drives the bottom `HintBar`'s
 // mode-specific content (see its own doc comment).
 
 import { LineEdit, ListView, ScrollView } from "std-widgets.slint";
@@ -46,6 +47,17 @@ export enum WordAnalysisBatchStatus {
     Running,
     Done,
     Error,
+}
+
+/// Mirrors `playback_state::PlaybackMode` (`TODO.md` Vaihe 25) for the top
+/// bar's segmented control and the video/placeholder-panel switch below.
+/// Named `PlaybackModeUi` rather than `PlaybackMode` to avoid colliding with
+/// the Rust type of the same name that `crates/app/src/main.rs` imports
+/// alongside this generated module.
+export enum PlaybackModeUi {
+    Normal,
+    SentenceBySentence,
+    NoVideo,
 }
 
 /// One pill in the top bar's Normal / Sentence-by-sentence segmented
@@ -1621,7 +1633,18 @@ component OpenSubtitlesDialog {
 
 export component AppWindow inherits Window {
     in property <string> version;
-    in property <bool> sentence-mode-active: false;
+    // Mirrors playback_state::PlaybackMode — kept in sync from Rust by
+    // main.rs's wire_player_state, which also derives HintBar's/nav-focus's
+    // narrower sentence-mode-active bool from this. Hardcoded to Normal here
+    // as this component's own default; wire_player_state overwrites it with
+    // PlayerState::new()'s real default (SentenceBySentence) immediately.
+    in property <PlaybackModeUi> playback-mode: PlaybackModeUi.Normal;
+    // Derived from playback-mode for nav-focus's key-pressed guard and
+    // HintBar, neither of which need to distinguish Normal from NoVideo yet
+    // (TODO.md Vaihe 25 only adds the mode, not NoVideo-specific navigation
+    // or hint content). `out` rather than private so tests can assert on it
+    // directly instead of only on the coarser playback-mode.
+    out property <bool> sentence-mode-active: root.playback-mode == PlaybackModeUi.SentenceBySentence;
     // Whether crates/app/src/video_player.rs has an mpv OpenGL render
     // context underlay active. While true, the video area below is left
     // fully transparent so that underlay (drawn straight into the window's
@@ -1667,7 +1690,9 @@ export component AppWindow inherits Window {
     // crates/app/src/sentence_list.rs — see SentenceListCard above.
     in property <[SentenceListRow]> sentence-list-rows: [];
     in property <int> sentence-list-current-index: -1;
-    callback toggle-mode();
+    // Invoked by the top bar's segmented control with the clicked segment's
+    // target mode — wired in main.rs to playback_state::PlayerState::set_mode().
+    callback select-mode(PlaybackModeUi);
     // Invoked by the current-sentence card's Translation toggle switch —
     // wired in main.rs's wire_player_state to
     // playback_state::PlayerState::toggle_translation().
@@ -1962,22 +1987,20 @@ export component AppWindow inherits Window {
 
                             SegmentButton {
                                 label: "Normal";
-                                active: !root.sentence-mode-active;
-                                clicked => {
-                                    if (root.sentence-mode-active) {
-                                        root.toggle-mode();
-                                    }
-                                }
+                                active: root.playback-mode == PlaybackModeUi.Normal;
+                                clicked => { root.select-mode(PlaybackModeUi.Normal); }
                             }
 
                             SegmentButton {
                                 label: "Sentence by sentence";
-                                active: root.sentence-mode-active;
-                                clicked => {
-                                    if (!root.sentence-mode-active) {
-                                        root.toggle-mode();
-                                    }
-                                }
+                                active: root.playback-mode == PlaybackModeUi.SentenceBySentence;
+                                clicked => { root.select-mode(PlaybackModeUi.SentenceBySentence); }
+                            }
+
+                            SegmentButton {
+                                label: "No video";
+                                active: root.playback-mode == PlaybackModeUi.NoVideo;
+                                clicked => { root.select-mode(PlaybackModeUi.NoVideo); }
                             }
                         }
                     }
@@ -2014,18 +2037,34 @@ export component AppWindow inherits Window {
                         // exposed below (`video-frame-x`/-y/-width/-height) so
                         // `video_player.rs` can confine the mpv underlay to
                         // exactly this box instead of the whole window — see
-                        // `render_frame`'s doc comment.
+                        // `render_frame`'s doc comment. Kept unconditionally
+                        // instantiated (rather than swapped out via `if`) even
+                        // in NoVideo mode, so those geometry accessors keep
+                        // resolving; the No video placeholder below is just an
+                        // overlay child instead.
                         background: root.video-loaded ? transparent : Palette.window-bg;
+
+                        if root.playback-mode == PlaybackModeUi.NoVideo : Text {
+                            // Placeholder for TODO.md Vaihe 25 — recording
+                            // controls and live transcript land here in
+                            // Vaihe 29.
+                            text: "No video — subtitle-only mode";
+                            color: Palette.muted-text;
+                            font-family: "Inter";
+                            font-size: 13px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
                     }
 
-                    ScrubBar {
+                    if root.playback-mode != PlaybackModeUi.NoVideo : ScrubBar {
                         current-time-label: root.current-time-label;
                         duration-label: root.duration-label;
                         progress: root.scrub-progress;
                         seek-requested(fraction) => { root.seek-requested(fraction); }
                     }
 
-                    SpeedSlider {
+                    if root.playback-mode != PlaybackModeUi.NoVideo : SpeedSlider {
                         current-speed: root.current-playback-speed;
                         current-speed-label: root.current-playback-speed-label;
                         speed-requested(fraction) => { root.speed-requested(fraction); }

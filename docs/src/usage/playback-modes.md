@@ -1,7 +1,7 @@
 # Playback modes
 
-TrangoPlayer has two modes, switched with the segmented control in the
-top bar: **Normal** and **Sentence by sentence**.
+TrangoPlayer has three modes, switched with the segmented control in the
+top bar: **Normal**, **Sentence by sentence**, and **No video**.
 
 ## Sentence by sentence
 
@@ -33,6 +33,15 @@ Continuous playback with a scrub bar, closer to an ordinary video
 player. Space still works here — it's a plain play/pause toggle, with no
 per-line seeking or auto-pausing. Click or drag the scrub bar to seek to
 any point in the video.
+
+## No video
+
+Selecting this mode replaces the video area with an empty placeholder —
+there's no video loaded or playing, and the scrub bar/speed slider are
+hidden since there's no playhead. The sentence list and Ctrl+A word
+analysis still work on whatever subtitle is linked. This mode is the
+starting point for live subtitle recording from your system's audio,
+which isn't implemented yet.
 
 ## Playback speed
 

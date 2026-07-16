@@ -64,34 +64,55 @@ fn extract_debug_flag(args: Vec<String>) -> (bool, Vec<String>) {
     (debug, args)
 }
 
+/// Converts `playback_state::PlaybackMode` to the Slint-generated
+/// `PlaybackModeUi` mirrored into `AppWindow::playback-mode` — the two are
+/// kept as separate types (rather than one shared enum) because
+/// `slint::include_modules!()` generates `PlaybackModeUi` into this same
+/// module, and naming it `PlaybackMode` too would collide with the
+/// `playback_state` import above.
+fn to_ui_mode(mode: PlaybackMode) -> PlaybackModeUi {
+    match mode {
+        PlaybackMode::Normal => PlaybackModeUi::Normal,
+        PlaybackMode::SentenceBySentence => PlaybackModeUi::SentenceBySentence,
+        PlaybackMode::NoVideo => PlaybackModeUi::NoVideo,
+    }
+}
+
+/// The inverse of [`to_ui_mode`], converting a segmented-control click's
+/// target segment back to the `playback_state` mode it names.
+fn from_ui_mode(mode: PlaybackModeUi) -> PlaybackMode {
+    match mode {
+        PlaybackModeUi::Normal => PlaybackMode::Normal,
+        PlaybackModeUi::SentenceBySentence => PlaybackMode::SentenceBySentence,
+        PlaybackModeUi::NoVideo => PlaybackMode::NoVideo,
+    }
+}
+
 /// Owns a fresh `PlayerState` — defaulting to `SentenceBySentence` mode, the
 /// primary language-learning use case — and mirrors that default into the
-/// window's `sentence-mode-active` property, since `app-window.slint`
-/// itself only hardcodes `false`. Also wires the window's `toggle-mode`
-/// callback (invoked by the top bar's segmented control) to
-/// `PlayerState::toggle_mode()`, mirroring each subsequent mode change back
-/// into `sentence-mode-active` too, and the window's `toggle-translation`
-/// callback (invoked by the current-sentence card's toggle switch) to
-/// `PlayerState::toggle_translation()`, mirroring `show_translation` into
-/// the window's `show-translation` property the same way. Returns the
-/// shared state so callers can inspect it (used by tests; later steps will
-/// read it too).
+/// window's `playback-mode` property, since `app-window.slint` itself only
+/// hardcodes `Normal`. Also wires the window's `select-mode` callback
+/// (invoked by the top bar's three-way segmented control with its clicked
+/// segment's target mode) to `PlayerState::set_mode()`, mirroring each
+/// subsequent mode change back into `playback-mode` too, and the window's
+/// `toggle-translation` callback (invoked by the current-sentence card's
+/// toggle switch) to `PlayerState::toggle_translation()`, mirroring
+/// `show_translation` into the window's `show-translation` property the
+/// same way. Returns the shared state so callers can inspect it (used by
+/// tests; later steps will read it too).
 fn wire_player_state(window: &AppWindow) -> Rc<RefCell<PlayerState>> {
     let state = Rc::new(RefCell::new(PlayerState::new()));
-    window.set_sentence_mode_active(state.borrow().mode == PlaybackMode::SentenceBySentence);
+    window.set_playback_mode(to_ui_mode(state.borrow().mode));
     window.set_show_translation(state.borrow().show_translation);
 
     let state_for_callback = Rc::clone(&state);
     let window_weak = window.as_weak();
-    window.on_toggle_mode(move || {
-        let mode = {
-            let mut state = state_for_callback.borrow_mut();
-            state.toggle_mode();
-            state.mode
-        };
-        tracing::debug!(?mode, "playback mode toggled");
+    window.on_select_mode(move |ui_mode| {
+        let mode = from_ui_mode(ui_mode);
+        state_for_callback.borrow_mut().set_mode(mode);
+        tracing::debug!(?mode, "playback mode selected");
         if let Some(window) = window_weak.upgrade() {
-            window.set_sentence_mode_active(mode == PlaybackMode::SentenceBySentence);
+            window.set_playback_mode(to_ui_mode(mode));
         }
     });
 
@@ -1508,27 +1529,42 @@ mod tests {
         window.set_version(env!("CARGO_PKG_VERSION").into());
         assert_eq!(window.get_version(), env!("CARGO_PKG_VERSION"));
 
-        // When:  reading sentence_mode_active before wiring
-        // Then:  it's still app-window.slint's own hardcoded default (false)
+        // When:  reading playback_mode before wiring
+        // Then:  it's still app-window.slint's own hardcoded default (Normal)
+        assert_eq!(window.get_playback_mode(), PlaybackModeUi::Normal);
         assert!(!window.get_sentence_mode_active());
 
         // When:  wiring a fresh PlayerState
         // Then:  it defaults to SentenceBySentence (the primary language-
-        //        learning use case), mirrored into sentence_mode_active
+        //        learning use case), mirrored into playback_mode
         let player_state = wire_player_state(&window);
         assert_eq!(player_state.borrow().mode, PlaybackMode::SentenceBySentence);
+        assert_eq!(
+            window.get_playback_mode(),
+            PlaybackModeUi::SentenceBySentence
+        );
         assert!(window.get_sentence_mode_active());
 
-        // When:  invoking toggle-mode, as a segmented control click does
+        // When:  invoking select-mode(Normal), as a segmented control click
+        //        on the "Normal" segment does
         // Then:  both the Rust-owned PlayerState and the mirrored Slint
         //        property switch to Normal
-        window.invoke_toggle_mode();
+        window.invoke_select_mode(PlaybackModeUi::Normal);
         assert_eq!(player_state.borrow().mode, PlaybackMode::Normal);
+        assert_eq!(window.get_playback_mode(), PlaybackModeUi::Normal);
         assert!(!window.get_sentence_mode_active());
 
-        // When:  invoking toggle-mode again
+        // When:  invoking select-mode(NoVideo), as the third segment does
+        // Then:  both switch to NoVideo, and sentence_mode_active is false
+        //        there too (only SentenceBySentence sets it)
+        window.invoke_select_mode(PlaybackModeUi::NoVideo);
+        assert_eq!(player_state.borrow().mode, PlaybackMode::NoVideo);
+        assert_eq!(window.get_playback_mode(), PlaybackModeUi::NoVideo);
+        assert!(!window.get_sentence_mode_active());
+
+        // When:  invoking select-mode(SentenceBySentence) again
         // Then:  both flip back to SentenceBySentence
-        window.invoke_toggle_mode();
+        window.invoke_select_mode(PlaybackModeUi::SentenceBySentence);
         assert_eq!(player_state.borrow().mode, PlaybackMode::SentenceBySentence);
         assert!(window.get_sentence_mode_active());
 

@@ -107,7 +107,7 @@ fn test_normal_mode_sync_cue_to_time_tracks_continuous_playback_over_sample_cues
     let cues = sample_cues();
     let mut state = PlayerState::new();
     state.set_cues(cues.clone());
-    state.toggle_mode();
+    state.set_mode(PlaybackMode::Normal);
     assert_eq!(state.mode, PlaybackMode::Normal);
 
     // When:  syncing to a time before the first cue's start (video just

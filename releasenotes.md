@@ -9,6 +9,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.52] - 2026-07-16
+
+### Added
+- Third playback mode, "No video", for subtitle-only operation without a loaded video — selected via a third segment in the top bar's segmented control. The video area is replaced by an empty placeholder panel, and the scrub bar/speed slider are hidden; the sentence list and Ctrl+A word analysis keep working on whatever subtitle is linked. This is the first step toward live subtitle recording from system audio (`TODO.md` Vaihe 26+) — no recording happens yet
+
+### Changed
+- `playback_state::PlayerState::toggle_mode()` replaced with `set_mode(mode)`, since a two-state toggle can't express choosing among three modes; the segmented control's three segments each select their own target mode directly instead of toggling relative to the current one
+
 ## [0.1.51] - 2026-07-16
 
 ### Added

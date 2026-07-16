@@ -19,9 +19,10 @@ Slint/libmpv dependency.
 
 ## `crates/playback-state` (library)
 
-Depends on `subtitle`. `PlaybackMode` (`Normal` | `SentenceBySentence`,
-default `SentenceBySentence`) and `PlayerState { mode, cues,
-current_cue_index, show_translation }`.
+Depends on `subtitle`. `PlaybackMode` (`Normal` | `SentenceBySentence` |
+`NoVideo`, default `SentenceBySentence`) and `PlayerState { mode, cues,
+current_cue_index, show_translation }`; `set_mode(mode)` switches directly
+to any of the three.
 
 Cue navigation is pure logic returning a `SeekCommand`/`PlaySpanCommand`
 — "what the player should do" — rather than driving mpv directly:
@@ -77,7 +78,7 @@ skipped rather than blocking video playback.
 
 `wire_player_state` creates the shared `Rc<RefCell<PlayerState>>`
 (UI-thread-only, so no `Send`/`Sync` needed) and wires
-`toggle-mode`/`toggle-translation` to `PlayerState`'s methods, mirroring
+`select-mode`/`toggle-translation` to `PlayerState`'s methods, mirroring
 the result back into `AppWindow` properties the top bar/translation
 toggle read directly.
 

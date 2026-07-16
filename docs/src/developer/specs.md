@@ -249,6 +249,35 @@ content to justify manually inserting Unicode directional-isolate marks
 (U+2066/U+2069) around embedded Latin runs before handing cue text to
 `sentence_card.rs`.
 
+## No video mode: system-audio capture, not YouTube download/caption scraping
+
+Live subtitle recording without a video (`TODO.md` Vaihe 25–31) needs some
+source of audio/text to transcribe. Two alternatives were considered and
+rejected for copyright reasons: playing/downloading the source video
+directly (e.g. via `yt-dlp` + mpv's `ytdl_hook`), and scraping a site's
+already-generated captions (e.g. `yt-dlp --write-auto-sub --skip-download`).
+Both would have trango fetch copyrighted content from a third party.
+Instead, Vaihe 26 onward capture the system's own audio *output* — whatever
+is already playing locally, from any source — and never persist more than
+the resulting `.srt`; no video/audio file trango didn't already have is
+ever downloaded or saved.
+
+## `PlaybackMode::NoVideo` and the segmented control's third segment
+
+`TODO.md` Vaihe 25 adds a third `PlaybackMode` variant for subtitle-only
+operation. Two-state `PlayerState::toggle_mode()` couldn't express a
+three-way choice, so it was replaced outright with `set_mode(mode)` — each
+of the top bar's three `SegmentButton`s now names its own target mode
+directly instead of toggling relative to the current one. The mock
+(`sketch/design_reference.dc.html#1c`) only showed two segments; "No video"
+was added as a third pill in the same segmented-control group rather than a
+separate button, keeping all three mode choices visually equivalent. The
+video area's `Rectangle` stays unconditionally instantiated even in
+`NoVideo` mode (so `video-frame-x/-y/-width/-height`, read every frame by
+`video_player.rs`, keep resolving) — the "No video" placeholder is an
+overlay child inside it, not a swapped-out sibling. Scrub bar and speed
+slider are hidden in `NoVideo` mode since there's no mpv position to show.
+
 ## CI: PR checks and .deb release automation
 
 Pull requests against `master` run `.github/workflows/ci.yml`: fmt +
