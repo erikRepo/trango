@@ -24,12 +24,24 @@ gives a ready-made formatter so no custom logging setup is needed.
 `main`) installs the subscriber:
 
 ```rust
-fn init_logging() {
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+fn init_logging(debug: bool) {
+    let filter = if debug {
+        tracing_subscriber::EnvFilter::new("info,trango=debug,word_analysis=debug")
+    } else {
+        tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+    };
     tracing_subscriber::fmt().with_env_filter(filter).init();
 }
 ```
+
+`debug` comes from the `--debug` CLI flag (`extract_debug_flag`), not an
+environment variable — `CLAUDE.md`'s Rust conventions prefer a flag or
+`config.toml` over environment variables for anything that's a genuine
+per-run/user setting rather than a rarely-changed system path (like
+`TRANGO_WHISPER_CLI_PATH`). `RUST_LOG` still works underneath as a
+lower-level escape hatch when `--debug` isn't passed, for filtering finer
+than the flag's fixed `trango=debug,word_analysis=debug`.
 
 `tracing::debug!`/`warn!`/`error!` calls are used throughout the app at
 the relevant points — see e.g. `TODO.md` Vaihe 10's state-wiring log, or
@@ -37,18 +49,17 @@ the relevant points — see e.g. `TODO.md` Vaihe 10's state-wiring log, or
 full prompt sent to Ollama and the raw text it returned at `debug` level
 (`TODO.md` Vaihe 24) — useful for diagnosing a model that returns
 something `parse_analysis_response` can't make sense of, without needing
-to reproduce the call outside trango.
+to reproduce the call outside trango. Run with `--debug` to see these
+(`cargo run -p trango -- --debug video.mp4`).
 
 ## Pitfalls
 
 - `init_logging()` must be called once, early in `main`, before any
   `tracing::*!` calls — otherwise events are dropped silently.
-- Log level filtering follows the `RUST_LOG` environment variable
-  convention (e.g. `RUST_LOG=debug cargo run -p trango -- video.mp4`), via
-  `tracing-subscriber`'s `env-filter` feature (enabled explicitly in
-  `crates/app/Cargo.toml` — it's not part of `tracing-subscriber`'s
-  default feature set). Without `RUST_LOG` set, `info`-level logging
-  applies, matching the original un-filtered default. `RUST_LOG=debug`
-  also enables `debug`-level logs from dependencies (`winit`, etc.), which
-  can be noisy — scope it to just this crate's own logging with e.g.
-  `RUST_LOG=trango=debug,word_analysis=debug`.
+- `tracing-subscriber`'s `env-filter` feature (needed for both `--debug`'s
+  target-scoped filter and `RUST_LOG` support) isn't part of its default
+  feature set — enabled explicitly in `crates/app/Cargo.toml`.
+- `RUST_LOG=debug` (as opposed to trango's own `--debug` flag) enables
+  `debug`-level logs from every dependency too (`winit` in particular is
+  very chatty) — if reaching for `RUST_LOG` directly, scope it the same
+  way `--debug` does, e.g. `RUST_LOG=trango=debug,word_analysis=debug`.

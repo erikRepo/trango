@@ -809,15 +809,16 @@ component WordAnalysisPopup {
 
 /// Bottom hint bar shown only in `SentenceBySentence` mode (see the `if`
 /// guard where it's instantiated in `AppWindow`), listing the Right/Left/
-/// Space keyboard shortcuts plus Ctrl+T. Right/Left/Space are handled by
-/// `AppWindow`'s `key-pressed` callback and drive
+/// Space keyboard shortcuts plus Ctrl+T and Ctrl+A. Right/Left/Space are
+/// handled by `AppWindow`'s `key-pressed` callback and drive
 /// `next-cue`/`previous-cue`/`repeat-cue`, wired to `playback-state`
 /// navigation and mpv seeking in `crates/app/src/main.rs` and
-/// `video_player.rs`. Ctrl+T calls `toggle-translation` directly, and Space
-/// (play/pause) also works outside `SentenceBySentence` mode — both are
-/// just only *advertised* here since this is the app's only hint surface
-/// so far (`Normal` mode's own hint bar content is `TODO.md` Vaihe 21,
-/// still open).
+/// `video_player.rs`. Ctrl+T calls `toggle-translation` directly, Ctrl+A
+/// calls `show-word-analysis` (`TODO.md` Vaihe 24), and Space (play/pause)
+/// also works outside `SentenceBySentence` mode — all three are just only
+/// *advertised* here since this is the app's only hint surface so far
+/// (`Normal` mode's own hint bar content is `TODO.md` Vaihe 21, still
+/// open).
 component HintBar {
     height: 34px;
 
@@ -859,6 +860,15 @@ component HintBar {
 
             Text {
                 text: "ctrl+t · toggle translation";
+                color: Palette.muted-text;
+                font-family: "JetBrains Mono";
+                font-size: 11px;
+                font-weight: 500;
+                vertical-alignment: center;
+            }
+
+            Text {
+                text: "ctrl+a · word analysis";
                 color: Palette.muted-text;
                 font-family: "JetBrains Mono";
                 font-size: 11px;

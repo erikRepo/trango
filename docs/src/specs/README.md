@@ -682,9 +682,18 @@ these to actually show up needed a second fix — `main.rs`'s
 (see `docs/src/technology/tracing.md`'s corrected "Pitfalls" section:
 the doc previously *claimed* `RUST_LOG` filtering worked, but
 `tracing-subscriber`'s `env-filter` feature — required for that — was
-never actually enabled, so it silently had no effect). `crates/app/Cargo.toml`
-now enables `env-filter`, and `main.rs`'s new `init_logging` builds an
-`EnvFilter` from `RUST_LOG` when set, falling back to the previous
-`info`-level default otherwise — `RUST_LOG=word_analysis=debug cargo run
--p trango -- video.mp4` shows exactly what's sent to and received from
-Ollama without the rest of the app's (or `winit`'s) `debug`-level noise.
+never actually enabled, so it silently had no effect). The first pass
+fixed this by wiring `init_logging` to `RUST_LOG` directly; asked right
+after, the user preferred a CLI flag over an environment variable for a
+setting like this — `CLAUDE.md`'s Rust conventions now say so explicitly
+(flag or `config.toml`, not an env var, unless it's a rarely-changed
+system path like `TRANGO_WHISPER_CLI_PATH`). `main.rs` gained
+`extract_debug_flag`, stripping `--debug` out of the CLI args before the
+existing positional video/subtitle/translation-path parsing sees them
+(so `trango --debug video.mp4 subs.srt` and `trango video.mp4 --debug
+subs.srt` both work) and `init_logging(debug: bool)` uses it, when
+present, to build a fixed `"info,trango=debug,word_analysis=debug"`
+filter directly — no `RUST_LOG` export needed for the common case.
+`RUST_LOG` still works underneath when `--debug` isn't passed, as a
+lower-level escape hatch for filtering finer than the flag's fixed set
+(e.g. `RUST_LOG=word_analysis=trace`).

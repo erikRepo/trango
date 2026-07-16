@@ -29,18 +29,39 @@ fn print_version() {
     println!("trango {}", env!("CARGO_PKG_VERSION"));
 }
 
-/// Installs the `tracing` subscriber, honoring the `RUST_LOG` environment
-/// variable (e.g. `RUST_LOG=debug cargo run -p trango` — or
-/// `RUST_LOG=word_analysis=debug` to enable just the Ollama
-/// request/response logging in `crates/word-analysis/src/ollama.rs`
-/// without the rest of the app's `debug`-level noise) if set, falling
-/// back to `info`-level logging otherwise — the same default
-/// `tracing_subscriber::fmt::init()` used before `RUST_LOG` support was
-/// wired in explicitly (see `docs/src/technology/tracing.md`).
-fn init_logging() {
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+/// Installs the `tracing` subscriber. `debug` (the `--debug` CLI flag,
+/// see `extract_debug_flag`) is the primary way to turn on debug-level
+/// logging — including `crates/word-analysis/src/ollama.rs`'s prompt/
+/// response logging — without needing to export an environment variable;
+/// when set it always wins, filtered to trango's own crates rather than
+/// `debug`-level noise from every dependency (`winit` in particular is
+/// very chatty). Without `--debug`, the `RUST_LOG` environment variable
+/// still works as a lower-level escape hatch for finer-grained filtering
+/// (e.g. `RUST_LOG=word_analysis=trace`), falling back to `info`-level
+/// logging if that isn't set either — the same default
+/// `tracing_subscriber::fmt::init()` used before either was wired in
+/// explicitly (see `docs/src/technology/tracing.md`).
+fn init_logging(debug: bool) {
+    let filter = if debug {
+        tracing_subscriber::EnvFilter::new("info,trango=debug,word_analysis=debug")
+    } else {
+        tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+    };
     tracing_subscriber::fmt().with_env_filter(filter).init();
+}
+
+/// Reads the `--debug` CLI flag out of `args` (as `std::env::args()` would
+/// give `main`), returning whether it was present and `args` with that
+/// flag removed — so `video_path_from_args`/`subtitle_path_from_args`/
+/// `translation_path_from_args`'s fixed positional indices (1/2/3) still
+/// work regardless of where `--debug` was typed among them (e.g. `trango
+/// --debug video.mp4 subs.srt` and `trango video.mp4 --debug subs.srt`
+/// both load the same video/subtitle).
+fn extract_debug_flag(args: Vec<String>) -> (bool, Vec<String>) {
+    let debug = args.iter().any(|arg| arg == "--debug");
+    let args = args.into_iter().filter(|arg| arg != "--debug").collect();
+    (debug, args)
 }
 
 /// Owns a fresh `PlayerState` — defaulting to `SentenceBySentence` mode, the
@@ -1110,7 +1131,8 @@ fn wire_word_analysis_popup(
 }
 
 fn main() -> anyhow::Result<()> {
-    init_logging();
+    let (debug, args) = extract_debug_flag(std::env::args().collect());
+    init_logging(debug);
     tracing::info!("trango starting");
     print_version();
 
@@ -1122,7 +1144,6 @@ fn main() -> anyhow::Result<()> {
 
     let current_media = Rc::new(RefCell::new(CurrentMedia::default()));
 
-    let args: Vec<String> = std::env::args().collect();
     if let Some(subtitle_path) = subtitle_path_from_args(&args) {
         let translation_path = translation_path_from_args(&args);
         let loaded = load_subtitles(
@@ -1229,6 +1250,46 @@ mod tests {
         // When:  reading CARGO_PKG_VERSION
         // Then:  it is non-empty, proving the version is wired up for display
         assert!(!env!("CARGO_PKG_VERSION").is_empty());
+    }
+
+    #[test]
+    fn test_extract_debug_flag_present() {
+        // Given: argv with --debug mixed in among positional args
+        // When:  extracting the flag
+        // Then:  it's reported present, and removed from the remaining args
+        //        so positional indices (video/subtitle/translation) still
+        //        line up
+        let args = vec![
+            "trango".to_string(),
+            "video.mp4".to_string(),
+            "--debug".to_string(),
+            "subs.srt".to_string(),
+        ];
+
+        let (debug, remaining) = extract_debug_flag(args);
+
+        assert!(debug);
+        assert_eq!(
+            remaining,
+            vec![
+                "trango".to_string(),
+                "video.mp4".to_string(),
+                "subs.srt".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn test_extract_debug_flag_absent() {
+        // Given: argv with no --debug flag
+        // When:  extracting the flag
+        // Then:  it's reported absent, and args come back unchanged
+        let args = vec!["trango".to_string(), "video.mp4".to_string()];
+
+        let (debug, remaining) = extract_debug_flag(args.clone());
+
+        assert!(!debug);
+        assert_eq!(remaining, args);
     }
 
     #[test]

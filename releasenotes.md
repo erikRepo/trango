@@ -9,6 +9,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.43] - 2026-07-16
+
+### Added
+- `--debug` CLI flag (`cargo run -p trango -- --debug video.mp4`, works anywhere among the other arguments) — turns on `debug`-level logging scoped to trango's own crates (including the Ollama prompt/response logging added in 0.1.42), without needing to export `RUST_LOG`. `CLAUDE.md`'s Rust conventions now say to prefer a CLI flag or `config.toml` over environment variables for this kind of setting
+- Bottom hint bar: "ctrl+a · word analysis" hint, which TODO.md Vaihe 24 (Ctrl+A word analysis) had left off the hint bar
+
+### Changed
+- `RUST_LOG` still works as a lower-level fallback when `--debug` isn't passed, but is no longer the primary documented way to enable debug logging
+
 ## [0.1.42] - 2026-07-16
 
 ### Added
