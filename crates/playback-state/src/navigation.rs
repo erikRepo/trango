@@ -1,5 +1,5 @@
 //! Cue navigation: `next_cue`, `previous_cue`, `jump_to_cue` (always land
-//! paused — no mode autoplays on its own, see `docs/src/specs/`) and
+//! paused — no mode autoplays on its own, see `docs/src/developer/specs.md`) and
 //! `repeat_current_cue` (Space's "play/replay this cue" directive), as pure
 //! logic. These methods only move `PlayerState`'s cursor and report what
 //! the player should do next — they never touch mpv themselves.

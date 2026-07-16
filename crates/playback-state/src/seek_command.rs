@@ -7,7 +7,7 @@ use std::time::Duration;
 /// A directive telling the player to seek the playhead to `start` and stay
 /// paused there — produced by [`crate::PlayerState`]'s `next_cue`/
 /// `previous_cue`/`jump_to_cue`. No mode starts playback on its own (see
-/// `docs/src/specs/`); only [`PlaySpanCommand`] (Space) does that.
+/// `docs/src/developer/specs.md`); only [`PlaySpanCommand`] (Space) does that.
 /// Interpreting it against a real mpv instance is the caller's
 /// responsibility.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

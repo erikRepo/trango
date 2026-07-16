@@ -10,12 +10,12 @@ code instantiates and drives.
 ## Why it's needed
 
 The UI framework is already decided in the product handoff spec
-(`README.md`): "Rust + Slint + libmpv", with `.slint` markup for
+(`SPEC.md`): "Rust + Slint + libmpv", with `.slint` markup for
 layout/styling and Rust for state/logic.
 
 ## Why this one
 
-It's the toolkit named explicitly in `README.md`'s handoff spec — no
+It's the toolkit named explicitly in `SPEC.md`'s handoff spec — no
 alternative was considered for this project.
 
 ## Usage in this project
@@ -34,7 +34,7 @@ fn main() {
 main window shell (`#1c1d22` background) and a 52px top bar (`#202127`)
 in its full Vaihe 9 visual form — accent dot + "TrangoPlayer" wordmark,
 a Normal / Sentence by sentence segmented control, and two ghost buttons
-("Open video…", "Open subtitles…"). Colors follow README.md's Design
+("Open video…", "Open subtitles…"). Colors follow STYLE.md's Design
 Tokens as a `global Palette` block; the segmented control and ghost
 buttons are small local components (`SegmentButton`, `GhostButton`)
 reused for both instances. The app version is shown in the window title
@@ -76,7 +76,7 @@ bottom hint bar are added in later `TODO.md` steps.
   another thread" / "EventLoop can't be recreated". All assertions that
   need a real `AppWindow` must live in a single test function.
 - `font-family: "Inter"` / `"JetBrains Mono"` (used for the top bar text,
-  per README.md's Design Tokens) resolve to those fonts only if they are
+  per STYLE.md's Design Tokens) resolve to those fonts only if they are
   installed as system fonts; Slint falls back to its default font
   silently otherwise, no build/runtime error. No font files are bundled
   with the app yet.
@@ -105,5 +105,5 @@ bottom hint bar are added in later `TODO.md` steps.
   the in-app case (see Slint's [drag-and-drop tracking
   issue](https://github.com/slint-ui/slint/issues/1967)). This is why the
   Open Subtitles dialog's translation-link feature (`TODO.md` Vaihe 19)
-  uses a small in-app file picker instead of README's drag-and-drop mock —
-  see `docs/src/specs/README.md`'s "Open Subtitles dialog" section.
+  uses a small in-app file picker instead of SPEC.md's drag-and-drop mock —
+  see `docs/src/developer/specs.md`'s "Open Subtitles dialog" section.

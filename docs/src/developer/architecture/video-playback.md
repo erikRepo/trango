@@ -3,7 +3,7 @@
 `crates/app/src/video_player.rs` (+ its `gl_proc_address_bridge` and
 `gl_video_surface` submodules) embeds libmpv video playback inside the
 Slint window, without mpv creating a window of its own. See
-`docs/src/technology/libmpv2.md` for the crate choice and its pitfalls;
+`docs/src/developer/technology/libmpv2.md` for the crate choice and its pitfalls;
 this page covers the mechanism.
 
 ## Mechanism
@@ -273,7 +273,7 @@ This was independently discovered and worked around once already, for one
 specific trigger: generating subtitles for an already-playing video can
 take long enough for it to reach EOF mid-generation, and the fix there
 was to reload the video via `VideoPlayer::load_video` once generation
-finishes (see `docs/src/specs/README.md`'s "Generating subtitles for an
+finishes (see `docs/src/developer/specs.md`'s "Generating subtitles for an
 already-open video reloads it"). That workaround only ever covered its
 one trigger — a video reaching EOF on its own in normal use had no
 equivalent recovery. `keep-open=yes` fixes it at the source instead: mpv
@@ -339,7 +339,7 @@ None of this is meaningfully unit-testable:
 
 - The whole mechanism only exists once Slint has a real OpenGL context,
   which requires a real windowing backend and display connection (see
-  `docs/src/technology/slint.md`'s pitfalls) — not guaranteed in CI.
+  `docs/src/developer/technology/slint.md`'s pitfalls) — not guaranteed in CI.
 - Correctness is about *pixels actually appearing on screen*, which
   `cargo test` has no way to observe. A test could assert
   `render_context.render(...)` returns `Ok(())` and it would still pass

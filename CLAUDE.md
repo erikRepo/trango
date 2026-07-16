@@ -1,20 +1,22 @@
 # CLAUDE.md — trango
 
-Ohjeet AI-avustajalle tämän projektin kehitystyöhön. Lue myös [README.md](README.md) (handoff-spec: näkymät, tilat, design-tokenit).
+Ohjeet AI-avustajalle tämän projektin kehitystyöhön. Lue myös [SPEC.md](SPEC.md) (handoff-spec: näkymät, tilat) ja [STYLE.md](STYLE.md) (design-tokenit).
 
 ## Kieli
 - Koodi, identifierit, Rustdoc-kommentit (`///`) ja inline-kommentit (`//`) — kaikki englanniksi
 - Keskustelu käyttäjän kanssa — suomeksi
 
 ## Projekti
-Rust + [Slint](https://slint.dev) + `libmpv`-pohjainen kielenoppimisvideosoitin. Normaali toisto sekä lause-kerrallaan-tila subtitle-cuejen ajastuksen mukaan. Ks. [README.md](README.md) täysi speksi (näkymät, tilat, interaktiot, design-tokenit).
+Rust + [Slint](https://slint.dev) + `libmpv`-pohjainen kielenoppimisvideosoitin. Normaali toisto sekä lause-kerrallaan-tila subtitle-cuejen ajastuksen mukaan. Ks. [SPEC.md](SPEC.md) täysi speksi (näkymät, tilat, interaktiot) ja [STYLE.md](STYLE.md) (design-tokenit).
 
 ## Keskeiset dokumentit
-- [README.md](README.md) — handoff-spec
+- [README.md](README.md) — lyhyt projektikuvaus + linkki mdbook-dokumentaatioon
+- [SPEC.md](SPEC.md) — alkuperäinen handoff-spec (näkymät, tilat, interaktiot)
+- [STYLE.md](STYLE.md) — visuaalinen design-referenssi ja design-tokenit
 - CLAUDE.md — tämä tiedosto
 - [releasenotes.md](releasenotes.md) — julkaisukohtaiset muutokset (Keep a Changelog -formaatti)
-- `docs/` — mdbook: arkkitehtuuri, speksit, käyttö, teknologiaviitteet
-- `sketch/design_reference.dc.html` — visuaalinen design-referenssi (ei tuotantokoodia, ei porttata suoraan — ks. README "About the Design Files")
+- `docs/` — mdbook (käyttäjädokumentaatio + kehittäjäopas): asennus, käyttö, arkkitehtuuri, speksit, teknologiaviitteet
+- `sketch/design_reference.dc.html` — visuaalinen design-referenssi (ei tuotantokoodia, ei porttata suoraan — ks. STYLE.md "About the Design Files")
 
 ## Kehitystapa: TDD
 - Jokainen ominaisuus tehdään red → green → refactor -syklillä: testi ensin, sitten toteutus, sitten siivous
@@ -72,16 +74,26 @@ Rust + [Slint](https://slint.dev) + `libmpv`-pohjainen kielenoppimisvideosoitin.
   Hyvin lyhyet, itsestään selvät testit voivat tiivistää tämän yhdelle riville tai jättää pois.
 
 ## Dokumentaatio (mdbook, `docs/`)
+
+mdBook on käyttäjälle suunnattu: tarina etenee sivu sivulta yksinkertaisesta
+kohti syvempää, developer-sisältö on omana osionaan vasta lopussa.
+
 ```
 docs/
   src/
     SUMMARY.md
-    usage/           ← asennus, käyttö, näppäinkomennot
-    architecture/     ← crate-rakenne, tilamalli, subtitle-pipeline
-    specs/            ← toiminnalliset määrittelyt (mitä sovellus tekee)
-    technology/       ← yksi sivu per uusi riippuvuus (slint, libmpv, ...)
+    README.md                  ← etusivu: yleiskuvaus sovelluksesta
+    getting-started/           ← asennus, ensimmäisen videon avaaminen
+    usage/                     ← ominaisuudet käyttäjälle: tilat, pikanäppäimet,
+                                  tekstitykset, asetukset — yksi sivu per aihe
+    developer/                 ← kehittäjädokumentaatio, oma yläosio SUMMARY.md:ssä
+      README.md                 ← osion etusivu
+      architecture/              ← crate-rakenne, tilamalli, video-pipeline
+      specs.md                   ← toiminnalliset määrittelyt / päätöslogi
+      technology/                ← yksi sivu per riippuvuus (slint, libmpv, ...)
 ```
-- Uusi crate `Cargo.toml`:iin → oma sivu `docs/src/technology/` + lisäys `SUMMARY.md`:hen (yleiskuvaus, miksi tarvitaan, miksi juuri tämä, käyttöesimerkit projektissa, sudenkuopat)
+- Uusi crate `Cargo.toml`:iin → oma sivu `docs/src/developer/technology/` + lisäys `SUMMARY.md`:hen (yleiskuvaus, miksi tarvitaan, miksi juuri tämä, käyttöesimerkit projektissa, sudenkuopat)
+- Uusi käyttäjälle näkyvä ominaisuus → oma tai olemassa olevaa sivua täydentävä sivu `docs/src/usage/`-hakemistoon, kirjoitettuna käyttäjälle (ei toteutusyksityiskohtia) — toteutuksen taustat/päätökset menevät `docs/src/developer/specs.md`:hen
 - Kuvaa nykytila, ei tavoitetta — älä dokumentoi asioita jotka eivät vielä ole totta
 - Päivitetään jokaisen koodimuutoksen yhteydessä joka siihen vaikuttaa
 

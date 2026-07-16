@@ -6,8 +6,10 @@ Askeleet edetään järjestyksessä ylhäältä alas; älä hyppää eteenpäin 
 edellinen on "valmis"-kriteerien mukainen.
 
 Katso [CLAUDE.md](CLAUDE.md) kehitystavasta (TDD, skriptit, git-työnkulku,
-Rust-konventiot) ja [README.md](README.md) täydestä tuotespeksistä (näkymät,
-tilat, design-tokenit).
+Rust-konventiot) ja [SPEC.md](SPEC.md) täydestä tuotespeksistä (näkymät,
+tilat) sekä [STYLE.md](STYLE.md) (design-tokenit). Loput tämän tiedoston
+"README:n" viittaukset kirjoitushetken speksiin tarkoittavat samaa sisältöä,
+joka asuu nykyään SPEC.md/STYLE.md:ssä.
 
 ## Jokaisen askeleen "valmis"-kriteerit (toistuu joka kohdassa)
 

@@ -11,7 +11,7 @@ frames into its own OpenGL context instead of mpv creating its own window.
 
 ## Why it's needed
 
-The product spec (`README.md`) names `libmpv` for video playback and
+The product spec (`SPEC.md`) names `libmpv` for video playback and
 subtitle timing. `TODO.md` Vaihe 11 needs to embed video *inside* the Slint
 window (a bounded area, not a separate window), which requires the render
 API rather than mpv's default "give me a window handle" embedding mode.
@@ -32,7 +32,7 @@ per `CLAUDE.md` before adding.
 `vo=libmpv`, telling mpv not to open its own window) and, once Slint's
 window has an OpenGL context, an `mpv::render::RenderContext` created from
 it. The two are tied together via `slint::Window::set_rendering_notifier`
-— see `docs/src/architecture/video-playback.md` for the full mechanism.
+— see `docs/src/developer/architecture/video-playback.md` for the full mechanism.
 
 `crates/app/src/video_player/gl_proc_address_bridge.rs` exists purely to
 adapt Slint's `get_proc_address` closure (borrowed, valid only inside one
@@ -64,6 +64,6 @@ pre-generated bindings — no `bindgen`/`libclang` needed at build time, but
   framebuffer id you pass it — there's no x/y offset parameter to draw
   into an arbitrary sub-rectangle of a larger already-bound framebuffer.
   `video_player.rs` currently renders across the whole window (see
-  `docs/src/architecture/video-playback.md`); a real inset video area with
+  `docs/src/developer/architecture/video-playback.md`); a real inset video area with
   surrounding chrome will need its own offscreen FBO+texture in a later
   step.

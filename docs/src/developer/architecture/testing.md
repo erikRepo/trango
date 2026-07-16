@@ -28,7 +28,7 @@ instead of hand-built `Cue` literals:
 ## What this suite deliberately does not cover
 
 - **libmpv rendering/decoding.** The E2E test never opens `sample.mp4`
-  through mpv or drives `video_player::VideoPlayer`. `docs/src/architecture/
+  through mpv or drives `video_player::VideoPlayer`. `docs/src/developer/architecture/
   video-playback.md` explains why: the render path only exists once Slint
   has a real OpenGL context backed by a real windowing/display connection,
   which isn't guaranteed available where `cargo test` runs, and correctness

@@ -15,9 +15,9 @@ which needs a second parse.
 
 ## Why this one
 
-trango already uses `serde` (see `docs/src/technology/serde.md`) for its
+trango already uses `serde` (see `docs/src/developer/technology/serde.md`) for its
 TOML config; `serde_json` is `serde`'s equally standard JSON counterpart
-and is also what `ureq`'s `json` feature (see `docs/src/technology/ureq.md`)
+and is also what `ureq`'s `json` feature (see `docs/src/developer/technology/ureq.md`)
 uses under the hood for `send_json`/`read_json`.
 
 ## Usage in this project

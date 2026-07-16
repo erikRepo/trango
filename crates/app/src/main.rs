@@ -40,7 +40,7 @@ fn print_version() {
 /// (e.g. `RUST_LOG=word_analysis=trace`), falling back to `info`-level
 /// logging if that isn't set either — the same default
 /// `tracing_subscriber::fmt::init()` used before either was wired in
-/// explicitly (see `docs/src/technology/tracing.md`).
+/// explicitly (see `docs/src/developer/technology/tracing.md`).
 fn init_logging(debug: bool) {
     let filter = if debug {
         tracing_subscriber::EnvFilter::new("info,trango=debug,word_analysis=debug")
@@ -119,7 +119,7 @@ fn wire_player_state(window: &AppWindow) -> Rc<RefCell<PlayerState>> {
 ///
 /// `next-cue`/`previous-cue`/`jump-to-cue` land on a different cue's start
 /// and always leave mpv paused there — no mode autoplays on navigation
-/// alone (see `docs/src/specs/`) — via `PlayerState`'s matching methods,
+/// alone (see `docs/src/developer/specs.md`) — via `PlayerState`'s matching methods,
 /// mirroring the result into the sentence card/list and handing the
 /// produced `SeekCommand` to `video_player::VideoPlayer::seek_and_pause`.
 ///
@@ -196,7 +196,7 @@ fn cue_navigation_handler(
 /// Mirrors a navigation result into the sentence card and sentence list, and
 /// — if a `SeekCommand` was produced — hands it to `video_player` to drive
 /// mpv. Shared by arrow-key handling and the sentence list's row-click
-/// handling so both paths behave identically, per README's "Sentence list"
+/// handling so both paths behave identically, per SPEC.md's "Sentence list"
 /// spec ("same behavior as arrow navigation").
 fn apply_navigation_result(
     window: &AppWindow,
@@ -314,7 +314,7 @@ struct CurrentMedia {
 /// videos too), otherwise `config`'s last-opened video folder
 /// (`TrangoConfig::video_folder`, kept up to date by `open_selected_video`),
 /// otherwise the current working directory. An in-dialog folder switcher is
-/// out of scope for Vaihe 18 — see `docs/src/specs/README.md`.
+/// out of scope for Vaihe 18 — see `docs/src/developer/specs.md`.
 fn default_video_folder(args: &[String], config: &config::TrangoConfig) -> PathBuf {
     video_path_from_args(args)
         .and_then(|path| path.parent().map(Path::to_path_buf))
@@ -1642,7 +1642,7 @@ mod tests {
         assert!(!window.get_open_subtitles_translation_linked());
 
         // When:  requesting the translation-link file picker (replacing
-        //        README's OS drag-and-drop — see open_subtitles_dialog's
+        //        SPEC.md's OS drag-and-drop — see open_subtitles_dialog's
         //        module doc for why)
         // Then:  it lists both .srt files next to the video, sorted by name
         window.invoke_link_translation_requested();

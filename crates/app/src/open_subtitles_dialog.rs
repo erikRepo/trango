@@ -4,7 +4,7 @@
 //! `TODO.md` Vaihe 20), plus a translation section that can be linked via a
 //! small in-app file picker.
 //!
-//! README's mock links the translation section via drag-and-drop from the
+//! SPEC.md's mock links the translation section via drag-and-drop from the
 //! OS file manager, but that isn't available: Slint 1.17.1's winit backend
 //! doesn't handle `winit::event::WindowEvent::DroppedFile` at all, so its
 //! `DropArea` only ever receives drags started by an in-app `DragArea` —

@@ -1,5 +1,5 @@
 //! Open Video dialog (Vaihe 18): an in-app modal listing a folder's video
-//! files and subfolders — no OS-native file/folder picker, per README's
+//! files and subfolders — no OS-native file/folder picker, per SPEC.md's
 //! `#2a` mock — with in-dialog navigation (an "‥ Up" row plus clicking a
 //! subfolder) and same-stem `.srt` auto-matching once a video is opened.
 
@@ -11,12 +11,12 @@ use slint::VecModel;
 
 use crate::{AppWindow, FileListRow};
 
-/// Video file extensions recognized when listing a folder. README doesn't
+/// Video file extensions recognized when listing a folder. SPEC.md doesn't
 /// scope this further, so this covers the common containers a language
 /// learner is likely to have on disk.
 const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mkv", "webm", "mov", "avi"];
 
-/// A selectable, openable video file — one possible [`FolderEntry`]. README
+/// A selectable, openable video file — one possible [`FolderEntry`]. SPEC.md
 /// defers duration/size metadata to a later iteration if probing turns out
 /// heavy (`TODO.md` Vaihe 18) — `size_label` (a cheap `std::fs::metadata`
 /// read) is currently the only metadata shown alongside the name; duration
@@ -140,7 +140,7 @@ pub fn format_file_size(bytes: u64) -> String {
     }
 }
 
-/// Looks for a same-stem `.srt` file next to `video_path` (README: "attempts
+/// Looks for a same-stem `.srt` file next to `video_path` (SPEC.md: "attempts
 /// to auto-match a same-name subtitle file"), e.g. `der_anruf.mp4` →
 /// `der_anruf.srt`. Returns `None` if `video_path` has no parent/stem or no
 /// matching file exists on disk.

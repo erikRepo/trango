@@ -1,5 +1,5 @@
 //! Embeds libmpv video playback into the Slint window as an OpenGL
-//! "underlay" (see `docs/src/architecture/video-playback.md` for the full
+//! "underlay" (see `docs/src/developer/architecture/video-playback.md` for the full
 //! picture and why this can't be meaningfully unit-tested).
 //!
 //! Mechanism: `slint::Window::set_rendering_notifier` lets us hook into
@@ -128,7 +128,7 @@ impl VideoPlayer {
     /// used here only for the initial `loadfile`'s own start-of-playback
     /// pause/seek (see [`pause_and_arm_start_seek`]). `current_cue_index`
     /// is otherwise only ever moved by explicit navigation/Space actions,
-    /// not by anything time-pos-driven — see `docs/src/specs/`, "No mode
+    /// not by anything time-pos-driven — see `docs/src/developer/specs.md`, "No mode
     /// autoplays", for why polling `time-pos` to live-track the current
     /// cue was removed rather than patched again.
     pub fn attach(
@@ -146,7 +146,7 @@ impl VideoPlayer {
             // is reloaded from scratch. That failure mode is already
             // documented and specifically worked around for one trigger
             // (generating subtitles mid-playback — see
-            // `docs/src/specs/README.md`'s "Generating subtitles for an
+            // `docs/src/developer/specs.md`'s "Generating subtitles for an
             // already-open video reloads it"), but any video that simply
             // plays to its own end in Normal mode hit the same wall with
             // no recovery. `keep-open=yes` keeps the core loaded and
@@ -215,7 +215,7 @@ impl VideoPlayer {
 
     /// Applies a `playback_state` navigation `SeekCommand`: seeks mpv to
     /// `command.start` and pauses it there. No mode autoplays on navigation
-    /// (see `docs/src/specs/`) — only [`toggle_play_span`](Self::toggle_play_span)
+    /// (see `docs/src/developer/specs.md`) — only [`toggle_play_span`](Self::toggle_play_span)
     /// (Space) starts playback. Called from `main.rs`'s `next-cue`/
     /// `previous-cue`/`jump-to-cue` callback handlers.
     pub fn seek_and_pause(&self, command: SeekCommand) {
@@ -359,7 +359,7 @@ fn apply_pending_pause(inner: &Rc<RefCell<VideoPlayerInner>>) {
 /// Pauses mpv immediately after `loadfile` — setting the `pause` property
 /// is safe before the file has actually loaded, unlike the `seek` command —
 /// unconditionally, regardless of mode or whether any subtitle is loaded:
-/// no mode autoplays on its own (see `docs/src/specs/`, "No mode
+/// no mode autoplays on its own (see `docs/src/developer/specs.md`, "No mode
 /// autoplays"), a video with no subtitle included, so it always lands
 /// paused rather than running until the user explicitly starts it (Space).
 ///

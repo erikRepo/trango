@@ -16,7 +16,7 @@ TOML is a common choice for small, hand-editable app config files (it's
 what `Cargo.toml` itself uses) — easy for a user to open and edit
 directly if something needs fixing, unlike JSON's stricter syntax or a
 binary format. The `toml` crate is the standard implementation, and
-integrates directly with `serde` (see `docs/src/technology/serde.md`),
+integrates directly with `serde` (see `docs/src/developer/technology/serde.md`),
 which trango already needed for this feature anyway.
 
 ## Usage in this project

@@ -1,10 +1,10 @@
-# Specs
+# Design decisions
 
-Not written yet. This section will hold functional specifications for app
-behavior that go beyond what's already covered by the repository root
-`README.md` handoff spec — for example, implementation decisions the
-handoff spec leaves open (see e.g. `TODO.md` Vaihe 21, Normal mode's
-sentence-panel behavior).
+A running log of implementation decisions for app behavior that goes
+beyond what's already covered by the repository root `SPEC.md` handoff
+spec — for example, implementation decisions the handoff spec leaves
+open (see e.g. `TODO.md` Vaihe 21, Normal mode's sentence-panel
+behavior).
 
 ## Open Video dialog: folder navigation
 
@@ -16,7 +16,7 @@ last successfully opened video lived in, kept up to date by
 directory), but isn't limited to it: an "‥ Up" row and clicking a listed
 subfolder navigate the dialog in place, re-listing that folder's contents
 (`open_video_dialog::list_folder_entries`). This was chosen over a
-native OS folder picker to stay consistent with README's "no OS-native
+native OS folder picker to stay consistent with SPEC.md's "no OS-native
 file picker — mockin oma UI" direction for the dialog as a whole, and
 needs no new dependency. `TODO.md`'s "Ei tässä listassa" section originally
 deferred folder switching with a *native* picker specifically; this in-app
@@ -24,12 +24,12 @@ navigation isn't that, so it's covered here instead.
 
 ## Open Subtitles dialog: no OS drag-and-drop for the translation link
 
-README specs the translation section's `.srt` linking as an OS-level
+SPEC.md specs the translation section's `.srt` linking as an OS-level
 drag-and-drop target ("drop a translated .srt file here"). That isn't
 implemented as literal drag-and-drop: Slint 1.17.1's winit backend doesn't
 relay external file drops to `DropArea` at all (only in-app `DragArea`
 sources, of which this dialog has none) — see
-`docs/src/technology/slint.md`'s "Pitfalls" section for how that was
+`docs/src/developer/technology/slint.md`'s "Pitfalls" section for how that was
 confirmed. `TODO.md` Vaihe 19 instead links a translation subtitle through
 a small in-app file picker (`open_subtitles_dialog::list_srt_files` +
 `crates/app/main.rs`'s `wire_open_subtitles_dialog`'s
@@ -43,7 +43,7 @@ re-merges cues immediately (not deferred to the Open Subtitles dialog's
 drop support later, this picker can stay as a fallback/alternate entry
 point rather than being removed outright.
 
-README's mock also labels the two subtitle sections "(DE)"/"(EN)" as
+SPEC.md's mock also labels the two subtitle sections "(DE)"/"(EN)" as
 language-code examples for that specific demo video; since trango doesn't
 track subtitle language, the dialog instead uses the generic labels
 "Original subtitle" / "Translation".
@@ -245,7 +245,7 @@ dialog's equivalent doesn't need to:
   exists; finally the current working directory. This is deliberately not
   exhaustive OS-specific magic (no registry lookups, no `dirs`/`directories`
   crate) — just a handful of well-known conventions plus always-available
-  manual navigation as the fallback, in keeping with README's "no
+  manual navigation as the fallback, in keeping with SPEC.md's "no
   OS-native file picker" direction for every other in-app dialog.
 - **Persisting the pick.** `crates/app/src/config.rs` adds trango's first
   persistent settings file — `$XDG_CONFIG_HOME/trango/config.toml`
@@ -279,7 +279,7 @@ documentation/guidance only, trango doesn't enforce or check it.
 
 (Superseded as the sole fix for the underlying idle-core problem by
 `keep-open=yes` on the mpv core itself — see
-`docs/src/architecture/video-playback.md`'s "EOF leaves the core idle
+`docs/src/developer/architecture/video-playback.md`'s "EOF leaves the core idle
 unless `keep-open` is set". The reload described below is still done, but
 now as a bonus (it also re-arms the sentence-by-sentence start-of-playback
 seek onto the newly-generated subtitle's first cue) rather than the only
@@ -328,7 +328,7 @@ all.
 
 Found through real usage, right after the fix above: pressing Space to
 replay the current sentence kept landing on the *next* sentence instead,
-even with a healthy, seekable mpv core. README originally left Right
+even with a healthy, seekable mpv core. SPEC.md originally left Right
 Arrow's exact behavior on landing at a new cue as an implementer's call
 ("pause or continue per current play state... recommend: play through to
 the end of that cue, then pause"); the initial implementation chose
@@ -485,7 +485,7 @@ special case.
 
 ## Word analysis: local Ollama, not a cloud API
 
-`TODO.md` Vaihe 24 is a step not called out in the original README
+`TODO.md` Vaihe 24 is a step not called out in the original SPEC.md
 handoff spec — added later, for a concrete language-learning need: given
 the sentence currently on screen, break it into words and show each
 word's translation and a pronunciation guide (the motivating case was
@@ -501,7 +501,7 @@ to its already-running HTTP API.
 ### Crate split: `word-analysis`
 
 Following the same reasoning as `subtitle`/`playback-state`
-(`docs/src/architecture/crates.md`), the HTTP/JSON/cache-file logic lives
+(`docs/src/developer/architecture/crates.md`), the HTTP/JSON/cache-file logic lives
 in its own crate (`crates/word-analysis`) with no Slint or libmpv
 dependency, so it's unit-testable — including against a hand-rolled local
 mock HTTP server — without a UI or a real Ollama install. `crates/app`
@@ -689,7 +689,7 @@ Ollama had actually sent back): `analyze_sentence` now logs the full
 prompt and the raw `response` text at `tracing::debug!` level. Getting
 these to actually show up needed a second fix — `main.rs`'s
 `tracing_subscriber::fmt::init()` predates any real use of `RUST_LOG`
-(see `docs/src/technology/tracing.md`'s corrected "Pitfalls" section:
+(see `docs/src/developer/technology/tracing.md`'s corrected "Pitfalls" section:
 the doc previously *claimed* `RUST_LOG` filtering worked, but
 `tracing-subscriber`'s `env-filter` feature — required for that — was
 never actually enabled, so it silently had no effect). The first pass

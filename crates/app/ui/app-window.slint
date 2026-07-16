@@ -1,6 +1,6 @@
 // TrangoPlayer main window shell.
 //
-// Top bar in its full visual form per README.md's design tokens (wordmark,
+// Top bar in its full visual form per STYLE.md's design tokens (wordmark,
 // segmented control, ghost buttons) — pixel reference is
 // sketch/design_reference.dc.html#1c. The segmented control's `toggle-mode`
 // callback is handled in Rust (crates/app/src/main.rs), which drives
@@ -10,7 +10,7 @@
 
 import { LineEdit, ListView, ScrollView } from "std-widgets.slint";
 
-/// Color tokens from README.md's "Design Tokens" section, shared across the
+/// Color tokens from STYLE.md's "Design Tokens" section, shared across the
 /// top bar components below.
 global Palette {
     out property <color> window-bg: #1c1d22;
@@ -28,7 +28,7 @@ global Palette {
 }
 
 /// Subtitle generation status for the Open Subtitles dialog's "Generate
-/// subtitles" flow (`TODO.md` Vaihe 20, README's `subtitleGenerationStatus`).
+/// subtitles" flow (`TODO.md` Vaihe 20, SPEC.md's `subtitleGenerationStatus`).
 /// Driven from Rust (`crates/app/src/subtitle_generation.rs`) as
 /// `AppWindow::subtitle-generation-status`.
 export enum SubtitleGenerationStatus {
@@ -268,7 +268,7 @@ struct SentenceListRow {
 /// (`crates/app/src/sentence_list.rs`) whenever the loaded cues or the
 /// current cue change. Clicking a row emits `row-clicked` with that row's
 /// index, which `main.rs` wires to the same `playback-state::jump_to_cue`
-/// navigation used by arrow-key navigation — see README's "Sentence list"
+/// navigation used by arrow-key navigation — see SPEC.md's "Sentence list"
 /// interaction spec.
 component SentenceListCard inherits Rectangle {
     in property <[SentenceListRow]> rows: [];
@@ -943,7 +943,7 @@ component ScrubBar {
 /// A subtitle file already linked to the video: small accent chip + name +
 /// muted "linked" tag. Used by `OpenSubtitlesDialog` for both the
 /// original-language and translation sections once a file is set — per
-/// README, both get "the same visual treatment" once linked.
+/// SPEC.md, both get "the same visual treatment" once linked.
 component LinkedFileRow {
     in property <string> file-name;
 
@@ -1699,7 +1699,7 @@ export component AppWindow inherits Window {
         key-pressed(event) => {
             if (event.modifiers.control && (event.text == "t" || event.text == "T")) {
                 // Translation visibility is purely visual and independent
-                // of playback mode (see README), so Ctrl+T is handled
+                // of playback mode (see SPEC.md), so Ctrl+T is handled
                 // before the sentence-mode-active guard below, unlike
                 // Right/Left which only make sense in SentenceBySentence
                 // mode.

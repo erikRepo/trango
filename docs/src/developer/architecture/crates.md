@@ -7,7 +7,7 @@ four members:
 
 Holds the `Cue` data model (`index`, `start`, `end`, `text`,
 `translation`) and `SubtitleError` (see
-`docs/src/technology/thiserror.md`). `Cue::new` validates that `start <
+`docs/src/developer/technology/thiserror.md`). `Cue::new` validates that `start <
 end` and leaves `translation` as `None`. `parse_srt(&str) ->
 Result<Vec<Cue>, SubtitleError>` parses `.srt` file contents into cues:
 it strips a leading UTF-8 BOM, normalizes `\n`/`\r\n` line endings, and
@@ -61,7 +61,7 @@ player should do" — instead of driving mpv directly:
 
 `format_time(seconds: f64) -> String` formats a playback time as `MM:SS`,
 or `H:MM:SS` once it reaches an hour; used for the scrub bar's time labels
-(see `docs/src/architecture/video-playback.md`). It clamps negative or
+(see `docs/src/developer/architecture/video-playback.md`). It clamps negative or
 non-finite input (e.g. mpv's `time-pos`/`duration` before a video has
 started reporting them) to `00:00` instead of panicking or underflowing.
 
@@ -71,7 +71,7 @@ playing, or the most recently started one if `time` falls in a gap between
 cues — and `None` if `time` is before the first cue's start or no cues are
 loaded. This is what drives the current-sentence card from mpv's `time-pos`
 while in `SentenceBySentence` mode (see
-`docs/src/architecture/video-playback.md`).
+`docs/src/developer/architecture/video-playback.md`).
 
 No I/O and no UI yet, so this state machine (and `format_time`) is TDD'd
 without a Slint window or a video file.
@@ -102,7 +102,7 @@ becomes an empty `AnalysisCache::default()` (logged via `tracing::warn!`),
 not an error — a lost cache means re-analyzing, not a failure to start.
 
 `ollama.rs` talks to a local Ollama instance (see
-`docs/src/technology/ureq.md`). The `OllamaClient` trait (`list_models`,
+`docs/src/developer/technology/ureq.md`). The `OllamaClient` trait (`list_models`,
 `analyze_sentence`) lets callers swap in a fake instead of a real server
 in tests, mirroring `subtitle::SubtitleGenerator`'s role for whisper-cli.
 `HttpOllamaClient` implements it over HTTP, defaulting to
@@ -128,12 +128,12 @@ describe its role. The product name shown in the UI is **TrangoPlayer**.
 
 `crates/app/src/main.rs` initializes `tracing` logging, prints the crate
 version, and opens the Slint main window defined in
-`crates/app/ui/app-window.slint` (see `docs/src/technology/slint.md`) —
+`crates/app/ui/app-window.slint` (see `docs/src/developer/technology/slint.md`) —
 window background and a full top bar (wordmark, segmented control, ghost
 buttons). `video_player::VideoPlayer::attach` always runs once, right
 after the window is created, embedding libmpv playback into it (see
-`docs/src/architecture/video-playback.md` and
-`docs/src/technology/libmpv2.md`) and starting a repeating timer that
+`docs/src/developer/architecture/video-playback.md` and
+`docs/src/developer/technology/libmpv2.md`) and starting a repeating timer that
 polls mpv's `time-pos`/`duration` properties to drive the scrub bar below
 the video frame — *even without a video path yet*, for reasons the linked
 architecture page explains in detail (a Slint API subtlety around when its
@@ -150,7 +150,7 @@ folder's subfolders and video files (by extension, with a
 since it would need decoding the file) as `FolderEntry` rows, and
 `open_video_dialog::matching_subtitle_path` looks for a same-stem `.srt`
 next to the chosen video. Clicking an `Up`/`Folder` row navigates the
-dialog to that folder in place (see `docs/src/specs/README.md`'s "Open
+dialog to that folder in place (see `docs/src/developer/specs.md`'s "Open
 Video dialog: folder navigation") instead of selecting it — only `Video`
 rows are selectable. `wire_open_video_dialog` in `main.rs` wires the
 button, row navigation/selection, and the "Open" button's
@@ -159,7 +159,7 @@ clears stale cues if none match), then calls the already-attached
 `VideoPlayer`'s `load_video` — the session's first video load if trango
 started with no CLI argument, or a later one if switching files
 mid-session; either way the same `VideoPlayer` from startup — see
-`docs/src/architecture/video-playback.md`.
+`docs/src/developer/architecture/video-playback.md`.
 
 If a second CLI argument is given (`trango video.mp4 subs.srt`),
 `load_subtitles` reads and parses it (via the shared `parse_subtitle_file`
@@ -168,7 +168,7 @@ helper, which wraps `subtitle::parse_srt`), loads the resulting cues into
 current-sentence card (`crates/app/src/sentence_card.rs`,
 `update_sentence_card`) and the sentence list (`crates/app/src/sentence_list.rs`,
 `update_sentence_list`) — see
-`docs/src/architecture/video-playback.md` for how both keep updating
+`docs/src/developer/architecture/video-playback.md` for how both keep updating
 from mpv's `time-pos` afterward. A file that can't be read or doesn't parse
 is logged and otherwise ignored — a bad subtitle path shouldn't stop the
 video from playing.

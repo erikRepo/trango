@@ -2,27 +2,34 @@
 
 [Introduction](README.md)
 
-# Usage
+# Getting Started
 
-- [Usage](usage/README.md)
+- [Installation](getting-started/installation.md)
+- [Opening your first video](getting-started/first-video.md)
 
-# Architecture
+# Using TrangoPlayer
 
-- [Crates](architecture/crates.md)
-- [Video playback](architecture/video-playback.md)
-- [Testing](architecture/testing.md)
+- [Playback modes](usage/playback-modes.md)
+- [Keyboard shortcuts](usage/keyboard-shortcuts.md)
+- [Subtitles](usage/subtitles.md)
+- [Generating subtitles automatically](usage/generating-subtitles.md)
+- [Word-by-word analysis](usage/word-analysis.md)
+- [Settings](usage/settings.md)
 
-# Specs
+# Developer Guide
 
-- [Specs](specs/README.md)
-
-# Technology
-
-- [tracing](technology/tracing.md)
-- [thiserror](technology/thiserror.md)
-- [slint](technology/slint.md)
-- [libmpv2](technology/libmpv2.md)
-- [serde](technology/serde.md)
-- [toml](technology/toml.md)
-- [ureq](technology/ureq.md)
-- [serde_json](technology/serde_json.md)
+- [Overview](developer/README.md)
+- [Architecture](developer/architecture/README.md)
+    - [Crate structure](developer/architecture/crates.md)
+    - [Video playback](developer/architecture/video-playback.md)
+    - [Testing](developer/architecture/testing.md)
+- [Design decisions](developer/specs.md)
+- [Technology choices](developer/technology/README.md)
+    - [tracing](developer/technology/tracing.md)
+    - [thiserror](developer/technology/thiserror.md)
+    - [slint](developer/technology/slint.md)
+    - [libmpv2](developer/technology/libmpv2.md)
+    - [serde](developer/technology/serde.md)
+    - [toml](developer/technology/toml.md)
+    - [ureq](developer/technology/ureq.md)
+    - [serde_json](developer/technology/serde_json.md)

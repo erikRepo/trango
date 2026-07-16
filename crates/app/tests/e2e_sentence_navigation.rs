@@ -1,9 +1,9 @@
 //! End-to-end test: parses the real sample subtitle fixture and drives
 //! `playback-state`'s cue navigation over it, tying subtitle parsing and
 //! navigation logic together against real files instead of synthetic cues.
-//! See `docs/src/architecture/testing.md` for what this suite covers and
+//! See `docs/src/developer/architecture/testing.md` for what this suite covers and
 //! what it deliberately leaves out (e.g. libmpv rendering — see
-//! `docs/src/architecture/video-playback.md`).
+//! `docs/src/developer/architecture/video-playback.md`).
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -31,7 +31,7 @@ fn test_sample_video_fixture_exists() {
     // When:  checking it on disk
     // Then:  it exists and is non-empty — ties it to the subtitle fixture
     //        below without decoding it, since libmpv rendering itself isn't
-    //        unit-testable (see docs/src/architecture/video-playback.md)
+    //        unit-testable (see docs/src/developer/architecture/video-playback.md)
     let video_path = sample_media_dir().join("sample.mp4");
     let metadata = std::fs::metadata(&video_path)
         .unwrap_or_else(|err| panic!("failed to stat fixture {video_path:?}: {err}"));
@@ -60,7 +60,7 @@ fn test_cue_navigation_walks_all_sample_cues_forward_and_back() {
     // Then:  the cursor and every returned command match the fixture's
     //        real timings at each step. next_cue/previous_cue only ever
     //        carry a seek target (no mode autoplays on navigation, see
-    //        docs/src/specs/); repeat_current_cue (Space) is the one that
+    //        docs/src/developer/specs.md); repeat_current_cue (Space) is the one that
     //        carries a full start/end span to play.
     let cues = sample_cues();
     let mut state = PlayerState::new();
