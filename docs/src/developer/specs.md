@@ -248,3 +248,19 @@ Slint's bidi support improves, or if this affects enough real subtitle
 content to justify manually inserting Unicode directional-isolate marks
 (U+2066/U+2069) around embedded Latin runs before handing cue text to
 `sentence_card.rs`.
+
+## CI: PR checks and .deb release automation
+
+Pull requests against `master` run `.github/workflows/ci.yml`: fmt +
+clippy (`scripts/check.sh`), the test suite (`scripts/test.sh`), and a
+release build, as three separate jobs so failures are easy to tell apart.
+
+`.github/workflows/release-deb.yml` builds and publishes a `.deb` as a
+GitHub Release whenever `master`'s workspace `Cargo.toml` changes — in
+practice, every merged PR, since versioning bumps on every commit. A
+`check-version` job guards against re-publishing a version that already
+has a release (e.g. a `Cargo.toml` change that touched something other
+than the version field). Packaging uses `cargo-deb`, configured via
+`[package.metadata.deb]` in `crates/app/Cargo.toml`; runtime `Depends`
+are left at the default `$auto` so `dpkg-shlibdeps` derives them from the
+built binary's actual shared-library links instead of being hand-maintained.

@@ -9,6 +9,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.51] - 2026-07-16
+
+### Added
+- CI on every pull request against `master`: `scripts/check.sh` (fmt + clippy), `scripts/test.sh`, and a release-profile build, each as a separate GitHub Actions job (`.github/workflows/ci.yml`)
+- GitHub Actions workflow (`.github/workflows/release-deb.yml`) publishes a `.deb` package as a GitHub Release whenever the workspace version in `Cargo.toml` changes on `master` — skips if a release for that version already exists. Packaging metadata lives in `crates/app/Cargo.toml`'s `[package.metadata.deb]` (`cargo-deb`)
+
 ## [0.1.50] - 2026-07-16
 
 ### Fixed
