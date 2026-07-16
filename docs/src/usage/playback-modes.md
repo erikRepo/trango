@@ -34,6 +34,14 @@ player. Space still works here — it's a plain play/pause toggle, with no
 per-line seeking or auto-pausing. Click or drag the scrub bar to seek to
 any point in the video.
 
+## Playback speed
+
+A speed slider sits below the scrub bar, always visible in either mode.
+Its right edge is normal speed (1.0x) — dragging it left only slows the
+video down, in steps down to 0.5x, marked "0.5x"/"0.75x"/"1.0x" along
+the track. Useful for hearing a fast line more clearly without losing
+per-sentence navigation in Sentence by sentence mode.
+
 ## Common to both modes
 
 - **Ctrl+T** toggles a translated line underneath the current sentence,

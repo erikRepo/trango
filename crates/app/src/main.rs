@@ -182,6 +182,33 @@ fn wire_scrub_bar(window: &AppWindow, video_player: Rc<video_player::VideoPlayer
     window.on_seek_requested(move |fraction| video_player.seek_to_fraction(fraction));
 }
 
+/// Wires the window's `speed-requested` callback — invoked by the always-
+/// visible playback-speed slider (`app-window.slint`'s `SpeedSlider`) on
+/// click/drag with the pointer's fraction across the track. Maps that
+/// fraction to an actual mpv speed with `playback_state::speed_from_fraction`
+/// (max is normal speed — see `SpeedSlider`'s doc comment), applies it via
+/// `video_player::VideoPlayer::set_speed`, and mirrors the result back into
+/// `current-playback-speed`/`-label` so the slider's thumb and value text
+/// reflect it. Also sets the window's initial "1.00x" state, matching
+/// `AppWindow`'s own property defaults.
+fn wire_speed_slider(window: &AppWindow, video_player: Rc<video_player::VideoPlayer>) {
+    window.set_current_playback_speed(playback_state::MAX_SPEED as f32);
+    window.set_current_playback_speed_label(
+        playback_state::format_speed_label(playback_state::MAX_SPEED).into(),
+    );
+
+    let window_weak = window.as_weak();
+    window.on_speed_requested(move |fraction| {
+        let speed = playback_state::speed_from_fraction(fraction);
+        video_player.set_speed(speed);
+        if let Some(window) = window_weak.upgrade() {
+            window.set_current_playback_speed(speed as f32);
+            window
+                .set_current_playback_speed_label(playback_state::format_speed_label(speed).into());
+        }
+    });
+}
+
 /// Builds the closure behind one `wire_cue_navigation` key-driven callback:
 /// runs `navigate` against the shared `PlayerState`, then applies the result
 /// the same way the sentence list's row-click handler does (see
@@ -1197,6 +1224,7 @@ fn main() -> anyhow::Result<()> {
     )?);
     wire_cue_navigation(&window, &player_state, Rc::clone(&video_player));
     wire_scrub_bar(&window, Rc::clone(&video_player));
+    wire_speed_slider(&window, Rc::clone(&video_player));
 
     let startup_config = config::load();
 

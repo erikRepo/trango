@@ -7,11 +7,13 @@
 
 mod mode;
 mod navigation;
+mod playback_speed;
 mod seek_command;
 mod state;
 mod time_format;
 
 pub use mode::PlaybackMode;
+pub use playback_speed::{format_speed_label, speed_from_fraction, MAX_SPEED, MIN_SPEED};
 pub use seek_command::{PlaySpanCommand, SeekCommand};
 pub use state::PlayerState;
 pub use time_format::format_time;
