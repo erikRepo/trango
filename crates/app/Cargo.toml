@@ -1,5 +1,6 @@
 [package]
 name = "trango"
+description = "A desktop video player for language learners, built with Rust, Slint, and libmpv"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -22,3 +23,15 @@ word-analysis = { path = "../word-analysis" }
 
 [build-dependencies]
 slint-build = "1.17.1"
+
+[package.metadata.deb]
+maintainer = "Erik Repo <erik.repo@gmail.com>"
+copyright = "2026, Erik Repo"
+license-file = ["../../LICENSE", "0"]
+extended-description = """\
+A desktop video player for language learners. Plays video normally or in \
+a sentence-by-sentence mode driven by subtitle timing, with word-by-word \
+translation lookup and automatic subtitle generation."""
+section = "video"
+priority = "optional"
+depends = "$auto"
