@@ -454,6 +454,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "audio-capture"
+version = "0.1.52"
+dependencies = [
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "auto_enums"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5207,6 +5215,7 @@ name = "trango"
 version = "0.1.52"
 dependencies = [
  "anyhow",
+ "audio-capture",
  "libmpv2",
  "playback-state",
  "serde",

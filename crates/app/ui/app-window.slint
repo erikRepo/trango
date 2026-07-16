@@ -1844,6 +1844,12 @@ export component AppWindow inherits Window {
     // sentence currently shown in the current-sentence card. Set from Rust
     // by crates/app/src/word_analysis.rs's wire_word_analysis_popup.
     callback show-word-analysis();
+    // Ctrl+Space (TODO.md Vaihe 26): starts/stops system-audio capture in
+    // "No video" mode — gated to that mode in nav-focus's key-pressed
+    // handler below, since capture has no meaning while a video is loaded.
+    // Set from Rust by crates/app/src/system_audio_capture.rs. Only a
+    // start/stop signal for now; no capture-state UI yet (TODO.md Vaihe 29).
+    callback toggle-audio-capture();
     callback close-word-analysis-popup();
     in property <bool> is-word-analysis-popup-open: false;
     in property <WordAnalysisStatus> word-analysis-status: WordAnalysisStatus.Idle;
@@ -1908,6 +1914,15 @@ export component AppWindow inherits Window {
                 // current-sentence card is showing right now, same as
                 // Ctrl+T above — not mode-gated for the same reason.
                 root.show-word-analysis();
+                accept
+            } else if (event.modifiers.control && event.text == " ") {
+                // Starts/stops system-audio capture (TODO.md Vaihe 26,
+                // "No video" mode only) — checked before the plain-Space
+                // branch below, since Ctrl held or not still reports the
+                // same " " text.
+                if (root.playback-mode == PlaybackModeUi.NoVideo) {
+                    root.toggle-audio-capture();
+                }
                 accept
             } else if (event.text == " ") {
                 // Space (play/pause) works in both modes — see

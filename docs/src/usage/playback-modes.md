@@ -39,9 +39,17 @@ any point in the video.
 Selecting this mode replaces the video area with an empty placeholder —
 there's no video loaded or playing, and the scrub bar/speed slider are
 hidden since there's no playhead. The sentence list and Ctrl+A word
-analysis still work on whatever subtitle is linked. This mode is the
-starting point for live subtitle recording from your system's audio,
-which isn't implemented yet.
+analysis still work on whatever subtitle is linked.
+
+**Ctrl+Space** starts recording your system's own audio output (whatever
+is currently playing on your PC — a browser video, for example) to a WAV
+file; pressing it again stops the recording. This is the first step
+toward live subtitle generation from that recording — nothing is
+transcribed yet, and there's no on-screen indicator of the recording
+in progress. See [Settings](settings.md) for where the monitor source
+comes from and how to override it, and note this only works on
+Linux with PulseAudio/PipeWire (see the developer docs' architecture
+section for why).
 
 ## Playback speed
 

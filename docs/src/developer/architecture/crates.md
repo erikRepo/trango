@@ -1,6 +1,6 @@
 # Crate structure
 
-trango is a Cargo workspace with four members, all inheriting `version`,
+trango is a Cargo workspace with five members, all inheriting `version`,
 `edition`, and `rust-version` from `[workspace.package]` in the root
 `Cargo.toml`.
 
@@ -56,9 +56,20 @@ and response-parsing are plain functions tested with canned strings;
 `HttpOllamaClient` itself is tested against a local mock HTTP server
 (`TcpListener` on a random port).
 
+## `crates/audio-capture` (library)
+
+System audio capture for "No video" mode (see [System audio
+capture](system-audio-capture.md)). `AudioCapture` runs `ffmpeg -f pulse`
+as a subprocess (`start`/`stop`, the latter asking `ffmpeg` to quit
+gracefully via stdin before falling back to killing it), and
+`default_monitor_source` asks `pactl` for the default sink's matching
+`.monitor` source. Same external-process-via-`Command` pattern as
+`subtitle::WhisperCliGenerator`, tested against fake shell-script
+binaries the same way. No Slint/libmpv dependency.
+
 ## `crates/app` (binary, package `trango`)
 
-Ties Slint, libmpv, and the two library crates together. Package name
+Ties Slint, libmpv, and the library crates together. Package name
 `trango` (binary name), directory `crates/app`; UI-facing product name is
 **TrangoPlayer**.
 
@@ -82,8 +93,9 @@ skipped rather than blocking video playback.
 the result back into `AppWindow` properties the top bar/translation
 toggle read directly.
 
-## Why four crates instead of one
+## Why five crates instead of one
 
-Splitting `subtitle`, `playback-state`, and `word-analysis` out of the
-binary keeps most business logic testable without Slint/libmpv, and keeps
-files small (CLAUDE.md: aim for ~200 lines/file).
+Splitting `subtitle`, `playback-state`, `word-analysis`, and
+`audio-capture` out of the binary keeps most business logic testable
+without Slint/libmpv, and keeps files small (CLAUDE.md: aim for ~200
+lines/file).

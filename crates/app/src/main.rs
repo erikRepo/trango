@@ -12,6 +12,7 @@ mod open_video_dialog;
 mod sentence_card;
 mod sentence_list;
 mod subtitle_generation;
+mod system_audio_capture;
 mod video_player;
 mod word_analysis;
 
@@ -603,9 +604,7 @@ fn whisper_cli_generator(model_path: PathBuf) -> subtitle::WhisperCliGenerator {
     let binary_path = std::env::var_os("TRANGO_WHISPER_CLI_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("whisper-cli"));
-    let ffmpeg_path = std::env::var_os("TRANGO_FFMPEG_PATH")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("ffmpeg"));
+    let ffmpeg_path = ffmpeg_path_from_env();
     let language = model_picker::language_flag(&model_path).to_string();
     tracing::info!(
         ?binary_path,
@@ -620,6 +619,18 @@ fn whisper_cli_generator(model_path: PathBuf) -> subtitle::WhisperCliGenerator {
         model_path: Some(model_path),
         language: Some(language),
     }
+}
+
+/// The `TRANGO_FFMPEG_PATH` env var (path or bare name of the `ffmpeg`
+/// binary), defaulting to `"ffmpeg"` resolved via `PATH` — shared by
+/// `whisper_cli_generator` (audio extraction ahead of `whisper-cli`) and
+/// `main`'s `system_audio_capture::wire_audio_capture` call (system audio
+/// capture, `TODO.md` Vaihe 26), so ffmpeg's location is configured once
+/// for both.
+fn ffmpeg_path_from_env() -> PathBuf {
+    std::env::var_os("TRANGO_FFMPEG_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("ffmpeg"))
 }
 
 fn wire_open_subtitles_dialog(
@@ -1299,6 +1310,14 @@ fn main() -> anyhow::Result<()> {
         Rc::clone(&target_language),
     );
 
+    let mut startup_audio_capture = audio_capture::AudioCapture::default();
+    startup_audio_capture.ffmpeg_path = ffmpeg_path_from_env();
+    system_audio_capture::wire_audio_capture(
+        &window,
+        startup_audio_capture,
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+    );
+
     let reload_video_player = Rc::clone(&video_player);
     wire_open_subtitles_dialog(
         &window,
@@ -1897,5 +1916,65 @@ mod tests {
 
         std::fs::remove_dir_all(&generate_dir).expect("failed to clean up temp test dir");
         std::fs::remove_dir_all(&async_dir).expect("failed to clean up temp test dir");
+
+        // When:  invoking toggle-audio-capture (Ctrl+Space, TODO.md Vaihe
+        //        26) wired to a fake-ffmpeg/pactl-backed AudioCapture —
+        //        fakes needed the same way subtitle::generate's tests fake
+        //        whisper-cli/ffmpeg, since real pactl/PulseAudio isn't
+        //        something this test environment can rely on
+        // Then:  the first call autodetects the monitor source and starts
+        //        a capture (the fake ffmpeg's WAV output appears in the
+        //        given output dir); the second call stops it
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let audio_capture_dir = std::env::temp_dir().join("trango-test-audio-capture-toggle");
+            let _ = std::fs::remove_dir_all(&audio_capture_dir);
+            std::fs::create_dir_all(&audio_capture_dir).expect("failed to create temp test dir");
+
+            let fake_ffmpeg_path = audio_capture_dir.join("fake-ffmpeg.sh");
+            std::fs::write(
+                &fake_ffmpeg_path,
+                "#!/bin/sh\nlast=\"\"\nfor arg in \"$@\"; do last=\"$arg\"; done\n\
+                 printf 'fake wav content' > \"$last\"\nread -r _line\nexit 0\n",
+            )
+            .expect("failed to write fake ffmpeg script");
+            std::fs::set_permissions(&fake_ffmpeg_path, std::fs::Permissions::from_mode(0o755))
+                .expect("failed to make fake ffmpeg executable");
+
+            let fake_pactl_path = audio_capture_dir.join("fake-pactl.sh");
+            std::fs::write(&fake_pactl_path, "#!/bin/sh\necho 'fake-sink'\n")
+                .expect("failed to write fake pactl script");
+            std::fs::set_permissions(&fake_pactl_path, std::fs::Permissions::from_mode(0o755))
+                .expect("failed to make fake pactl executable");
+
+            let mut fake_audio_capture = audio_capture::AudioCapture::default();
+            fake_audio_capture.ffmpeg_path = fake_ffmpeg_path;
+            fake_audio_capture.pactl_path = fake_pactl_path;
+            fake_audio_capture.graceful_stop_timeout = std::time::Duration::from_millis(500);
+            let audio_capture_state = system_audio_capture::wire_audio_capture(
+                &window,
+                fake_audio_capture,
+                audio_capture_dir.clone(),
+            );
+
+            window.invoke_toggle_audio_capture();
+            assert!(audio_capture_state.borrow().is_recording());
+
+            // The fake ffmpeg writes its output file before blocking on
+            // stdin, so checking only after stop() (which waits for it to
+            // exit) avoids racing the subprocess's own timing.
+            window.invoke_toggle_audio_capture();
+            assert!(!audio_capture_state.borrow().is_recording());
+            let wav_files: Vec<_> = std::fs::read_dir(&audio_capture_dir)
+                .unwrap()
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "wav"))
+                .collect();
+            assert_eq!(wav_files.len(), 1);
+
+            std::fs::remove_dir_all(&audio_capture_dir).expect("failed to clean up temp test dir");
+        }
     }
 }

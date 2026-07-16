@@ -7,6 +7,7 @@
 | Left Arrow | Jump to the previous subtitle line's start and pause there | Sentence by sentence |
 | Ctrl+T | Show/hide the translated line under the current sentence | All |
 | Ctrl+A | Look up a word-by-word translation for the current sentence | All |
+| Ctrl+Space | Start/stop recording system audio to a WAV file | No video |
 
 Clicking a row in the sentence list does the same thing as Right/Left
 Arrow — jump to that line's start, paused — for whichever row you click.

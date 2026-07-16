@@ -13,6 +13,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 
 ### Added
 - Third playback mode, "No video", for subtitle-only operation without a loaded video — selected via a third segment in the top bar's segmented control. The video area is replaced by an empty placeholder panel, and the scrub bar/speed slider are hidden; the sentence list and Ctrl+A word analysis keep working on whatever subtitle is linked. This is the first step toward live subtitle recording from system audio (`TODO.md` Vaihe 26+) — no recording happens yet
+- System audio capture in "No video" mode (`TODO.md` Vaihe 26): Ctrl+Space starts/stops recording the system's own audio output to a WAV file via an `ffmpeg -f pulse` subprocess, mirroring the `whisper-cli`/`ffmpeg` external-process pattern used for subtitle generation (no new Cargo dependency). The PulseAudio/PipeWire monitor source is autodetected via `pactl get-default-sink`, overridable through a new `audio_monitor_source` setting in `config.toml`. Linux/PulseAudio-PipeWire only for now — no Windows/macOS support yet (see `docs/src/developer/architecture/system-audio-capture.md`). No capture-state UI yet (`TODO.md` Vaihe 29)
 
 ### Changed
 - `playback_state::PlayerState::toggle_mode()` replaced with `set_mode(mode)`, since a two-state toggle can't express choosing among three modes; the segmented control's three segments each select their own target mode directly instead of toggling relative to the current one

@@ -34,6 +34,12 @@ pub struct TrangoConfig {
     /// opening wherever the user last was, not always the CLI/`cwd`
     /// default.
     pub video_folder: Option<PathBuf>,
+    /// Overrides `audio_capture::AudioCapture::default_monitor_source`'s
+    /// `pactl`-based autodetection (`TODO.md` Vaihe 26) for system audio
+    /// capture in "No video" mode. `None` uses the autodetected monitor
+    /// source; set this if autodetection picks the wrong device or
+    /// `pactl` isn't reliable in your setup — see `docs/src/usage/`.
+    pub audio_monitor_source: Option<String>,
 }
 
 /// Resolves the config directory from `xdg_config_home`/`home` (as
@@ -180,6 +186,7 @@ mod tests {
             ollama_model: Some("llama3.1:8b".to_string()),
             ollama_target_language: Some("Finnish".to_string()),
             video_folder: Some(PathBuf::from("/videos")),
+            audio_monitor_source: Some("alsa_output.analog-stereo.monitor".to_string()),
         };
 
         save_to(&path, &config);

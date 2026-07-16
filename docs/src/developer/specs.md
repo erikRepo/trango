@@ -262,6 +262,23 @@ is already playing locally, from any source — and never persist more than
 the resulting `.srt`; no video/audio file trango didn't already have is
 ever downloaded or saved.
 
+## System audio capture: `pactl`'s default-sink monitor, graceful `ffmpeg` stop
+
+`TODO.md` Vaihe 26 needed a monitor source to feed `ffmpeg -f pulse -i`.
+Rather than parsing `pactl list sources` for whichever ones end in
+`.monitor` (several, if multiple outputs exist — ambiguous to pick
+between), `AudioCapture::default_monitor_source` asks `pactl
+get-default-sink` and appends `.monitor` itself, since PulseAudio/
+PipeWire guarantee that naming convention. `config.rs`'s
+`audio_monitor_source` overrides this for setups where the default sink
+isn't the one to capture.
+
+Killing `ffmpeg` outright (`SIGKILL`) leaves the WAV header's size field
+wrong, since `ffmpeg` only finalizes it on a clean exit. `AudioCapture::stop`
+instead writes `q` to `ffmpeg`'s stdin — the same key it reads
+interactively to quit gracefully — and only falls back to `kill()` after
+`graceful_stop_timeout` (a test-injectable field; production uses 5s).
+
 ## `PlaybackMode::NoVideo` and the segmented control's third segment
 
 `TODO.md` Vaihe 25 adds a third `PlaybackMode` variant for subtitle-only
