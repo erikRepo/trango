@@ -9,6 +9,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.44] - 2026-07-16
+
+### Changed
+- Renamed stale/ambiguous UI labels: top bar's "Open subtitles…" button (which opens a whole subtitle-management modal, not just a file picker) is now "Subtitles…"; the current-sentence card's "Translation" toggle label and the Open Subtitles dialog's "Translation" section header are now "Secondary subtitle" (more descriptive of what the toggle/section actually control); bottom hint bar's "ctrl+t · toggle translation" is now "ctrl+t · toggle secondary subtitle". Purely cosmetic — underlying `show-translation`/`toggle-translation`/`translation-linked` properties and callbacks are unchanged
+
 ## [0.1.43] - 2026-07-16
 
 ### Added

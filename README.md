@@ -26,17 +26,17 @@ Open `design_reference.dc.html` in any browser to view it (it needs `support.js`
 **Top bar** — background `#1c1c22`-ish (see tokens below), 1px bottom border, horizontal flex, space-between, 16px side padding:
 - Left: 8px dot (accent color) + "TrangoPlayer" wordmark, 14px/600 Inter
 - Center: segmented control, 2 items ("Normal" / "Sentence by sentence"), pill container with 3px padding, active segment filled with accent blue, inactive text is muted grey
-- Right: two ghost buttons "Open video…" and "Open subtitles…", 1px border, monospace label, 12px
+- Right: two ghost buttons "Open video…" and "Subtitles…", 1px border, monospace label, 12px
 
 **Video column:**
 - Video frame: rounded 8px, fills available space, margin 16px (less on the inner edge next to the sentence panel), diagonal stripe placeholder background, centered label text. A large circular play button (64px, translucent white fill, white left-pointing triangle) sits centered near the bottom of the frame — hover/pause state, not literal chrome.
 - Scrub bar below: current time (mono, small, muted) — 4px track (rounded) with filled accent progress + white circular thumb — total time (mono, small, muted).
 
 **Sentence panel (right column):**
-- **Current sentence card:** rounded 8px, dark card background, border, ~20px padding. Header row: "Sentence 14 / 61" label (uppercase, mono, muted, 10px) left; "Translation" label + toggle switch right (pill switch, accent when on). Below: original-language sentence, 24px/600 Inter. Divider line. Translation sentence below in accent-tinted blue, 18px/500 — **hidden by default**, only shown when the toggle is on.
+- **Current sentence card:** rounded 8px, dark card background, border, ~20px padding. Header row: "Sentence 14 / 61" label (uppercase, mono, muted, 10px) left; "Secondary subtitle" label + toggle switch right (pill switch, accent when on). Below: original-language sentence, 24px/600 Inter. Divider line. Translation sentence below in accent-tinted blue, 18px/500 — **hidden by default**, only shown when the toggle is on.
 - **Sentence list card:** rounded 8px, fills remaining vertical space, scrollable. Header label "Sentence list" (uppercase, mono, muted, 10px). List of rows, each `index · sentence text…`; current row highlighted with a subtle accent-tinted background pill, others plain muted text. Row padding ~9px/10px, 6px radius.
 
-**Bottom hint bar:** thin strip, centered row of keyboard hints separated by gap: "← previous sentence", "space · repeat sentence", "→ next sentence", "ctrl+t · toggle translation" (the first three only meaningful in sentence-by-sentence mode — in Normal mode this bar can be hidden or show standard playback shortcuts instead).
+**Bottom hint bar:** thin strip, centered row of keyboard hints separated by gap: "← previous sentence", "space · repeat sentence", "→ next sentence", "ctrl+t · toggle secondary subtitle" (the first three only meaningful in sentence-by-sentence mode — in Normal mode this bar can be hidden or show standard playback shortcuts instead).
 
 ### 2. Open Video dialog (`#2a`, left mock)
 **Purpose:** Pick a video file to open.
@@ -67,7 +67,7 @@ Open `design_reference.dc.html` in any browser to view it (it needs `support.js`
 - Driven entirely by subtitle cue timing (start/end timestamps per line).
 - **Right Arrow:** jump playhead to the start of the next subtitle cue and pause there — never autoplays (see `docs/src/specs/` for why: no mode starts playback on its own, only Space does).
 - **Left Arrow:** jump to previous cue's start, same "always pause there" behavior as Right Arrow.
-- **Translation toggle:** shows/hides the translated line under the original in the current-sentence card, via either the card's toggle switch or the **Ctrl+T** keyboard shortcut (works in both Normal and Sentence-by-sentence mode). Off by default. Purely visual — does not affect playback.
+- **Secondary subtitle toggle:** shows/hides the translated line under the original in the current-sentence card, via either the card's toggle switch or the **Ctrl+T** keyboard shortcut (works in both Normal and Sentence-by-sentence mode). Off by default. Purely visual — does not affect playback.
 - **Sentence list:** clicking a row jumps to that cue (same behavior as arrow navigation) and highlights it as current.
 
 **Normal mode:** standard continuous playback with scrub bar; subtitle panel can still show the current line (optionally hide the sentence-list card, or keep it as a chapter-like index — your call, mock only depicts sentence-by-sentence panel content).
@@ -77,7 +77,7 @@ Open `design_reference.dc.html` in any browser to view it (it needs `support.js`
 **Open subtitles:** opens modal scoped to the current video.
 - If an original-language subtitle file matching the video is found on disk, show it as a linked row (same visual treatment as the translation row in the mock).
 - If not found, show the empty/dashed state with "Generate subtitles" — this should kick off local subtitle generation (e.g., speech-to-text) and, on completion, replace the empty state with a linked-file row.
-- Translation section always offers linking/dropping a second `.srt` in the viewer's native language.
+- Secondary subtitle section always offers linking/dropping a second `.srt` in the viewer's native language.
 - "Done" closes the modal and applies the linked files to the player.
 
 ## State Management

@@ -86,8 +86,8 @@ component SegmentButton {
 }
 
 /// Pill-shaped on/off switch used by the current-sentence card's
-/// "Translation" toggle: accent-filled track with a white knob when `on`,
-/// muted track with the knob on the left otherwise.
+/// "Secondary subtitle" toggle: accent-filled track with a white knob when
+/// `on`, muted track with the knob on the left otherwise.
 component ToggleSwitch {
     in property <bool> on;
     callback toggled;
@@ -118,10 +118,10 @@ component ToggleSwitch {
     }
 }
 
-/// A bordered, no-fill "Open video…" / "Open subtitles…" top bar button.
-/// "Open video…" is wired to the Open Video dialog (Vaihe 18); "Open
-/// subtitles…" to the Open Subtitles dialog (Vaihe 19) — both are
-/// `FileListDialog` instances, see below.
+/// A bordered, no-fill "Open video…" / "Subtitles…" top bar button.
+/// "Open video…" is wired to the Open Video dialog (Vaihe 18); "Subtitles…"
+/// to the Open Subtitles dialog (Vaihe 19) — both are `FileListDialog`
+/// instances, see below.
 component GhostButton {
     in property <string> label;
     callback clicked;
@@ -157,8 +157,8 @@ component GhostButton {
 }
 
 /// The right-hand sentence panel's top card: "Sentence N / M" (uppercase,
-/// mono, muted) left / "Translation" label + toggle switch right, above the
-/// current cue's original-language text, a divider, and (while
+/// mono, muted) left / "Secondary subtitle" label + toggle switch right,
+/// above the current cue's original-language text, a divider, and (while
 /// `show-translation` is on) the translation text in accent-tinted blue.
 /// `sentence-label`/`sentence-text`/`has-sentence`/`translation-text` are
 /// set from Rust: `main.rs` after loading a subtitle file, and
@@ -210,7 +210,7 @@ component CurrentSentenceCard {
                     cross-axis-alignment: center;
 
                     Text {
-                        text: "Translation";
+                        text: "Secondary subtitle";
                         color: Palette.muted-text;
                         font-family: "Inter";
                         font-size: 12px;
@@ -859,7 +859,7 @@ component HintBar {
             }
 
             Text {
-                text: "ctrl+t · toggle translation";
+                text: "ctrl+t · toggle secondary subtitle";
                 color: Palette.muted-text;
                 font-family: "JetBrains Mono";
                 font-size: 11px;
@@ -1024,12 +1024,12 @@ component EmptyFileRow {
 /// `sketch/design_reference.dc.html#2a`, right mock. `title`/
 /// `original-linked`/`original-name`/`translation-linked`/`translation-name`
 /// are set from Rust (`crates/app/src/open_subtitles_dialog.rs`) when the
-/// top bar's "Open subtitles…" button is clicked. The original-language
+/// top bar's "Subtitles…" button is clicked. The original-language
 /// section shows a `LinkedFileRow` if found on disk, else an empty-state
 /// row whose text and "Generate subtitles"/"Generating…"/"Try again"
 /// button reflect `generation-status` (`TODO.md` Vaihe 20) — clicking it
 /// emits `generate-subtitles`, wired in `main.rs` to
-/// `subtitle_generation::generate`. The translation
+/// `subtitle_generation::generate`. The "Secondary subtitle"
 /// section always shows either state too, plus a small "link…" text below
 /// it — clicking either opens `main.rs`'s link-translation file picker
 /// (`link-translation`), since real OS drag-and-drop isn't available (see
@@ -1243,7 +1243,7 @@ component OpenSubtitlesDialog {
                         spacing: 6px;
 
                         Text {
-                            text: "Translation";
+                            text: "Secondary subtitle";
                             color: Palette.muted-text;
                             font-family: "JetBrains Mono";
                             font-size: 10px;
@@ -1256,15 +1256,15 @@ component OpenSubtitlesDialog {
                         }
 
                         if !root.translation-linked : EmptyFileRow {
-                            label: "No translation linked";
+                            label: "No secondary subtitle linked";
                         }
 
                         Rectangle {
                             HorizontalLayout {
                                 Text {
                                     text: root.translation-linked
-                                        ? "change linked translation file…"
-                                        : "click to link a translation .srt file";
+                                        ? "change linked secondary subtitle file…"
+                                        : "click to link a secondary subtitle .srt file";
                                     color: Palette.accent;
                                     font-family: "Inter";
                                     font-size: 11px;
@@ -1541,7 +1541,7 @@ export component AppWindow inherits Window {
     in property <string> open-subtitles-original-name: "";
     in property <bool> open-subtitles-translation-linked: false;
     in property <string> open-subtitles-translation-name: "";
-    // Invoked by the top bar's "Open subtitles…" GhostButton.
+    // Invoked by the top bar's "Subtitles…" GhostButton.
     callback open-subtitles-dialog-requested();
     // Invoked by the dialog's backdrop click / "✕" / "Cancel" / "Done" —
     // all just close it: the original subtitle (if found) is already
@@ -1801,7 +1801,7 @@ export component AppWindow inherits Window {
                         }
 
                         GhostButton {
-                            label: "Open subtitles…";
+                            label: "Subtitles…";
                             clicked => { root.open-subtitles-dialog-requested(); }
                         }
                     }

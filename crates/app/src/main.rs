@@ -1557,7 +1557,7 @@ mod tests {
 
         // When:  wiring the Open Subtitles dialog (Vaihe 19) for a video
         //        whose original subtitle is already tracked as linked, and
-        //        requesting it via the top bar's "Open subtitles…" button
+        //        requesting it via the top bar's "Subtitles…" button
         // Then:  the modal opens titled after the video, with the original
         //        section linked and the translation section still empty
         //        (no translation tracked yet)
