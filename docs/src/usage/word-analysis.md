@@ -36,7 +36,10 @@ language).
 ## Using it
 
 **Ctrl+A** works in both Normal and Sentence-by-sentence mode, on
-whichever sentence the current-sentence card is showing. The first time
+whichever sentence the current-sentence card is showing — in Normal
+mode, the card automatically follows along as the video plays, so Ctrl+A
+always analyzes the line currently on screen, not whatever line happened
+to be current when you switched into Normal mode. The first time
 a given sentence is analyzed, it calls Ollama (a few seconds, depending
 on the model and machine); every time after that — including across
 restarts — it's instant, since the result is cached to a

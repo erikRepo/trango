@@ -333,7 +333,20 @@ on merkittävä uusi riippuvuus.
 scrub bar, sentence-panelin käytös Normal-moodissa (README jättää tarkan
 käytöksen tekijän päätettäväksi — dokumentoi valinta `docs/src/specs/`).
 
-**Voit ajaa/testata:** `cargo run -p trango -- video.mp4 subs.srt` — Normal-moodissa toisto jatkuu keskeytyksettä, hint bar näyttää oikean sisällön moodin mukaan.
+- [x] Jatkuva toisto (Space toimii molemmissa moodeissa plain play/pause
+  -togglena, ks. `docs/src/developer/specs.md` "Space works in every mode")
+- [x] Hint bar näyttää Normal-moodin omat pikanäppäimet (ks.
+  `docs/src/developer/specs.md` "Normal mode's own hint bar content")
+- [x] Scrub bar raahattavissa/klikattavissa seekaamiseen (ks.
+  `docs/src/developer/specs.md` "Scrub bar drag-to-seek")
+- [x] Sentence-panel (current-sentence card, sentence list, Ctrl+A word
+  analysis) seuraa nyt jatkuvaa toistoa Normal-moodissa live time-pos:in
+  perusteella (ks. `docs/src/developer/specs.md` "Normal mode's
+  sentence-panel behavior: live time-pos syncing"). Avoimena vain
+  laajempi kysymys pitäisikö paneeli ylipäätään näyttää/piiloutua
+  Normal-moodissa — nykyinen käytös (aina näkyvissä) säilyy toistaiseksi
+
+**Voit ajaa/testata:** `cargo run -p trango -- video.mp4 subs.srt` — Normal-moodissa toisto jatkuu keskeytyksettä, hint bar näyttää oikean sisällön moodin mukaan, scrub baria voi raahata/klikata seekatakseen.
 
 ---
 

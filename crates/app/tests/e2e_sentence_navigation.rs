@@ -8,7 +8,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use playback_state::PlayerState;
+use playback_state::{PlaybackMode, PlayerState};
 use subtitle::{parse_srt, Cue};
 
 /// Path to `test-media/sample/`, shared by both fixture files this test uses.
@@ -95,4 +95,46 @@ fn test_cue_navigation_walks_all_sample_cues_forward_and_back() {
     assert_eq!(repeat_first, repeat_second);
     assert_eq!(repeat_first.start, cues[0].start);
     assert_eq!(repeat_first.end, cues[0].end);
+}
+
+#[test]
+fn test_normal_mode_sync_cue_to_time_tracks_continuous_playback_over_sample_cues() {
+    // Given: PlayerState in Normal mode, loaded with the real sample cues —
+    //        video_player.rs's sync_current_sentence_normal_mode calls
+    //        sync_cue_to_time the same way on every poll tick, driven by
+    //        mpv's real time-pos; this drives it directly with timestamps
+    //        taken straight from the fixture's own timing instead
+    let cues = sample_cues();
+    let mut state = PlayerState::new();
+    state.set_cues(cues.clone());
+    state.toggle_mode();
+    assert_eq!(state.mode, PlaybackMode::Normal);
+
+    // When:  syncing to a time before the first cue's start (video just
+    //         opened, still in its lead-in)
+    // Then:  no sentence is in focus yet
+    state.sync_cue_to_time(Duration::from_millis(100));
+    assert_eq!(state.current_cue_index, None);
+
+    // When:  syncing to a time inside the third cue's span, as continuous
+    //        playback advancing past it would
+    // Then:  the cursor follows it there — this is what makes Ctrl+A word
+    //        analysis (main.rs's wire_word_analysis_popup) pick the
+    //        sentence actually on screen instead of a stale one
+    state.sync_cue_to_time(cues[2].start + Duration::from_millis(200));
+    assert_eq!(state.current_cue_index, Some(2));
+
+    // When:  syncing to a time in the silent gap between the third and
+    //        fourth cues
+    // Then:  the cursor stays on the third cue — the most recently started
+    //        one — rather than jumping ahead to the fourth prematurely
+    let gap_time = cues[2].end + (cues[3].start - cues[2].end) / 2;
+    state.sync_cue_to_time(gap_time);
+    assert_eq!(state.current_cue_index, Some(2));
+
+    // When:  syncing to a time after the last cue's end (video played to
+    //        completion)
+    // Then:  the cursor stays on the last cue rather than clearing
+    state.sync_cue_to_time(cues[4].end + Duration::from_secs(1));
+    assert_eq!(state.current_cue_index, Some(4));
 }

@@ -422,11 +422,13 @@ to be *rediscovered* from `time-pos` at any point during that span, it's
 already correct from the moment the action fired. The only thing that
 would ever need live `time-pos`-based cue discovery is a free-running,
 un-bounded playback the app doesn't know the cue for in advance —
-`Normal` mode's continuous playback (not yet wired to any UI at all,
-`TODO.md` Vaihe 21) or a scrub-bar drag-to-seek feature (doesn't exist —
-the scrub bar is currently display-only). Neither exists today, so there
-was nothing left for `sync_current_sentence` to correctly serve, only a
-recurring source of the same class of bug.
+`Normal` mode's continuous playback or a scrub-bar drag-to-seek feature.
+Neither existed at the time this section was written, so there was
+nothing left for `sync_current_sentence` to correctly serve, only a
+recurring source of the same class of bug. (Both now exist — see "Scrub
+bar drag-to-seek" below — but were designed and tested fresh against
+their own actual seek model, as this section anticipated, not by
+reviving `sync_current_sentence`.)
 
 It was removed outright — the function, its poll-loop call, and
 `PlayerState::sync_cue_to_time` (now with no remaining callers) —  rather
@@ -707,3 +709,117 @@ filter directly — no `RUST_LOG` export needed for the common case.
 `RUST_LOG` still works underneath when `--debug` isn't passed, as a
 lower-level escape hatch for filtering finer than the flag's fixed set
 (e.g. `RUST_LOG=word_analysis=trace`).
+
+## Normal mode's own hint bar content
+
+Part of `TODO.md` Vaihe 21 ("Normal-moodin viimeistely"): the bottom
+`HintBar` (`app-window.slint`) used to be gated behind `if
+root.sentence-mode-active`, so it simply didn't exist outside
+`SentenceBySentence` mode — Normal mode had no on-screen reminder of
+which keyboard shortcuts did anything, even though Space/Ctrl+T/Ctrl+A
+already worked there (see "Space works in every mode" above).
+
+Rather than a second, separately-instantiated hint bar for Normal mode,
+`HintBar` now takes `sentence-mode-active` as an `in property` and shows
+a mode-dependent subset of the same five entries: Right/Left ("previous
+sentence"/"next sentence") only appear in `SentenceBySentence` mode,
+matching `key-pressed`'s own gating of those keys; Space's label switches
+between "repeat sentence" and "play/pause" depending on which
+`video_player.rs` behavior a press actually triggers in that mode;
+Ctrl+T/Ctrl+A stay visible in both, since both already work
+unconditionally. The bar itself is now instantiated unconditionally in
+`AppWindow` instead of behind the old `if` guard. The five near-identical
+`Text` blocks were factored into a small `HintLabel` sub-component along
+the way, since the mode-dependent `if`s would otherwise have tripled the
+duplication.
+
+`TODO.md` Vaihe 21's other two items — continuous playback (already
+covered by Space's plain toggle) and the scrub bar (see below) — are
+addressed elsewhere; only Normal mode's sentence-panel behavior (what, if
+anything, the current-sentence card/sentence list should do while in
+Normal mode) remains an open design question in that Vaihe.
+
+## Scrub bar drag-to-seek
+
+Also part of `TODO.md` Vaihe 21: the scrub bar (`ScrubBar` in
+`app-window.slint`) was display-only, showing playback progress but with
+no way to click or drag it to seek.
+
+A `TouchArea` was added inside the track `Rectangle`, taller (24px) than
+the visible 4px track itself so the draggable hit target isn't a hairline
+to aim for. Both `clicked` and `moved` (while `pressed`) compute the
+pointer's fraction across the track's width (`touch.mouse-x /
+touch.width`) and fire a new `seek-requested(float)` callback, forwarded
+from `ScrubBar` up to `AppWindow`'s own `seek-requested`, wired in
+`main.rs`'s `wire_scrub_bar` to a new `video_player::VideoPlayer::seek_to_fraction`.
+
+Two deliberate differences from the cue-navigation seeks
+(`seek_and_pause`, `toggle_play_span`) already in `video_player.rs`:
+
+- **Never touches `pause`.** Dragging the scrub bar only relocates the
+  playhead — it shouldn't start playback that wasn't already running, nor
+  pause playback that was. `seek_and_pause`'s name doesn't fit here at
+  all; a new method was added rather than adding a "don't pause" flag to
+  the existing one.
+- **The fraction isn't assumed pre-clamped.** A drag that overshoots the
+  track's own edges reports `touch.mouse-x` outside `0..touch.width`, so
+  the resulting fraction can be `< 0.0` or `> 1.0`. Clamping happens once,
+  in a small pure `seek_target_secs(duration_secs, fraction)` helper on
+  the Rust side (unit-tested directly, without a real mpv core) rather
+  than in Slint on every caller — mirroring how `seek_and_pause` itself
+  doesn't need to clamp, since `SeekCommand`'s `start` always already
+  comes from a real cue's timing.
+
+`seek_to_fraction` does clear any armed `pause_at` (see
+`toggle_play_span`'s doc comment), the same as `seek_and_pause` — a
+manual seek elsewhere invalidates whatever bounded cue-span Space last
+armed, regardless of which of the three seek paths caused it.
+
+## Normal mode's sentence-panel behavior: live time-pos syncing
+
+The last open item of `TODO.md` Vaihe 21. Reported directly: in `Normal`
+mode, Ctrl+A word analysis showed the wrong sentence once the video had
+played past the one that was current when the mode was entered (or last
+navigated to) — because `current_cue_index` genuinely never moved on its
+own outside of explicit navigation (`next_cue`/`previous_cue`/
+`jump_to_cue`), and `Normal` mode has no such navigation wired to arrow
+keys. `wire_word_analysis_popup` (`main.rs`) reads `current_cue_index`
+directly, so a stale cursor meant a stale analysis — and the
+current-sentence card itself was equally stale, just less noticeable
+since nothing else depended on it being right in `Normal` mode until now.
+
+This is exactly the scenario "`sync_current_sentence` removed entirely"
+(above) anticipated: `Normal` mode's continuous, un-bounded playback is
+the one case where the cursor needs to be *rediscovered* from mpv's live
+`time-pos` rather than only being set by an explicit action. Per that
+section's own conclusion, this was designed fresh rather than reviving
+the removed `sync_current_sentence`/`sync_cue_to_time` as-is:
+
+- `playback_state::PlayerState` gained a new `sync_cue_to_time(time) ->
+  bool` — the same "latest cue whose start is at-or-before `time`" lookup
+  the old, removed method used (the math itself was never the bug), but
+  now returning whether the cursor actually changed, so the caller can
+  skip rebuilding the sentence list on ticks where it didn't.
+- `video_player.rs` gained `sync_current_sentence_normal_mode`, called on
+  every `SCRUB_BAR_POLL_INTERVAL` tick alongside `poll_scrub_bar`/
+  `apply_pending_pause`/`apply_pending_start_seek`. It's a no-op outside
+  `Normal` mode — the exact guard the old, removed mechanism was missing
+  when it broke `SentenceBySentence`'s Space replay. Crucially, `Normal`
+  mode never arms a bounded `pause_at` span in the first place
+  (`repeat_current_cue` returns `None` there, so `main.rs`'s `repeat-cue`
+  handler falls back to the unbounded `toggle_playback`), so the specific
+  race that broke the old mechanism — this sync and `apply_pending_pause`
+  both reading/mutating state in the same poll tick, one clearing
+  `pause_at` a moment too late — structurally cannot happen here: there's
+  no `pause_at` in `Normal` mode for it to race against.
+- On a change, it mirrors the new cue into both the current-sentence card
+  and the sentence list (via `sentence_card::update_sentence_card`/
+  `sentence_list::update_sentence_list`, imported into `video_player.rs`
+  directly — restoring the same cross-module wiring the original
+  `sync_current_sentence` used, before it was removed).
+
+Scope note: this only fixes *live tracking during continuous playback and
+scrub-bar seeking* in `Normal` mode. It doesn't change what the
+sentence-panel *looks like* or whether it should be hidden/collapsed in
+`Normal` mode at all — that broader "should the panel even show while not
+in `SentenceBySentence` mode" design question remains open.
