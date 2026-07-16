@@ -1,9 +1,10 @@
 # Video playback (libmpv render-API embedding)
 
-`crates/app/src/video_player.rs` (+ its `gl_proc_address_bridge` submodule)
-embeds libmpv video playback inside the Slint window, without mpv creating
-a window of its own. See `docs/src/technology/libmpv2.md` for the crate
-choice and its pitfalls; this page covers the mechanism.
+`crates/app/src/video_player.rs` (+ its `gl_proc_address_bridge` and
+`gl_video_surface` submodules) embeds libmpv video playback inside the
+Slint window, without mpv creating a window of its own. See
+`docs/src/technology/libmpv2.md` for the crate choice and its pitfalls;
+this page covers the mechanism.
 
 ## Mechanism
 
@@ -20,8 +21,10 @@ choice and its pitfalls; this page covers the mechanism.
    request a Slint redraw, and issues `loadfile`.
 4. On every `BeforeRendering` — i.e. immediately before Slint paints its
    own scene into the window's backbuffer for that frame — `render_frame`
-   tells mpv to draw the current video frame into whichever framebuffer is
-   currently bound. Slint then paints its scene on top of that.
+   tells mpv to draw the current video frame into an offscreen surface
+   sized to the video frame box, then blits that surface into the right
+   place in the window's own framebuffer (see "Confining mpv to the video
+   frame box" below). Slint then paints its scene on top of that.
 
 ## Why the video shows through at all
 
@@ -31,15 +34,77 @@ visible wherever Slint doesn't paint something opaque over it. Concretely,
 in `app-window.slint`:
 
 - The root `Window` has **no** `background` set (transparent).
-- The body `Rectangle` (the video area) is filled with `Palette.window-bg`
-  *only* while `video-loaded` is `false`; once a video is loaded it's left
-  fully transparent.
-- The top bar keeps its own opaque `background`, so it's unaffected either
-  way.
+- `video-frame`, the named `Rectangle` inside `body-row`'s video column, is
+  filled with `Palette.window-bg` *only* while `video-loaded` is `false`;
+  once a video is loaded it's left fully transparent.
+- Every other element that shares the window with it (top bar, scrub bar,
+  sentence panel cards, and — since Vaihe 22 — the padding/spacing around
+  them) keeps its own opaque `background`, so it's unaffected either way.
 
 So with a video loaded, mpv's `BeforeRendering` draw is the only thing
-that ever paints color into the video area — Slint's own pass leaves it
-untouched.
+that ever paints color into `video-frame`'s box — Slint's own pass leaves
+it untouched there, while covering every other pixel of the window.
+
+## Confining mpv to the video frame box
+
+mpv's render API always draws starting at `(0, 0)` of whatever framebuffer
+it's given, scaled to fill the `width`/`height` passed to `render()` —
+there is no parameter to offset it into an arbitrary sub-rectangle of an
+already-bound, larger framebuffer. Before Vaihe 22, `render_frame` passed
+the *whole window's* physical size, so mpv's frame filled the entire
+window edge-to-edge; only the fact that every other element happened to
+paint an opaque background over it (see above) kept it from showing
+through gaps. That assumption broke as soon as any part of the window
+besides `video-frame` was left without a background — e.g. the
+`HorizontalLayout` padding/spacing around the sentence panel, which
+until Vaihe 22 painted nothing, letting the full-window mpv frame bleed
+through at the window's right edge.
+
+The fix (`crates/app/src/video_player/gl_video_surface.rs`) renders mpv
+into its own offscreen texture-backed framebuffer (`VideoSurface`) sized
+to exactly `video-frame`'s current on-screen box, then copies that into
+the real framebuffer at the right position with `glBlitFramebuffer` —
+which, unlike mpv's own render call, *does* take independent source and
+destination rectangles. Concretely, `render_frame`:
+
+1. Reads `video-frame`'s resolved box off `AppWindow`'s `video-frame-x`/
+   `-y`/`-width`/`-height` properties (`app-window.slint`) — these sum the
+   named ancestor elements' own `x`/`y` (`body-row`, `video-column`,
+   `video-frame`), since Slint has no built-in "position relative to the
+   window" accessor, and multiplies by `Window::scale_factor()` to convert
+   from logical to physical pixels.
+2. Recreates its cached `VideoSurface` if that box's physical size changed
+   since the last frame (window resize, DPI change, or a sentence panel
+   layout change) — cheap to skip when it hasn't.
+3. Calls `RenderContext::render` with the surface's own framebuffer, so
+   mpv fills it edge-to-edge same as before, just at the smaller size.
+4. Calls `VideoSurface::blit_into`, which flips the Y coordinate (Slint's
+   `video-frame-y` is measured from the window's top; `glBlitFramebuffer`'s
+   destination rectangle uses OpenGL's bottom-left-origin convention) and
+   blits into the window's currently-bound framebuffer (queried via
+   `glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING)`, same as before).
+
+`gl_video_surface::GlFns` resolves the handful of FBO/texture/blit GL
+functions this needs (`glGenFramebuffers`, `glBlitFramebuffer`, etc.) the
+same way `render_frame`'s existing `glGetIntegerv` lookup already did:
+once, during `RenderingSetup`, via Slint's `get_proc_address` closure. If
+resolving any of them fails (in practice, only on GL implementations
+without framebuffer-object support — not expected on any of trango's
+supported desktop targets), `render_frame` falls back to the pre-Vaihe-22
+behavior of filling the whole window, rather than failing to render video
+at all.
+
+Rounding `video-frame`'s corners to match the design mock's inset card
+frame is a separate, still-open cosmetic step — clipping the *content* of
+a GL-blitted rectangle to rounded corners needs its own stencil/scissor
+work beyond this box-confinement fix.
+
+Confining mpv to `video-frame`'s box only makes the video *area* track
+window resizes correctly if `video-frame`'s own box actually grows with
+the window in the first place — see `app-window.slint`'s content column,
+which needs `width: 100%; height: 100%;` for exactly that reason (a plain
+`FocusScope` child, unlike a `Layout`'s child, doesn't stretch to fill its
+parent on its own).
 
 ## Scrub bar: polling mpv's playback-time properties
 
@@ -238,18 +303,6 @@ subtitle match — or clears any previously loaded cues if none is found —
 start-pause reads `player_state.cues` to find the first cue to pause at, so
 loading the new video first would arm the pause against the *previous*
 video's (now stale) cues.
-
-## Current limitation: no inset video area yet
-
-mpv's render API always draws starting at `(0, 0)` of the framebuffer it's
-given, scaled to fill the `width`/`height` passed to `render()` — there is
-no parameter to offset it into an arbitrary sub-rectangle of an
-already-bound, larger framebuffer. `render_frame` currently passes the
-*whole window's* physical size, so the video fills the entire area below
-the top bar edge-to-edge, not the inset-with-margins, rounded-corner frame
-README.md describes. Getting that requires rendering mpv into its own
-offscreen FBO+texture sized to the intended video area and compositing
-that — deferred to a later step (`TODO.md` Vaihe 22, "Design-tarkennus").
 
 ## Why this needs manual/visual testing
 

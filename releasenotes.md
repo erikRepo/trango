@@ -9,6 +9,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.34] - 2026-07-16
+
+### Fixed
+- `crates/app/src/video_player.rs`, `app-window.slint`: mpv's rendering notifier drew the video frame scaled to fill the *entire window*, relying on every other UI element painting an opaque background over the parts that weren't the video area — an assumption that broke wherever the layout left transparent gaps (the `HorizontalLayout` padding/spacing around the sentence panel), letting the video bleed through at the window's right edge behind/around the sentence cards. mpv now renders into its own offscreen `VideoSurface` (new `crates/app/src/video_player/gl_video_surface.rs` submodule) sized to the video frame's actual on-screen box — exposed from Slint via new `AppWindow` properties `video-frame-x`/`-y`/`-width`/`-height` — then blits that into place with `glBlitFramebuffer`, confining it exactly to its box regardless of window size
+- `app-window.slint`: the window didn't actually resize — two compounding bugs. First, `AppWindow` bound the root `Window`'s `width`/`height` directly to `960px`/`660px`; per Slint's `Window` docs that makes the window a *fixed* size at the window-manager level (`min-width`==`max-width`), so maximizing only stretched the OS-level frame/decorations while Slint's own content stayed clamped to `960x660` in the corner, leaving the rest of the (visually bigger) window an unpainted gap — fixed by using `preferred-width`/`-height` instead, which only set the initial size. Second, even with the window genuinely resizable, the main content column (top bar + video/sentence-panel row + hint bar) was a plain child of `nav-focus`, a `FocusScope` — which, unlike a `Layout`, doesn't stretch an arbitrary single child to fill itself, so the column would still sit at its own natural content size; given `width: 100%; height: 100%;` so it now actually fills the window. Together these mean the video area (now correctly confined to its own box by the fix above) grows and shrinks with the window, including maximized/fullscreen-sized ones
+- `app-window.slint`: `CurrentSentenceCard`'s translation line had no height cap, so the card — and with it, the boundary above the sentence list below — visibly grew and shrank every time the current cue's translation changed length. The translation line now sits in a fixed-height (`84px`, ~3 lines) `ScrollView`, scrolling internally for longer translations instead of resizing the card
+
 ## [0.1.33] - 2026-07-16
 
 ### Fixed

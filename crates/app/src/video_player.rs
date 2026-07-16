@@ -20,6 +20,7 @@
 //! API for just two properties.
 
 mod gl_proc_address_bridge;
+mod gl_video_surface;
 
 use std::cell::RefCell;
 use std::ffi::CString;
@@ -35,6 +36,7 @@ use slint::{ComponentHandle, GraphicsAPI, RenderingState, Timer, TimerMode, Weak
 use gl_proc_address_bridge::{
     bridged_get_proc_address, with_bridged_get_proc_address, SlintGlContext,
 };
+use gl_video_surface::{GlFns, VideoSurface};
 
 use crate::AppWindow;
 
@@ -61,6 +63,17 @@ struct VideoPlayerInner {
     /// Resolved `glGetIntegerv`, used to look up the currently bound
     /// framebuffer in [`render_frame`].
     gl_get_integerv: Option<unsafe extern "C" fn(u32, *mut i32)>,
+    /// Resolved framebuffer/texture/blit GL functions, used by
+    /// [`render_frame`] to confine mpv's frame to the video frame box
+    /// instead of the whole window — see [`gl_video_surface`]'s doc
+    /// comment. `None` if resolving any of them failed, in which case
+    /// `render_frame` falls back to filling the whole window as before.
+    gl_fns: Option<GlFns>,
+    /// The offscreen surface mpv currently renders into, sized to the video
+    /// frame box's last-seen physical pixel size — recreated in
+    /// [`render_frame`] whenever that size changes (window resize, DPI
+    /// change, or sentence panel layout change).
+    video_surface: Option<VideoSurface>,
     /// Timestamp at which the scrub bar poll tick (see [`apply_pending_pause`])
     /// should pause mpv, armed by [`VideoPlayer::toggle_play_span`] when it
     /// starts playing a [`PlaySpanCommand`]'s span. Cleared once reached, or
@@ -138,6 +151,8 @@ impl VideoPlayer {
             mpv,
             render_context: None,
             gl_get_integerv: None,
+            gl_fns: None,
+            video_surface: None,
             pause_at: None,
             pending_start_seek: None,
         }));
@@ -434,6 +449,7 @@ fn setup_render_context(
             .then(|| unsafe { std::mem::transmute::<_, unsafe extern "C" fn(u32, *mut i32)>(ptr) })
     };
     inner.borrow_mut().gl_get_integerv = gl_get_integerv;
+    inner.borrow_mut().gl_fns = GlFns::resolve(get_proc_address);
 
     let render_context = with_bridged_get_proc_address(get_proc_address, || {
         mpv.create_render_context(vec![
@@ -473,27 +489,91 @@ fn setup_render_context(
     }
 }
 
-/// Draws the current video frame into whichever framebuffer Slint currently
-/// has bound, scaled to the window's current physical size. Called on
+/// Draws the current video frame into the video frame box's own on-screen
+/// position, scaled to fit that box rather than the whole window. Called on
 /// `RenderingState::BeforeRendering`, i.e. immediately before Slint paints
 /// its own (partly transparent) scene on top.
+///
+/// mpv's render API has no way to target an arbitrary sub-rectangle of an
+/// already-bound framebuffer — it always draws starting at `(0, 0)`, scaled
+/// to fill whatever `width`/`height` it's given (see `gl_video_surface`'s
+/// doc comment). So this renders mpv into its own offscreen
+/// [`VideoSurface`] sized to the video frame box (in physical pixels, read
+/// off `AppWindow`'s `video-frame-*` properties — see `app-window.slint`'s
+/// doc comment on them), then blits that into place. Falls back to filling
+/// the whole window, as before `TODO.md` Vaihe 22, if `gl_fns` failed to
+/// resolve during setup.
 fn render_frame(inner: &Rc<RefCell<VideoPlayerInner>>, window_weak: &Weak<AppWindow>) {
     let Some(window) = window_weak.upgrade() else {
         return;
     };
-    let inner = inner.borrow();
-    let Some(render_context) = &inner.render_context else {
+    let mut inner = inner.borrow_mut();
+    let VideoPlayerInner {
+        render_context,
+        gl_get_integerv,
+        gl_fns,
+        video_surface,
+        ..
+    } = &mut *inner;
+    let Some(render_context) = render_context else {
         return;
     };
 
     let mut fbo = 0i32;
-    if let Some(get_integerv) = inner.gl_get_integerv {
+    if let Some(get_integerv) = gl_get_integerv {
         unsafe { get_integerv(GL_DRAW_FRAMEBUFFER_BINDING, &mut fbo) };
     }
 
-    let size = window.window().size();
-    if let Err(err) = render_context.render::<()>(fbo, size.width as i32, size.height as i32, true)
+    let physical_size = window.window().size();
+    let Some(gl_fns) = gl_fns else {
+        if let Err(err) = render_context.render::<()>(
+            fbo,
+            physical_size.width as i32,
+            physical_size.height as i32,
+            true,
+        ) {
+            tracing::error!(%err, "mpv render call failed");
+        }
+        return;
+    };
+
+    let scale = window.window().scale_factor();
+    let to_physical = |logical: f32| (logical * scale).round() as i32;
+    let dst_x = to_physical(window.get_video_frame_x());
+    let dst_y = to_physical(window.get_video_frame_y());
+    let dst_width = to_physical(window.get_video_frame_width()).max(1);
+    let dst_height = to_physical(window.get_video_frame_height()).max(1);
+
+    if video_surface
+        .as_ref()
+        .is_none_or(|surface| surface.width() != dst_width || surface.height() != dst_height)
     {
-        tracing::error!(%err, "mpv render call failed");
+        if let Some(old_surface) = video_surface.take() {
+            old_surface.destroy(gl_fns);
+        }
+        *video_surface = VideoSurface::new(gl_fns, dst_width, dst_height);
     }
+    let Some(surface) = video_surface else {
+        return;
+    };
+
+    if let Err(err) = render_context.render::<()>(
+        surface.framebuffer_id(),
+        surface.width(),
+        surface.height(),
+        true,
+    ) {
+        tracing::error!(%err, "mpv render call failed");
+        return;
+    }
+
+    surface.blit_into(
+        gl_fns,
+        fbo,
+        physical_size.height as i32,
+        dst_x,
+        dst_y,
+        dst_width,
+        dst_height,
+    );
 }

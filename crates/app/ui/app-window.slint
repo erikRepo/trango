@@ -8,7 +8,7 @@
 // into `sentence-mode-active`. Body/bottom-hint-bar content arrives in
 // later steps.
 
-import { ListView } from "std-widgets.slint";
+import { ListView, ScrollView } from "std-widgets.slint";
 
 /// Color tokens from README.md's "Design Tokens" section, shared across the
 /// top bar components below.
@@ -165,6 +165,14 @@ component CurrentSentenceCard {
     in property <bool> show-translation;
     callback toggle-translation;
 
+    /// Fixed height for the translation line's scroll area — roughly 3
+    /// lines of the 18px/500 Inter translation text. Fixed rather than
+    /// sized to content so the card (and, below it, the sentence list's
+    /// available height) doesn't visibly grow/shrink every time the
+    /// current cue's translation changes length; longer translations
+    /// scroll inside this box instead.
+    property <length> translation-height: 84px;
+
     Rectangle {
         border-width: 1px;
         border-radius: 8px;
@@ -221,13 +229,18 @@ component CurrentSentenceCard {
                 background: Palette.border;
             }
 
-            if root.show-translation : Text {
-                text: root.translation-text;
-                color: Palette.translation-text;
-                font-family: "Inter";
-                font-size: 18px;
-                font-weight: 500;
-                wrap: word-wrap;
+            if root.show-translation : ScrollView {
+                height: root.translation-height;
+
+                Text {
+                    text: root.translation-text;
+                    color: Palette.translation-text;
+                    font-family: "Inter";
+                    font-size: 18px;
+                    font-weight: 500;
+                    wrap: word-wrap;
+                    width: parent.width;
+                }
             }
         }
     }
@@ -1119,6 +1132,18 @@ export component AppWindow inherits Window {
     // visible through it; opaque window-bg is only needed as a placeholder
     // when no video is loaded yet.
     in property <bool> video-loaded: false;
+    // The video frame Rectangle's resolved on-screen geometry, relative to
+    // this window — read by `video_player.rs`'s `render_frame` each frame so
+    // the mpv underlay it draws can be confined to exactly this box (via an
+    // offscreen FBO + blit) rather than the whole window. Summed from the
+    // named ancestors' own `x`/`y` (each relative to *its* parent) since
+    // Slint has no built-in "position relative to window" accessor; safe
+    // here because every ancestor above `body-row` sits at (0, 0) with no
+    // padding of its own, so `body-row.x`/`.y` already are window-relative.
+    out property <length> video-frame-x: body-row.x + video-column.x + video-frame.x;
+    out property <length> video-frame-y: body-row.y + video-column.y + video-frame.y;
+    out property <length> video-frame-width: video-frame.width;
+    out property <length> video-frame-height: video-frame.height;
     // Scrub bar state, polled from mpv's `time-pos`/`duration` properties in
     // video_player.rs and formatted via playback_state::format_time.
     in property <string> current-time-label: "00:00";
@@ -1254,14 +1279,21 @@ export component AppWindow inherits Window {
     callback confirm-model-picker-dialog();
 
     title: "TrangoPlayer v" + version;
-    width: 960px;
-    // 660px (was 600px pre-Vaihe-17): CurrentSentenceCard's header row grew
-    // a "Translation" label + toggle switch, and — while show-translation
-    // is on — an extra wrapped translation line below the divider. Without
-    // the extra headroom the fixed-height window has no slack left for the
-    // bottom HintBar once the sentence panel's natural content height grows,
-    // so it gets clipped off below the window's visible bounds.
-    height: 660px;
+    // `preferred-width`/`-height`, not `width`/`height`: per Slint's
+    // `Window` docs, binding `width`/`height` directly makes the window a
+    // *fixed* size (`min-width`==`max-width` at the window-manager level) —
+    // the OS-level frame could still be dragged/maximized bigger (its
+    // decorations aren't Slint's concern), but Slint's own content stayed
+    // clamped to this fixed size in the corner of that bigger frame,
+    // leaving the rest of the window an unpainted gap. `preferred-width`/
+    // `-height` only set the *initial* size and leave the window freely
+    // resizable, letting the content column below (bound to `width`/
+    // `height: 100%`) actually grow and shrink with it. 660px tall
+    // comfortably fits the sentence panel's default content
+    // (current-sentence card + at least a few sentence-list rows) plus the
+    // bottom `HintBar` without either being cramped at startup.
+    preferred-width: 960px;
+    preferred-height: 660px;
     forward-focus: nav-focus;
 
     nav-focus := FocusScope {
@@ -1297,6 +1329,18 @@ export component AppWindow inherits Window {
         }
 
         VerticalLayout {
+            // `nav-focus` (a `FocusScope`, not a `Layout`) doesn't stretch an
+            // arbitrary single child to fill itself the way a `Layout`
+            // stretches its own children — without an explicit `width`/
+            // `height` here, this column just takes its natural content
+            // size (which is why `AppWindow`'s `width`/`height` above had to
+            // be hand-tuned to match it) and stays that size regardless of
+            // how big the actual window grows, leaving dead space around it
+            // instead of the video/sentence-panel area growing into a
+            // resized or maximized window.
+            width: 100%;
+            height: 100%;
+
             Rectangle {
                 height: 52px;
                 background: Palette.panel-bg;
@@ -1376,20 +1420,23 @@ export component AppWindow inherits Window {
                 }
             }
 
-            HorizontalLayout {
+            body-row := HorizontalLayout {
                 padding: 16px;
                 spacing: 16px;
 
-                VerticalLayout {
+                video-column := VerticalLayout {
                     spacing: 8px;
 
-                    Rectangle {
+                    video-frame := Rectangle {
                         // Video frame area, filling the remaining column height.
                         // Transparent while a video is loaded so the mpv underlay
                         // shows through (see `video-loaded` above); otherwise
                         // filled with the window background color as a
-                        // placeholder. Precise rounded corners land in a later
-                        // TODO.md step.
+                        // placeholder. Its resolved on-screen geometry is
+                        // exposed below (`video-frame-x`/-y/-width/-height) so
+                        // `video_player.rs` can confine the mpv underlay to
+                        // exactly this box instead of the whole window — see
+                        // `render_frame`'s doc comment.
                         background: root.video-loaded ? transparent : Palette.window-bg;
                     }
 
