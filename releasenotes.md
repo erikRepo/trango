@@ -9,6 +9,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.47] - 2026-07-16
+
+### Added
+- Scrub bar (Normal mode) can now be clicked or dragged to seek to any point in the video, instead of only showing progress. Never changes play/pause state — it just relocates the playhead
+- Bottom hint bar now shows in Normal mode too, listing whichever shortcuts actually work there (Space · play/pause, Ctrl+T, Ctrl+A) — previously it only appeared in Sentence by sentence mode
+
 ## [0.1.46] - 2026-07-16
 
 ### Added

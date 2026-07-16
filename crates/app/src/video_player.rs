@@ -286,6 +286,26 @@ impl VideoPlayer {
         }
     }
 
+    /// Seeks mpv to `fraction` (0.0-1.0) of the current file's `duration` —
+    /// driven by the scrub bar's drag/click handler (`app-window.slint`'s
+    /// `ScrubBar`, wired to `seek-requested` in `main.rs`). Unlike
+    /// [`seek_and_pause`](Self::seek_and_pause), this never touches the
+    /// `pause` property — dragging the scrub bar only relocates the
+    /// playhead, it shouldn't start or stop playback — but does clear any
+    /// armed `pause_at` (see [`toggle_play_span`](Self::toggle_play_span)),
+    /// since a manual seek elsewhere invalidates whatever bounded span Space
+    /// last armed.
+    pub fn seek_to_fraction(&self, fraction: f32) {
+        let mut inner = self.inner.borrow_mut();
+        let mpv = inner.mpv;
+        let duration = mpv.get_property::<f64>("duration").unwrap_or(0.0);
+        let target = seek_target_secs(duration, fraction);
+        if let Err(err) = mpv.command("seek", &[&target.to_string(), "absolute"]) {
+            tracing::error!(%err, "failed to seek mpv from scrub bar drag");
+        }
+        inner.pause_at = None;
+    }
+
     /// Loads `video_path` into this already-attached `VideoPlayer` — used
     /// for every video load, including the one `attach`'s `video_path` names
     /// (if any) as well as later Open Video dialog picks (`TODO.md` Vaihe
@@ -404,6 +424,14 @@ fn apply_pending_start_seek(inner: &Rc<RefCell<VideoPlayerInner>>) {
         tracing::error!(%err, "failed to seek mpv to first cue's start");
     }
     inner.pending_start_seek = None;
+}
+
+/// Maps a scrub-bar `fraction` (0.0-1.0 of the track's width) to an absolute
+/// seek target in seconds within a file of `duration_secs`. `fraction` isn't
+/// assumed pre-clamped — dragging past the track's own edges reports values
+/// outside 0.0-1.0 — so it's clamped here rather than by every caller.
+fn seek_target_secs(duration_secs: f64, fraction: f32) -> f64 {
+    duration_secs * f64::from(fraction.clamp(0.0, 1.0))
 }
 
 /// Reads mpv's `time-pos`/`duration` properties and mirrors them into the
@@ -590,4 +618,38 @@ fn render_frame(inner: &Rc<RefCell<VideoPlayerInner>>, window_weak: &Weak<AppWin
         dst_width,
         dst_height,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::seek_target_secs;
+
+    #[test]
+    fn test_seek_target_secs_scales_linearly_with_fraction() {
+        // Given: a 120-second file
+        // When:  computing the seek target at the start, middle, and end
+        // Then:  it scales linearly with the fraction
+        assert_eq!(seek_target_secs(120.0, 0.0), 0.0);
+        assert_eq!(seek_target_secs(120.0, 0.5), 60.0);
+        assert_eq!(seek_target_secs(120.0, 1.0), 120.0);
+    }
+
+    #[test]
+    fn test_seek_target_secs_clamps_out_of_range_fraction() {
+        // Given: a drag that overshoots the scrub bar's own edges
+        // When:  computing the seek target
+        // Then:  it clamps to the file's start/end instead of extrapolating
+        //        past them
+        assert_eq!(seek_target_secs(120.0, -0.2), 0.0);
+        assert_eq!(seek_target_secs(120.0, 1.2), 120.0);
+    }
+
+    #[test]
+    fn test_seek_target_secs_zero_duration_is_zero() {
+        // Given: no file loaded yet (mpv's duration property unavailable,
+        //        poll_scrub_bar's 0.0 fallback)
+        // When:  computing the seek target regardless of fraction
+        // Then:  it's always zero — nothing to seek within
+        assert_eq!(seek_target_secs(0.0, 0.7), 0.0);
+    }
 }

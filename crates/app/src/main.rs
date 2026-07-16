@@ -172,6 +172,16 @@ fn wire_cue_navigation(
     });
 }
 
+/// Wires the window's `seek-requested` callback — invoked by the scrub bar
+/// (`app-window.slint`'s `ScrubBar`) on click/drag with the pointer's
+/// fraction across the track — to `video_player::VideoPlayer::seek_to_fraction`.
+/// Unlike `wire_cue_navigation`'s callbacks, this never touches play/pause
+/// state or the sentence card/list: dragging the scrub bar only relocates
+/// the playhead within whichever mode is active.
+fn wire_scrub_bar(window: &AppWindow, video_player: Rc<video_player::VideoPlayer>) {
+    window.on_seek_requested(move |fraction| video_player.seek_to_fraction(fraction));
+}
+
 /// Builds the closure behind one `wire_cue_navigation` key-driven callback:
 /// runs `navigate` against the shared `PlayerState`, then applies the result
 /// the same way the sentence list's row-click handler does (see
@@ -1186,6 +1196,7 @@ fn main() -> anyhow::Result<()> {
         Rc::clone(&player_state),
     )?);
     wire_cue_navigation(&window, &player_state, Rc::clone(&video_player));
+    wire_scrub_bar(&window, Rc::clone(&video_player));
 
     let startup_config = config::load();
 

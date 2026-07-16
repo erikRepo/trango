@@ -5,8 +5,8 @@
 // sketch/design_reference.dc.html#1c. The segmented control's `toggle-mode`
 // callback is handled in Rust (crates/app/src/main.rs), which drives
 // playback-state::PlayerState::toggle_mode() and mirrors the result back
-// into `sentence-mode-active`. Body/bottom-hint-bar content arrives in
-// later steps.
+// into `sentence-mode-active`, which also drives the bottom `HintBar`'s
+// mode-specific content (see its own doc comment).
 
 import { LineEdit, ListView, ScrollView } from "std-widgets.slint";
 
@@ -807,19 +807,38 @@ component WordAnalysisPopup {
     }
 }
 
-/// Bottom hint bar shown only in `SentenceBySentence` mode (see the `if`
-/// guard where it's instantiated in `AppWindow`), listing the Right/Left/
-/// Space keyboard shortcuts plus Ctrl+T and Ctrl+A. Right/Left/Space are
-/// handled by `AppWindow`'s `key-pressed` callback and drive
-/// `next-cue`/`previous-cue`/`repeat-cue`, wired to `playback-state`
-/// navigation and mpv seeking in `crates/app/src/main.rs` and
-/// `video_player.rs`. Ctrl+T calls `toggle-translation` directly, Ctrl+A
-/// calls `show-word-analysis` (`TODO.md` Vaihe 24), and Space (play/pause)
-/// also works outside `SentenceBySentence` mode — all three are just only
-/// *advertised* here since this is the app's only hint surface so far
-/// (`Normal` mode's own hint bar content is `TODO.md` Vaihe 21, still
-/// open).
+/// One monospace keyboard-shortcut entry in `HintBar` below — factored out
+/// since every entry shares the same styling and `HintBar` now switches a
+/// varying subset of them on/off per mode.
+component HintLabel {
+    in property <string> text;
+
+    Text {
+        text: root.text;
+        color: Palette.muted-text;
+        font-family: "JetBrains Mono";
+        font-size: 11px;
+        font-weight: 500;
+        vertical-alignment: center;
+    }
+}
+
+/// Bottom hint bar, shown in both modes (see `AppWindow`, where it's
+/// instantiated unconditionally), listing whichever keyboard shortcuts
+/// actually do something in the mode `sentence-mode-active` names.
+/// Right/Left (next/previous sentence) only work in `SentenceBySentence`
+/// mode — `AppWindow`'s `key-pressed` handler rejects them outright
+/// otherwise (see its own doc comment) — so they're hidden here in `Normal`
+/// mode; Space always works, but its hint label differs (repeat-the-current-
+/// line vs. plain play/pause) depending on whether there's a cue to bound it
+/// to. Right/Left/Space drive `next-cue`/`previous-cue`/`repeat-cue`, wired
+/// to `playback-state` navigation and mpv seeking in
+/// `crates/app/src/main.rs` and `video_player.rs`. Ctrl+T/Ctrl+A
+/// (`toggle-translation`/`show-word-analysis`, `TODO.md` Vaihe 24) work
+/// unconditionally in either mode, so they're always shown.
 component HintBar {
+    in property <bool> sentence-mode-active: true;
+
     height: 34px;
 
     Rectangle {
@@ -831,49 +850,28 @@ component HintBar {
             alignment: center;
             spacing: 24px;
 
-            Text {
+            if root.sentence-mode-active : HintLabel {
                 text: "← previous sentence";
-                color: Palette.muted-text;
-                font-family: "JetBrains Mono";
-                font-size: 11px;
-                font-weight: 500;
-                vertical-alignment: center;
             }
 
-            Text {
+            if root.sentence-mode-active : HintLabel {
                 text: "space · repeat sentence";
-                color: Palette.muted-text;
-                font-family: "JetBrains Mono";
-                font-size: 11px;
-                font-weight: 500;
-                vertical-alignment: center;
             }
 
-            Text {
+            if !root.sentence-mode-active : HintLabel {
+                text: "space · play/pause";
+            }
+
+            if root.sentence-mode-active : HintLabel {
                 text: "→ next sentence";
-                color: Palette.muted-text;
-                font-family: "JetBrains Mono";
-                font-size: 11px;
-                font-weight: 500;
-                vertical-alignment: center;
             }
 
-            Text {
+            HintLabel {
                 text: "ctrl+t · toggle secondary subtitle";
-                color: Palette.muted-text;
-                font-family: "JetBrains Mono";
-                font-size: 11px;
-                font-weight: 500;
-                vertical-alignment: center;
             }
 
-            Text {
+            HintLabel {
                 text: "ctrl+a · word analysis";
-                color: Palette.muted-text;
-                font-family: "JetBrains Mono";
-                font-size: 11px;
-                font-weight: 500;
-                vertical-alignment: center;
             }
         }
     }
@@ -883,11 +881,19 @@ component HintBar {
 /// muted) — 4px track with accent-filled progress and a white circular
 /// thumb — total time (mono, muted). `current-time-label`/`duration-label`
 /// and `progress` (0.0–1.0) are set from Rust, which polls mpv's
-/// `time-pos`/`duration` properties (see `video_player.rs`).
+/// `time-pos`/`duration` properties (see `video_player.rs`). Clicking or
+/// dragging the track fires `seek-requested` with the pointer's fraction
+/// (0.0–1.0) across the track's width — forwarded to `AppWindow`'s own
+/// `seek-requested` callback, wired in `main.rs` to
+/// `video_player::VideoPlayer::seek_to_fraction`. The fraction isn't clamped
+/// here: a drag beyond the track's own edges reports values outside
+/// 0.0–1.0, which `seek_to_fraction` clamps on the Rust side instead (see
+/// its doc comment), rather than duplicating that clamp in both places.
 component ScrubBar {
     in property <string> current-time-label;
     in property <string> duration-label;
     in property <float> progress: 0.0;
+    callback seek-requested(float);
 
     height: 32px;
 
@@ -926,6 +932,22 @@ component ScrubBar {
                 background: white;
                 x: parent.width * root.progress - self.width / 2;
                 y: (parent.height - self.height) / 2;
+            }
+
+            // Taller than the 4px track itself so the draggable hit target
+            // isn't a hairline to aim for — centered on the visible track.
+            touch := TouchArea {
+                height: 24px;
+                y: (parent.height - self.height) / 2;
+
+                clicked => {
+                    root.seek-requested(touch.mouse-x / touch.width);
+                }
+                moved => {
+                    if touch.pressed {
+                        root.seek-requested(touch.mouse-x / touch.width);
+                    }
+                }
             }
         }
 
@@ -1515,6 +1537,11 @@ export component AppWindow inherits Window {
     // row's index — wired in main.rs to playback_state::jump_to_cue, the
     // same navigation call arrow keys drive.
     callback jump-to-cue(int);
+    // Scrub bar click/drag, invoked by ScrubBar with the pointer's fraction
+    // (0.0-1.0, not pre-clamped) across the track — wired in main.rs to
+    // video_player::VideoPlayer::seek_to_fraction. Unlike jump-to-cue above,
+    // this only relocates the playhead; it never changes play/pause state.
+    callback seek-requested(float);
     // Open Video dialog state (TODO.md Vaihe 18), set from Rust by
     // crates/app/src/open_video_dialog.rs — see FileListDialog above.
     in property <bool> is-open-video-dialog-open: false;
@@ -1849,6 +1876,7 @@ export component AppWindow inherits Window {
                         current-time-label: root.current-time-label;
                         duration-label: root.duration-label;
                         progress: root.scrub-progress;
+                        seek-requested(fraction) => { root.seek-requested(fraction); }
                     }
                 }
 
@@ -1875,7 +1903,9 @@ export component AppWindow inherits Window {
                 }
             }
 
-            if root.sentence-mode-active : HintBar {}
+            HintBar {
+                sentence-mode-active: root.sentence-mode-active;
+            }
         }
 
         if root.is-open-video-dialog-open : FileListDialog {

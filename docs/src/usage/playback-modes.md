@@ -31,7 +31,8 @@ are. See [Subtitles](subtitles.md) for linking or generating one.
 
 Continuous playback with a scrub bar, closer to an ordinary video
 player. Space still works here — it's a plain play/pause toggle, with no
-per-line seeking or auto-pausing.
+per-line seeking or auto-pausing. Click or drag the scrub bar to seek to
+any point in the video.
 
 ## Common to both modes
 
@@ -41,5 +42,8 @@ per-line seeking or auto-pausing.
   [Subtitles](subtitles.md).
 - **Ctrl+A** looks up a word-by-word breakdown of the current sentence.
   See [Word-by-word analysis](word-analysis.md).
+
+The bottom hint bar always shows whichever of these shortcuts actually
+do something in the mode you're currently in.
 
 For the full shortcut list, see [Keyboard shortcuts](keyboard-shortcuts.md).
