@@ -1,14 +1,17 @@
 //! Subtitle generation: turning a video file into an original-language
 //! subtitle track via speech-to-text.
 
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use crate::error::SubtitleError;
+use crate::Cue;
 
-/// Generates an original-language `.srt` file for a video.
+/// Generates an original-language `.srt` file for a video or, for the Audio
+/// source (`TODO.md` Vaihe 29), an already-audio-only recording.
 ///
 /// Implementations write the subtitle file to disk and return its path.
 /// [`StubSubtitleGenerator`] is a placeholder used to build and test the
@@ -17,7 +20,8 @@ use crate::error::SubtitleError;
 /// [`WhisperCliGenerator`] (`TODO.md` Vaihe 21.5) is the real
 /// implementation, driving the external `whisper-cli` binary.
 pub trait SubtitleGenerator {
-    /// Generates a subtitle file for `video_path`, returning the path it
+    /// Generates a subtitle file for `video_path` (a video, or — see this
+    /// trait's doc comment — an Audio-source `.wav`), returning the path it
     /// was written to. Returns `SubtitleError::IoError` if `video_path`
     /// doesn't exist or the subtitle file can't be written.
     fn generate(&self, video_path: &Path) -> Result<PathBuf, SubtitleError>;
@@ -27,7 +31,7 @@ pub trait SubtitleGenerator {
 /// spanning the first five seconds of the video, rather than running real
 /// speech-to-text. Always writes to `video_path` with its extension
 /// replaced by `.srt`, the same same-stem convention
-/// `open_video_dialog::matching_subtitle_path` looks for — so a generated
+/// `open_media_dialog::matching_subtitle_path` looks for — so a generated
 /// file is picked up as the video's linked original subtitle the next time
 /// the Open Subtitles dialog opens.
 pub struct StubSubtitleGenerator;
@@ -62,13 +66,15 @@ impl SubtitleGenerator for StubSubtitleGenerator {
 /// read an unsupported file), so `generate` first extracts the video's
 /// audio to a temporary 16kHz mono WAV file via `ffmpeg` (also an external
 /// process, also not a Cargo dependency) before handing that to
-/// `whisper-cli`.
+/// `whisper-cli` — unless the input is already a `.wav` (an Audio-source
+/// recording/open, `TODO.md` Vaihe 29), in which case that step is skipped
+/// and `whisper-cli` reads it directly (see [`is_wav`]).
 ///
 /// `whisper-cli` is asked to write straight to a same-stem `.srt` next to
 /// `video_path` via its `-of`/`-osrt` flags (`-of` takes the output path
 /// *without* an extension — `whisper-cli` appends `.srt` itself when
 /// `-osrt` is set), matching [`StubSubtitleGenerator`]'s convention and
-/// the one `open_video_dialog::matching_subtitle_path` looks for, so no
+/// the one `open_media_dialog::matching_subtitle_path` looks for, so no
 /// raw-text parsing is needed here.
 pub struct WhisperCliGenerator {
     /// Path or bare name of the `whisper-cli` binary to run.
@@ -203,6 +209,89 @@ impl WhisperCliGenerator {
 
         Ok(output_path.to_path_buf())
     }
+
+    /// Transcribes one already-VAD-segmented speech chunk (`TODO.md` Vaihe
+    /// 28): writes `samples` to a temporary WAV, runs `whisper-cli` against
+    /// it directly (no `ffmpeg` extraction step needed — the samples are
+    /// already 16kHz mono PCM, straight from `audio_capture::AudioCapture`),
+    /// parses the resulting `.srt`, and offsets every cue's timestamps by
+    /// `segment_start` (the segment's position within the overall
+    /// recording). Both the temporary WAV and `.srt` are deleted before
+    /// returning, successful or not — the same "nothing but the final
+    /// transcript persists" principle as `generate`'s own cleanup, just
+    /// per-segment instead of per-video.
+    pub fn transcribe_segment(
+        &self,
+        samples: &[i16],
+        segment_start: Duration,
+    ) -> Result<Vec<Cue>, SubtitleError> {
+        let audio_path = temp_segment_audio_path();
+        let output_stem = audio_path.with_extension("");
+        let output_path = audio_path.with_extension("srt");
+
+        let result = (|| -> Result<Vec<Cue>, SubtitleError> {
+            write_pcm_wav(&audio_path, samples)?;
+            let srt_path = self.run_whisper_cli(&audio_path, &output_stem, &output_path)?;
+            let text = std::fs::read_to_string(srt_path)?;
+            crate::parse_srt(&text)
+        })();
+
+        let _ = std::fs::remove_file(&audio_path);
+        let _ = std::fs::remove_file(&output_path);
+
+        let mut cues = result?;
+        for cue in &mut cues {
+            cue.start += segment_start;
+            cue.end += segment_start;
+        }
+        Ok(cues)
+    }
+}
+
+/// Writes `samples` (16kHz mono 16-bit PCM) to `path` as a canonical PCM WAV
+/// file. `whisper-cli` reads WAV directly, so unlike `extract_audio` this
+/// skips `ffmpeg` entirely — the samples already come out of
+/// `audio_capture::AudioCapture` in the exact format needed.
+fn write_pcm_wav(path: &Path, samples: &[i16]) -> io::Result<()> {
+    const SAMPLE_RATE: u32 = 16_000;
+    const CHANNELS: u16 = 1;
+    const BITS_PER_SAMPLE: u16 = 16;
+    let data_len = (samples.len() * 2) as u32;
+    let byte_rate = SAMPLE_RATE * u32::from(CHANNELS) * u32::from(BITS_PER_SAMPLE) / 8;
+    let block_align = CHANNELS * BITS_PER_SAMPLE / 8;
+
+    let mut file = std::fs::File::create(path)?;
+    file.write_all(b"RIFF")?;
+    file.write_all(&(36 + data_len).to_le_bytes())?;
+    file.write_all(b"WAVE")?;
+    file.write_all(b"fmt ")?;
+    file.write_all(&16u32.to_le_bytes())?;
+    file.write_all(&1u16.to_le_bytes())?;
+    file.write_all(&CHANNELS.to_le_bytes())?;
+    file.write_all(&SAMPLE_RATE.to_le_bytes())?;
+    file.write_all(&byte_rate.to_le_bytes())?;
+    file.write_all(&block_align.to_le_bytes())?;
+    file.write_all(&BITS_PER_SAMPLE.to_le_bytes())?;
+    file.write_all(b"data")?;
+    file.write_all(&data_len.to_le_bytes())?;
+    for sample in samples {
+        file.write_all(&sample.to_le_bytes())?;
+    }
+    Ok(())
+}
+
+/// A process-unique temporary WAV path for one speech segment, e.g.
+/// `/tmp/trango-segment-<pid>-<counter>.wav` — unique per call within the
+/// process (via a monotonic counter, not wall-clock time), mirroring
+/// `temp_audio_path`'s scheme so concurrent per-segment transcriptions never
+/// collide.
+fn temp_segment_audio_path() -> PathBuf {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "trango-segment-{}-{counter}.wav",
+        std::process::id()
+    ))
 }
 
 impl SubtitleGenerator for WhisperCliGenerator {
@@ -216,14 +305,33 @@ impl SubtitleGenerator for WhisperCliGenerator {
 
         let output_stem = video_path.with_extension("");
         let output_path = video_path.with_extension("srt");
-        let audio_path = temp_audio_path(video_path);
 
+        // Audio source recordings/opens are always already a WAV
+        // (`open_media_dialog`'s AUDIO_EXTENSIONS, `main.rs`'s CurrentMedia
+        // doc comment) — TODO.md Vaihe 29 runs "Generate subtitles" on that
+        // file directly, so extract_audio's ffmpeg step (needed only to
+        // pull audio out of a video container) is skipped for it.
+        if is_wav(video_path) {
+            return self.run_whisper_cli(video_path, &output_stem, &output_path);
+        }
+
+        let audio_path = temp_audio_path(video_path);
         let result = self
             .extract_audio(video_path, &audio_path)
             .and_then(|()| self.run_whisper_cli(&audio_path, &output_stem, &output_path));
         let _ = std::fs::remove_file(&audio_path);
         result
     }
+}
+
+/// Whether `path` has a (case-insensitive) `.wav` extension — the format
+/// both `audio_capture::AudioCapture` recordings and the Audio source's
+/// "Open…" dialog are restricted to, so it doubles as "this is already
+/// audio, not a video container" for [`WhisperCliGenerator::generate`].
+fn is_wav(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("wav"))
 }
 
 /// A process-unique temporary WAV path for `video_path`'s extracted audio,
@@ -291,6 +399,18 @@ mod tests {
         let video_path = dir.join("some_video.mp4");
         std::fs::write(&video_path, b"").expect("failed to write fixture video file");
         video_path
+    }
+
+    /// A fresh temp dir with a fake (empty) `some_recording.wav` inside it —
+    /// stands in for an Audio-source recording/open (`TODO.md` Vaihe 29),
+    /// where `generate` is expected to skip `extract_audio` entirely.
+    fn audio_fixture(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("trango-test-generate-{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("failed to create temp test dir");
+        let audio_path = dir.join("some_recording.wav");
+        std::fs::write(&audio_path, b"").expect("failed to write fixture audio file");
+        audio_path
     }
 
     #[test]
@@ -594,6 +714,115 @@ printf 'fake wav content' > "$last"
         std::fs::remove_dir_all(dir).expect("failed to clean up temp test dir");
     }
 
+    /// Filenames in the system temp dir matching `temp_segment_audio_path`'s
+    /// `.wav`/`.srt` naming scheme — used to check `transcribe_segment`
+    /// doesn't leave either behind. Excludes the fake whisper-cli's own
+    /// `.args` log (a test-only side effect, not something real
+    /// `whisper-cli` produces) so that file doesn't skew the count.
+    fn temp_segment_files() -> Vec<PathBuf> {
+        std::fs::read_dir(std::env::temp_dir())
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .filter(|path| {
+                let matches_prefix = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("trango-segment-"));
+                let matches_ext = path
+                    .extension()
+                    .is_some_and(|ext| ext == "wav" || ext == "srt");
+                matches_prefix && matches_ext
+            })
+            .collect()
+    }
+
+    /// Serializes the two `transcribe_segment` cleanup tests below against
+    /// each other — both count `trango-segment-*` files across the whole
+    /// (process-wide) system temp dir, which races if `cargo test` runs
+    /// them concurrently on separate threads within the same process (and
+    /// therefore the same `std::process::id()`-based filename prefix).
+    static TEMP_SEGMENT_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    #[cfg(unix)]
+    fn test_transcribe_segment_offsets_cue_timestamps_and_cleans_up_temp_files() {
+        // Given: a fake whisper-cli that writes one fixed 0-5s cue, and a
+        //        segment starting 10s into the overall recording
+        // When:  transcribing a short silent segment
+        // Then:  the returned cue's timestamps are shifted by the segment's
+        //        start, and no temp WAV/SRT is left in the system temp dir
+        //        afterward
+        let _guard = TEMP_SEGMENT_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = video_fixture("transcribe-segment");
+        let dir = dir.parent().unwrap();
+        let binary_path = write_fake_binary(dir, "fake-whisper-cli.sh", FAKE_WHISPER_CLI_SCRIPT);
+        let generator = WhisperCliGenerator {
+            binary_path,
+            ..WhisperCliGenerator::default()
+        };
+        let samples = vec![0i16; 1_600]; // 100ms of silence at 16kHz
+
+        let before = temp_segment_files().len();
+        let cues = generator
+            .transcribe_segment(&samples, Duration::from_secs(10))
+            .unwrap();
+        let after = temp_segment_files().len();
+
+        assert_eq!(before, after);
+        assert_eq!(cues.len(), 1);
+        assert_eq!(cues[0].start, Duration::from_secs(10));
+        assert_eq!(cues[0].end, Duration::from_secs(15));
+
+        let pid_prefix = format!("trango-segment-{}-", std::process::id());
+        for entry in std::fs::read_dir(std::env::temp_dir()).unwrap().flatten() {
+            let path = entry.path();
+            if path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(&pid_prefix))
+            {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+        std::fs::remove_dir_all(dir).expect("failed to clean up temp test dir");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_transcribe_segment_errors_and_still_cleans_up_when_whisper_cli_fails() {
+        // Given: a fake whisper-cli that exits non-zero
+        // When:  transcribing a segment
+        // Then:  GenerationFailed is returned and no temp WAV/SRT is left
+        //        behind
+        let _guard = TEMP_SEGMENT_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = video_fixture("transcribe-segment-error");
+        let dir = dir.parent().unwrap();
+        let binary_path = write_fake_binary(
+            dir,
+            "fake-whisper-cli.sh",
+            "#!/bin/sh\necho 'boom' >&2\nexit 1\n",
+        );
+        let generator = WhisperCliGenerator {
+            binary_path,
+            ..WhisperCliGenerator::default()
+        };
+
+        let before = temp_segment_files().len();
+        let result = generator.transcribe_segment(&[0i16; 100], Duration::from_secs(0));
+        let after = temp_segment_files().len();
+
+        assert!(matches!(result, Err(SubtitleError::GenerationFailed(_))));
+        assert_eq!(before, after);
+
+        std::fs::remove_dir_all(dir).expect("failed to clean up temp test dir");
+    }
+
     #[test]
     #[cfg(unix)]
     fn test_generate_extracts_audio_before_running_whisper_cli() {
@@ -648,6 +877,34 @@ printf '1\n00:00:00,000 --> 00:00:05,000\n[fake whisper-cli output]\n' > "${of}.
         let output_path = generator.generate(&video_path).unwrap();
 
         assert_eq!(output_path, video_path.with_extension("srt"));
+        let cues = crate::parse_srt(&std::fs::read_to_string(&output_path).unwrap()).unwrap();
+        assert_eq!(cues.len(), 1);
+
+        std::fs::remove_dir_all(dir).expect("failed to clean up temp test dir");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_generate_skips_ffmpeg_extraction_for_wav_input() {
+        // Given: a WAV fixture (already audio, as Audio-source recordings/
+        //        opens always are, TODO.md Vaihe 29) and an ffmpeg_path
+        //        naming a binary that doesn't exist
+        // When:  generating a subtitle for it (the real, public
+        //        SubtitleGenerator::generate entry point)
+        // Then:  it still succeeds — proving generate() fed the WAV
+        //        straight to whisper-cli without ever invoking ffmpeg
+        let audio_path = audio_fixture("skips-ffmpeg-for-wav");
+        let dir = audio_path.parent().unwrap();
+        let binary_path = write_fake_binary(dir, "fake-whisper-cli.sh", FAKE_WHISPER_CLI_SCRIPT);
+        let generator = WhisperCliGenerator {
+            binary_path,
+            ffmpeg_path: dir.join("no-such-ffmpeg-binary"),
+            ..WhisperCliGenerator::default()
+        };
+
+        let output_path = generator.generate(&audio_path).unwrap();
+
+        assert_eq!(output_path, audio_path.with_extension("srt"));
         let cues = crate::parse_srt(&std::fs::read_to_string(&output_path).unwrap()).unwrap();
         assert_eq!(cues.len(), 1);
 

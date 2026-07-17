@@ -454,6 +454,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "audio-capture"
+version = "0.1.52"
+dependencies = [
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "auto_enums"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3691,7 +3699,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "playback-state"
-version = "0.1.51"
+version = "0.1.52"
 dependencies = [
  "subtitle",
 ]
@@ -4763,7 +4771,7 @@ dependencies = [
 
 [[package]]
 name = "subtitle"
-version = "0.1.51"
+version = "0.1.52"
 dependencies = [
  "thiserror 2.0.18",
  "tracing",
@@ -5204,9 +5212,11 @@ dependencies = [
 
 [[package]]
 name = "trango"
-version = "0.1.51"
+version = "0.1.52"
 dependencies = [
  "anyhow",
+ "audio-capture",
+ "chrono",
  "libmpv2",
  "playback-state",
  "serde",
@@ -6103,7 +6113,7 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "word-analysis"
-version = "0.1.51"
+version = "0.1.52"
 dependencies = [
  "serde",
  "serde_json",

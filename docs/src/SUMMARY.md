@@ -22,6 +22,7 @@
 - [Architecture](developer/architecture/README.md)
     - [Crate structure](developer/architecture/crates.md)
     - [Video playback](developer/architecture/video-playback.md)
+    - [System audio capture](developer/architecture/system-audio-capture.md)
     - [Testing](developer/architecture/testing.md)
 - [Design decisions](developer/specs.md)
 - [Technology choices](developer/technology/README.md)
@@ -33,3 +34,4 @@
     - [toml](developer/technology/toml.md)
     - [ureq](developer/technology/ureq.md)
     - [serde_json](developer/technology/serde_json.md)
+    - [chrono](developer/technology/chrono.md)

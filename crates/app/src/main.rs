@@ -7,11 +7,13 @@
 mod config;
 mod model_picker;
 mod ollama_model_picker;
+mod open_media_dialog;
 mod open_subtitles_dialog;
-mod open_video_dialog;
 mod sentence_card;
 mod sentence_list;
+mod settings_dialog;
 mod subtitle_generation;
+mod system_audio_capture;
 mod video_player;
 mod word_analysis;
 
@@ -19,7 +21,7 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use playback_state::{PlaybackMode, PlayerState, SeekCommand};
+use playback_state::{MediaSource, PlaybackMode, PlayerState, SeekCommand};
 use slint::Model;
 
 slint::include_modules!();
@@ -64,34 +66,102 @@ fn extract_debug_flag(args: Vec<String>) -> (bool, Vec<String>) {
     (debug, args)
 }
 
-/// Owns a fresh `PlayerState` — defaulting to `SentenceBySentence` mode, the
-/// primary language-learning use case — and mirrors that default into the
-/// window's `sentence-mode-active` property, since `app-window.slint`
-/// itself only hardcodes `false`. Also wires the window's `toggle-mode`
-/// callback (invoked by the top bar's segmented control) to
-/// `PlayerState::toggle_mode()`, mirroring each subsequent mode change back
-/// into `sentence-mode-active` too, and the window's `toggle-translation`
-/// callback (invoked by the current-sentence card's toggle switch) to
-/// `PlayerState::toggle_translation()`, mirroring `show_translation` into
-/// the window's `show-translation` property the same way. Returns the
-/// shared state so callers can inspect it (used by tests; later steps will
-/// read it too).
+/// Converts `playback_state::PlaybackMode` to the Slint-generated
+/// `PlaybackModeUi` mirrored into `AppWindow::playback-mode` — the two are
+/// kept as separate types (rather than one shared enum) because
+/// `slint::include_modules!()` generates `PlaybackModeUi` into this same
+/// module, and naming it `PlaybackMode` too would collide with the
+/// `playback_state` import above.
+fn to_ui_mode(mode: PlaybackMode) -> PlaybackModeUi {
+    match mode {
+        PlaybackMode::Normal => PlaybackModeUi::Normal,
+        PlaybackMode::SentenceBySentence => PlaybackModeUi::SentenceBySentence,
+    }
+}
+
+/// The inverse of [`to_ui_mode`], converting the Normal/Sentence-by-sentence
+/// segmented control's clicked segment back to the `playback_state` mode it
+/// names.
+fn from_ui_mode(mode: PlaybackModeUi) -> PlaybackMode {
+    match mode {
+        PlaybackModeUi::Normal => PlaybackMode::Normal,
+        PlaybackModeUi::SentenceBySentence => PlaybackMode::SentenceBySentence,
+    }
+}
+
+/// Converts `playback_state::MediaSource` to the Slint-generated
+/// `MediaSourceUi` mirrored into `AppWindow::media-source` — kept as a
+/// separate type from `MediaSource` for the same reason `to_ui_mode` keeps
+/// `PlaybackModeUi` separate from `PlaybackMode`.
+fn to_ui_source(source: MediaSource) -> MediaSourceUi {
+    match source {
+        MediaSource::Video => MediaSourceUi::Video,
+        MediaSource::Audio => MediaSourceUi::Audio,
+    }
+}
+
+/// The inverse of [`to_ui_source`], converting the Video/Audio segmented
+/// control's clicked segment back to the `playback_state` source it names.
+fn from_ui_source(source: MediaSourceUi) -> MediaSource {
+    match source {
+        MediaSourceUi::Video => MediaSource::Video,
+        MediaSourceUi::Audio => MediaSource::Audio,
+    }
+}
+
+/// Owns a fresh `PlayerState` — defaulting to `SentenceBySentence` mode and
+/// `Video` source, the primary language-learning use case — and mirrors
+/// those defaults into the window's `playback-mode`/`media-source`
+/// properties, since `app-window.slint` itself only hardcodes `Normal`/
+/// `Video`. Also wires the window's `select-mode` callback (invoked by the
+/// top bar's Normal/Sentence-by-sentence segmented control with its clicked
+/// segment's target mode) to `PlayerState::set_mode()`, the window's
+/// `select-media-source` callback (invoked by the top bar's Video/Audio
+/// segmented control) to `PlayerState::set_media_source()`, mirroring each
+/// subsequent change back into `playback-mode`/`media-source` respectively,
+/// and the window's `toggle-translation` callback (invoked by the current-
+/// sentence card's toggle switch) to `PlayerState::toggle_translation()`,
+/// mirroring `show_translation` into the window's `show-translation`
+/// property the same way. Returns the shared state so callers can inspect
+/// it (used by tests; later steps will read it too).
 fn wire_player_state(window: &AppWindow) -> Rc<RefCell<PlayerState>> {
     let state = Rc::new(RefCell::new(PlayerState::new()));
-    window.set_sentence_mode_active(state.borrow().mode == PlaybackMode::SentenceBySentence);
+    window.set_playback_mode(to_ui_mode(state.borrow().mode));
+    window.set_media_source(to_ui_source(state.borrow().media_source));
     window.set_show_translation(state.borrow().show_translation);
 
     let state_for_callback = Rc::clone(&state);
     let window_weak = window.as_weak();
-    window.on_toggle_mode(move || {
-        let mode = {
-            let mut state = state_for_callback.borrow_mut();
-            state.toggle_mode();
-            state.mode
-        };
-        tracing::debug!(?mode, "playback mode toggled");
+    window.on_select_mode(move |ui_mode| {
+        let mode = from_ui_mode(ui_mode);
+        state_for_callback.borrow_mut().set_mode(mode);
+        tracing::debug!(?mode, "playback mode selected");
         if let Some(window) = window_weak.upgrade() {
-            window.set_sentence_mode_active(mode == PlaybackMode::SentenceBySentence);
+            window.set_playback_mode(to_ui_mode(mode));
+        }
+    });
+
+    let source_state = Rc::clone(&state);
+    let source_window_weak = window.as_weak();
+    window.on_select_media_source(move |ui_source| {
+        let source = from_ui_source(ui_source);
+        source_state.borrow_mut().set_media_source(source);
+        tracing::debug!(?source, "media source selected");
+        if let Some(window) = source_window_weak.upgrade() {
+            window.set_media_source(to_ui_source(source));
+            // Re-derives the sentence card/list display for the panel just
+            // switched to: blanked (an empty PlayerState, the same
+            // placeholder shown before anything's ever loaded) if it's the
+            // Audio source and nothing loaded there yet matches, otherwise
+            // the real state — restoring it when switching back to a
+            // source that's ready. See panel_content_ready's doc comment.
+            let display_state = if panel_content_ready(&window) {
+                source_state.borrow().clone()
+            } else {
+                PlayerState::new()
+            };
+            sentence_card::update_sentence_card(&window, &display_state);
+            sentence_list::update_sentence_list(&window, &display_state);
         }
     });
 
@@ -182,6 +252,17 @@ fn wire_scrub_bar(window: &AppWindow, video_player: Rc<video_player::VideoPlayer
     window.on_seek_requested(move |fraction| video_player.seek_to_fraction(fraction));
 }
 
+/// Wires the window's `pause-playback` callback — invoked by the top bar's
+/// Video/Audio segmented control (`app-window.slint`) right before
+/// `select-media-source` on every click — to
+/// `video_player::VideoPlayer::pause()`. Both sources share the same mpv
+/// instance/loaded file (see `AppWindow::loaded-media-source`'s doc
+/// comment), so without this, switching away from whichever panel is
+/// currently playing would leave it running audibly behind the other one.
+fn wire_pause_playback(window: &AppWindow, video_player: Rc<video_player::VideoPlayer>) {
+    window.on_pause_playback(move || video_player.pause());
+}
+
 /// Wires the window's `speed-requested` callback — invoked by the always-
 /// visible playback-speed slider (`app-window.slint`'s `SpeedSlider`) on
 /// click/drag with the pointer's fraction across the track. Maps that
@@ -251,8 +332,8 @@ fn apply_navigation_result(
 /// Reads the video path to play (if any) from CLI arguments, as used by
 /// `main`. `args` is expected to include the program name at index 0 (i.e.
 /// `std::env::args()`), matching Vaihe 11's `trango <path/to/video>` usage.
-/// A video can also be picked in-app via the top bar's "Open video…" button
-/// (see `wire_open_video_dialog`) instead of a CLI argument.
+/// A video can also be picked in-app via the top bar's "Open…" button
+/// (see `wire_open_media_dialog`) instead of a CLI argument.
 fn video_path_from_args(args: &[String]) -> Option<PathBuf> {
     args.get(1).map(PathBuf::from)
 }
@@ -301,7 +382,7 @@ fn parse_subtitle_file(path: &Path) -> Option<Vec<subtitle::Cue>> {
 /// subtitle path shouldn't prevent the video from playing — callers use
 /// the return value to decide whether to record `subtitle_path` as the
 /// video's linked original subtitle (see `main`'s and
-/// `open_selected_video`'s `CurrentMedia` tracking). A `translation_path`
+/// `open_selected_media`'s `CurrentMedia` tracking). A `translation_path`
 /// that can't be read or parsed is logged and simply skipped — the
 /// original cues still load, just without translations, and `true` is
 /// still returned since the original subtitle itself loaded fine.
@@ -326,30 +407,33 @@ fn load_subtitles(
     true
 }
 
-/// Tracks the paths behind the currently open video/subtitle/translation.
+/// Tracks the paths behind the currently open media/subtitle/translation.
 /// Nothing here drives playback directly (that's `PlayerState`/
 /// `video_player::VideoPlayer`) — it exists so the Open Subtitles dialog
-/// (Vaihe 19) knows what video it's scoped to and what's already linked,
+/// (Vaihe 19) knows what media it's scoped to and what's already linked,
 /// without re-deriving it from disk on every open. That matters because a
 /// CLI-loaded subtitle (`trango video.mp4 custom-name.srt`) may not share
-/// the video's filename stem, unlike an auto-matched one
-/// (`open_video_dialog::matching_subtitle_path`) — so "what's linked" isn't
-/// always re-derivable by searching disk alone.
+/// the media's filename stem, unlike an auto-matched one
+/// (`open_media_dialog::matching_subtitle_path`) — so "what's linked" isn't
+/// always re-derivable by searching disk alone. `media_path` holds a video
+/// path in the Video source, or an opened/recorded `.wav` path in the Audio
+/// source (`TODO.md` Vaihe 28) — both load through the same
+/// `video_player::VideoPlayer::load_video`.
 #[derive(Debug, Clone, Default)]
 struct CurrentMedia {
-    /// The currently open video's path, if any.
-    video_path: Option<PathBuf>,
+    /// The currently open video or audio file's path, if any.
+    media_path: Option<PathBuf>,
     /// The currently linked original-language subtitle's path, if any.
     subtitle_path: Option<PathBuf>,
     /// The currently linked translation subtitle's path, if any.
     translation_path: Option<PathBuf>,
 }
 
-/// Resolves the folder the Open Video dialog lists by default: the CLI
-/// video path's parent directory if one was given (Vaihe 11's
+/// Resolves the folder the Open dialog lists by default in `MediaKind::Video`:
+/// the CLI video path's parent directory if one was given (Vaihe 11's
 /// `trango <path/to/video>` usage — likely where the user keeps other
 /// videos too), otherwise `config`'s last-opened video folder
-/// (`TrangoConfig::video_folder`, kept up to date by `open_selected_video`),
+/// (`TrangoConfig::video_folder`, kept up to date by `open_selected_media`),
 /// otherwise the current working directory. An in-dialog folder switcher is
 /// out of scope for Vaihe 18 — see `docs/src/developer/specs.md`.
 fn default_video_folder(args: &[String], config: &config::TrangoConfig) -> PathBuf {
@@ -365,133 +449,210 @@ fn default_video_folder(args: &[String], config: &config::TrangoConfig) -> PathB
         })
 }
 
-/// Wires the Open Video dialog (Vaihe 18): the top bar's
-/// `open-video-dialog-requested` callback lists `default_folder`'s entries
-/// and opens the modal (`open_video_dialog::open_dialog`);
-/// `select-open-video-row` either navigates to a different folder (an
-/// `Up`/`Folder` row — re-listing and re-populating the dialog in place) or
-/// marks a video row selected (`open_video_dialog::mark_selected`);
-/// `confirm-open-video` loads the selected video (see
-/// `open_selected_video`); `cancel-open-video-dialog` (backdrop/✕/Cancel)
-/// just closes it.
-fn wire_open_video_dialog(
+/// The `MediaKind` the Open dialog should list for `source` — `Video` for
+/// the Video source's "Open…" button, `Audio` for the Audio source's
+/// (`TODO.md` Vaihe 28: the two sources share one button and one dialog,
+/// distinguished by whichever source is currently active).
+fn media_kind_for_source(source: MediaSource) -> open_media_dialog::MediaKind {
+    match source {
+        MediaSource::Video => open_media_dialog::MediaKind::Video,
+        MediaSource::Audio => open_media_dialog::MediaKind::Audio,
+    }
+}
+
+/// Whether the visible panel's own sentence content should be shown —
+/// mirrors `app-window.slint`'s `ScrubBar`/`SpeedSlider` gating (`media-
+/// source != Audio || media-ready`): the Video source's is always ready,
+/// the Audio source's only once its loaded file's kind actually matches.
+/// Used by `wire_player_state`'s `on_select_media_source` handler to blank
+/// the current-sentence card/sentence list when switching to a not-yet-
+/// loaded Audio panel, rather than leaving the previous source's sentence
+/// stuck on screen, and by `wire_word_analysis_popup` so Ctrl+A doesn't
+/// analyze a sentence that isn't actually being shown.
+fn panel_content_ready(window: &AppWindow) -> bool {
+    window.get_media_source() != MediaSourceUi::Audio || window.get_media_ready()
+}
+
+/// The `MediaSourceUi` panel that shows a file of `kind` once loaded —
+/// mirrors `media_kind_for_source`'s mapping. `open_selected_media` sets
+/// `AppWindow::loaded-media-source` to this right after loading, so
+/// `app-window.slint`'s `media-ready` can tell a video loaded from before a
+/// source switch apart from a matching file for the panel currently shown.
+fn ui_source_for_media_kind(kind: open_media_dialog::MediaKind) -> MediaSourceUi {
+    match kind {
+        open_media_dialog::MediaKind::Video => MediaSourceUi::Video,
+        open_media_dialog::MediaKind::Audio => MediaSourceUi::Audio,
+    }
+}
+
+/// The Open dialog's title for `kind`, shown in `FileListDialog`'s header.
+fn open_media_dialog_title(kind: open_media_dialog::MediaKind) -> &'static str {
+    match kind {
+        open_media_dialog::MediaKind::Video => "Open video file",
+        open_media_dialog::MediaKind::Audio => "Open audio file",
+    }
+}
+
+/// Wires the top bar's single "Open…" button (Vaihe 18, generalized to
+/// audio in Vaihe 28): `open-media-dialog-requested` reads `state`'s current
+/// `MediaSource` to decide which kind of file to list
+/// (`media_kind_for_source`) — `Video` lists `video_default_folder`,
+/// `Audio` lists `system_audio_capture::default_recording_folder` off a
+/// freshly loaded config (the last folder a recording was opened from or
+/// written to) — and opens the modal (`open_media_dialog::open_dialog`).
+/// `select-open-media-row` either navigates to a different folder (an
+/// `Up`/`Folder` row — re-listing in place, keeping the same `MediaKind`) or
+/// marks a file row selected (`open_media_dialog::mark_selected`);
+/// `confirm-open-media` loads the selected file (see `open_selected_media`);
+/// `cancel-open-media-dialog` (backdrop/✕/Cancel) just closes it.
+fn wire_open_media_dialog(
     window: &AppWindow,
     state: &Rc<RefCell<PlayerState>>,
     video_player: Rc<video_player::VideoPlayer>,
-    default_folder: PathBuf,
+    video_default_folder: PathBuf,
     current_media: Rc<RefCell<CurrentMedia>>,
 ) {
-    let entries: Rc<RefCell<Vec<open_video_dialog::FolderEntry>>> =
+    let entries: Rc<RefCell<Vec<open_media_dialog::FolderEntry>>> =
         Rc::new(RefCell::new(Vec::new()));
+    let kind: Rc<RefCell<open_media_dialog::MediaKind>> =
+        Rc::new(RefCell::new(open_media_dialog::MediaKind::Video));
 
     let request_window_weak = window.as_weak();
     let request_entries = Rc::clone(&entries);
-    window.on_open_video_dialog_requested(move || {
+    let request_kind = Rc::clone(&kind);
+    let request_state = Rc::clone(state);
+    window.on_open_media_dialog_requested(move || {
         let Some(window) = request_window_weak.upgrade() else {
             return;
         };
-        let files = open_video_dialog::list_folder_entries(&default_folder);
-        open_video_dialog::open_dialog(&window, &default_folder, &files);
+        let media_kind = media_kind_for_source(request_state.borrow().media_source);
+        let folder = match media_kind {
+            open_media_dialog::MediaKind::Video => video_default_folder.clone(),
+            open_media_dialog::MediaKind::Audio => {
+                system_audio_capture::default_recording_folder(&config::load())
+            }
+        };
+        window.set_open_media_dialog_title(open_media_dialog_title(media_kind).into());
+        let files = open_media_dialog::list_folder_entries(&folder, media_kind);
+        open_media_dialog::open_dialog(&window, &folder, &files);
         *request_entries.borrow_mut() = files;
+        *request_kind.borrow_mut() = media_kind;
     });
 
     let cancel_window_weak = window.as_weak();
-    window.on_cancel_open_video_dialog(move || {
+    window.on_cancel_open_media_dialog(move || {
         if let Some(window) = cancel_window_weak.upgrade() {
-            window.set_is_open_video_dialog_open(false);
+            window.set_is_open_media_dialog_open(false);
         }
     });
 
     let select_window_weak = window.as_weak();
     let select_entries = Rc::clone(&entries);
-    window.on_select_open_video_row(move |index| {
+    let select_kind = Rc::clone(&kind);
+    window.on_select_open_media_row(move |index| {
         let Some(window) = select_window_weak.upgrade() else {
             return;
         };
         let target_folder = usize::try_from(index).ok().and_then(|index| {
             match select_entries.borrow().get(index)? {
-                open_video_dialog::FolderEntry::Up(path)
-                | open_video_dialog::FolderEntry::Folder { path, .. } => Some(path.clone()),
-                open_video_dialog::FolderEntry::Video(_) => None,
+                open_media_dialog::FolderEntry::Up(path)
+                | open_media_dialog::FolderEntry::Folder { path, .. } => Some(path.clone()),
+                open_media_dialog::FolderEntry::File(_) => None,
             }
         });
         if let Some(target_folder) = target_folder {
-            let files = open_video_dialog::list_folder_entries(&target_folder);
-            open_video_dialog::open_dialog(&window, &target_folder, &files);
+            let files =
+                open_media_dialog::list_folder_entries(&target_folder, *select_kind.borrow());
+            open_media_dialog::open_dialog(&window, &target_folder, &files);
             *select_entries.borrow_mut() = files;
             return;
         }
-        window.set_open_video_selected_index(index);
-        open_video_dialog::mark_selected(&window, &select_entries.borrow(), index);
+        window.set_open_media_selected_index(index);
+        open_media_dialog::mark_selected(&window, &select_entries.borrow(), index);
     });
 
     let confirm_window_weak = window.as_weak();
     let confirm_entries = Rc::clone(&entries);
+    let confirm_kind = Rc::clone(&kind);
     let confirm_state = Rc::clone(state);
     let confirm_media = Rc::clone(&current_media);
-    window.on_confirm_open_video(move || {
+    window.on_confirm_open_media(move || {
         let Some(window) = confirm_window_weak.upgrade() else {
             return;
         };
-        let video_path = usize::try_from(window.get_open_video_selected_index())
+        let media_path = usize::try_from(window.get_open_media_selected_index())
             .ok()
             .and_then(|index| confirm_entries.borrow().get(index).cloned())
             .and_then(|entry| match entry {
-                open_video_dialog::FolderEntry::Video(video) => Some(video.path),
+                open_media_dialog::FolderEntry::File(file) => Some(file.path),
                 _ => None,
             });
-        let Some(video_path) = video_path else {
+        let Some(media_path) = media_path else {
             return;
         };
-        window.set_is_open_video_dialog_open(false);
-        open_selected_video(
+        window.set_is_open_media_dialog_open(false);
+        open_selected_media(
             &window,
             &confirm_state,
             &video_player,
-            &video_path,
+            *confirm_kind.borrow(),
+            &media_path,
             &confirm_media,
         );
     });
 }
 
-/// Loads `video_path` into `video_player` — always the same already-attached
+/// Loads `media_path` into `video_player` — always the same already-attached
 /// `VideoPlayer` (see `video_player::VideoPlayer::attach`'s doc comment for
 /// why it's attached once, unconditionally, at startup rather than lazily
-/// here). Resolves a same-stem `.srt` first
-/// (`open_video_dialog::matching_subtitle_path`) and loads it via
+/// here); mpv plays a `.wav` file the same way it plays a video, just with
+/// no picture (`TODO.md` Vaihe 28). Resolves a same-stem `.srt` first
+/// (`open_media_dialog::matching_subtitle_path`) and loads it via
 /// `load_subtitles` if found, clearing any previously loaded cues
 /// otherwise — done before `load_video` so that, in `SentenceBySentence`
-/// mode, the start-of-playback pause lands on the new video's first cue
-/// rather than a stale one from a previously opened video. Called by
-/// `wire_open_video_dialog`'s `confirm-open-video` handler. Also resets
-/// `current_media` to the new video (clearing any translation link from a
-/// previously opened video), so the Open Subtitles dialog (Vaihe 19)
-/// reflects the newly opened video the next time it's shown. Persists
-/// `video_path`'s parent folder to `config::TrangoConfig::video_folder`
-/// (`config::save`), so the Open Video dialog defaults to wherever the user
-/// last opened a video from, on the next run.
-fn open_selected_video(
+/// mode, the start-of-playback pause lands on the new file's first cue
+/// rather than a stale one from whatever was open before. Called by
+/// `wire_open_media_dialog`'s `confirm-open-media` handler, and by
+/// `system_audio_capture`'s stop handler once a fresh recording finishes
+/// writing, so it lands in the player the same way an explicitly opened
+/// file does. Also resets `current_media` to the new file (clearing any
+/// translation link from whatever was open before), so the Open Subtitles
+/// dialog (Vaihe 19) reflects it the next time it's shown. Persists
+/// `media_path`'s parent folder to `config::TrangoConfig::video_folder` or
+/// `audio_recording_folder` depending on `kind` (`config::save`), so the
+/// Open dialog defaults to wherever the user last opened a file of that
+/// kind from, on the next run. Finally mirrors `kind` into
+/// `AppWindow::loaded-media-source` (`ui_source_for_media_kind`) so
+/// `app-window.slint`'s `media-ready` can gate playback controls to the
+/// panel the loaded file actually matches.
+fn open_selected_media(
     window: &AppWindow,
     state: &Rc<RefCell<PlayerState>>,
     video_player: &video_player::VideoPlayer,
-    video_path: &Path,
+    kind: open_media_dialog::MediaKind,
+    media_path: &Path,
     current_media: &Rc<RefCell<CurrentMedia>>,
 ) {
-    if let Some(folder) = video_path
+    if let Some(folder) = media_path
         .parent()
         .filter(|folder| !folder.as_os_str().is_empty())
     {
         let mut config = config::load();
-        config.video_folder = Some(folder.to_path_buf());
+        match kind {
+            open_media_dialog::MediaKind::Video => config.video_folder = Some(folder.to_path_buf()),
+            open_media_dialog::MediaKind::Audio => {
+                config.audio_recording_folder = Some(folder.to_path_buf())
+            }
+        }
         config::save(&config);
     }
 
-    let subtitle_path = open_video_dialog::matching_subtitle_path(video_path);
+    let subtitle_path = open_media_dialog::matching_subtitle_path(media_path);
     let mut subtitle_loaded = false;
     if let Some(subtitle_path) = &subtitle_path {
         tracing::info!(
             ?subtitle_path,
-            "auto-matched subtitle file for opened video"
+            "auto-matched subtitle file for opened media"
         );
         subtitle_loaded = load_subtitles(window, state, subtitle_path, None);
     }
@@ -502,18 +663,19 @@ fn open_selected_video(
     }
 
     *current_media.borrow_mut() = CurrentMedia {
-        video_path: Some(video_path.to_path_buf()),
+        media_path: Some(media_path.to_path_buf()),
         subtitle_path: subtitle_loaded.then_some(subtitle_path).flatten(),
         translation_path: None,
     };
 
-    video_player.load_video(window, video_path, &state.borrow());
+    video_player.load_video(window, media_path, &state.borrow());
+    window.set_loaded_media_source(ui_source_for_media_kind(kind));
 }
 
 /// Wires the Open Subtitles dialog (Vaihe 19): the top bar's
 /// `open-subtitles-dialog-requested` callback resolves the current video's
 /// original-language subtitle — `current_media`'s tracked path, falling
-/// back to a same-stem `.srt` search (`open_video_dialog::matching_subtitle_path`)
+/// back to a same-stem `.srt` search (`open_media_dialog::matching_subtitle_path`)
 /// for the case a CLI-loaded subtitle didn't get tracked with a matching
 /// name — and opens the modal (`open_subtitles_dialog::open_dialog`).
 /// `cancel`/`confirm-open-subtitles-dialog` (backdrop/✕/Cancel/Done) just
@@ -578,13 +740,11 @@ fn open_selected_video(
 ///   to `whisper-cli` (which can't read most video containers directly —
 ///   see `WhisperCliGenerator`'s doc comment). Defaults to `"ffmpeg"`,
 ///   resolved via `PATH`.
-fn whisper_cli_generator(model_path: PathBuf) -> subtitle::WhisperCliGenerator {
+pub(crate) fn whisper_cli_generator(model_path: PathBuf) -> subtitle::WhisperCliGenerator {
     let binary_path = std::env::var_os("TRANGO_WHISPER_CLI_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("whisper-cli"));
-    let ffmpeg_path = std::env::var_os("TRANGO_FFMPEG_PATH")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("ffmpeg"));
+    let ffmpeg_path = ffmpeg_path_from_env();
     let language = model_picker::language_flag(&model_path).to_string();
     tracing::info!(
         ?binary_path,
@@ -601,6 +761,18 @@ fn whisper_cli_generator(model_path: PathBuf) -> subtitle::WhisperCliGenerator {
     }
 }
 
+/// The `TRANGO_FFMPEG_PATH` env var (path or bare name of the `ffmpeg`
+/// binary), defaulting to `"ffmpeg"` resolved via `PATH` — shared by
+/// `whisper_cli_generator` (audio extraction ahead of `whisper-cli`) and
+/// `main`'s `system_audio_capture::wire_audio_capture` call (system audio
+/// capture, `TODO.md` Vaihe 26), so ffmpeg's location is configured once
+/// for both.
+fn ffmpeg_path_from_env() -> PathBuf {
+    std::env::var_os("TRANGO_FFMPEG_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("ffmpeg"))
+}
+
 fn wire_open_subtitles_dialog(
     window: &AppWindow,
     state: &Rc<RefCell<PlayerState>>,
@@ -615,14 +787,14 @@ fn wire_open_subtitles_dialog(
             return;
         };
         let media = request_media.borrow();
-        let Some(video_path) = media.video_path.clone() else {
+        let Some(video_path) = media.media_path.clone() else {
             tracing::warn!("Open subtitles requested with no video open");
             return;
         };
         let original_path = media
             .subtitle_path
             .clone()
-            .or_else(|| open_video_dialog::matching_subtitle_path(&video_path));
+            .or_else(|| open_media_dialog::matching_subtitle_path(&video_path));
         open_subtitles_dialog::open_dialog(
             &window,
             &video_path,
@@ -666,7 +838,7 @@ fn wire_open_subtitles_dialog(
             // sentence-by-sentence start-of-playback seek onto the
             // newly-loaded first cue and leaves mpv in a normal, seekable
             // state again.
-            if let Some(video_path) = generated_media.borrow().video_path.clone() {
+            if let Some(video_path) = generated_media.borrow().media_path.clone() {
                 reload_video(&window, &video_path, &generated_state.borrow());
             }
         }
@@ -679,7 +851,7 @@ fn wire_open_subtitles_dialog(
         let Some(window) = generate_window_weak.upgrade() else {
             return;
         };
-        let Some(video_path) = generate_media.borrow().video_path.clone() else {
+        let Some(video_path) = generate_media.borrow().media_path.clone() else {
             tracing::warn!("subtitle generation requested with no video open");
             return;
         };
@@ -736,7 +908,7 @@ fn wire_open_subtitles_dialog(
         let Some(window) = link_window_weak.upgrade() else {
             return;
         };
-        let Some(video_path) = link_media.borrow().video_path.clone() else {
+        let Some(video_path) = link_media.borrow().media_path.clone() else {
             return;
         };
         let Some(folder) = video_path.parent().map(Path::to_path_buf) else {
@@ -807,7 +979,7 @@ fn wire_open_subtitles_dialog(
 /// (best-effort autodiscovery, falling back to the config's last-browsed
 /// folder or the current working directory) — reusing the same in-app
 /// folder-browsing chrome as the Open Video dialog and the translation-link
-/// picker (see `open_video_dialog`'s and `open_subtitles_dialog`'s module
+/// picker (see `open_media_dialog`'s and `open_subtitles_dialog`'s module
 /// docs for why there's no OS-native file picker here either).
 ///
 /// The model is deliberately *not* configured through an environment
@@ -1010,6 +1182,82 @@ fn wire_ollama_target_language(window: &AppWindow, target_language: Rc<RefCell<S
     });
 }
 
+/// Wires the top bar's Settings gear (`settings-dialog-requested`) and the
+/// resulting dialog's callbacks. Opening loads the current config.toml
+/// into the dialog's display properties (`settings_dialog::open_dialog`);
+/// editing video-folder/audio-monitor-source/audio-recording-folder
+/// persists immediately, the same way `wire_ollama_target_language` above
+/// does, and (for the recording folder) refreshes the Audio panel's
+/// "Saving to:" label (`system_audio_capture::refresh_recording_folder_label`)
+/// so a folder change is visible there without restarting the app.
+/// Whisper/Ollama model selection and the target-language field aren't
+/// wired here at all — the dialog's `select-whisper-model`/
+/// `select-ollama-model`/`set-ollama-target-language` forward straight to
+/// `select-whisper-model-requested`/`select-ollama-model-requested`/
+/// `set-ollama-target-language` (`app-window.slint`'s SettingsDialog
+/// instantiation), already handled by `wire_model_picker`/
+/// `wire_ollama_model_picker`/`wire_ollama_target_language`.
+fn wire_settings_dialog(window: &AppWindow) {
+    let open_window_weak = window.as_weak();
+    window.on_settings_dialog_requested(move || {
+        let Some(window) = open_window_weak.upgrade() else {
+            return;
+        };
+        settings_dialog::open_dialog(&window, &config::load());
+    });
+
+    let close_window_weak = window.as_weak();
+    window.on_close_settings_dialog(move || {
+        if let Some(window) = close_window_weak.upgrade() {
+            window.set_is_settings_dialog_open(false);
+        }
+    });
+
+    let video_folder_window_weak = window.as_weak();
+    window.on_set_settings_video_folder(move |folder| {
+        let Some(window) = video_folder_window_weak.upgrade() else {
+            return;
+        };
+        let folder = folder.to_string();
+        let trimmed = folder.trim();
+        let mut config = config::load();
+        config.video_folder = (!trimmed.is_empty()).then(|| PathBuf::from(trimmed));
+        config::save(&config);
+        window.set_settings_video_folder(folder.into());
+    });
+
+    let monitor_window_weak = window.as_weak();
+    window.on_set_settings_audio_monitor_source(move |source| {
+        let Some(window) = monitor_window_weak.upgrade() else {
+            return;
+        };
+        let source = source.to_string();
+        let mut config = config::load();
+        config.audio_monitor_source =
+            (!source.trim().is_empty()).then(|| source.trim().to_string());
+        config::save(&config);
+        window.set_settings_audio_monitor_source(source.into());
+    });
+
+    let folder_window_weak = window.as_weak();
+    window.on_set_settings_audio_recording_folder(move |folder| {
+        let Some(window) = folder_window_weak.upgrade() else {
+            return;
+        };
+        let folder = folder.to_string();
+        let trimmed = folder.trim();
+        let mut config = config::load();
+        config.audio_recording_folder = (!trimmed.is_empty()).then(|| PathBuf::from(trimmed));
+        config::save(&config);
+
+        window.set_settings_audio_recording_folder(folder.into());
+        window.set_settings_audio_recording_folder_exists(
+            system_audio_capture::default_recording_folder(&config).is_dir(),
+        );
+        system_audio_capture::refresh_recording_folder_label(&window, &config);
+    });
+}
+
 /// Wires the Open Subtitles dialog's "Analyze all sentences" button
 /// (`TODO.md` Vaihe 24, part 4/6): `analyze-all-requested` runs
 /// `word_analysis::spawn_batch_analyze` over every cue in the currently
@@ -1123,11 +1371,19 @@ fn wire_word_analysis_popup(
             window.set_is_word_analysis_popup_open(true);
             return;
         };
-        let cue = {
+        // panel_content_ready guards against analyzing a sentence that
+        // isn't actually being shown — e.g. Ctrl+A pressed right after
+        // switching to an Audio panel with nothing loaded there yet, where
+        // the current-sentence card was just blanked by
+        // wire_player_state's on_select_media_source but PlayerState's
+        // cues/cursor are still whatever the previous source left behind.
+        let cue = if panel_content_ready(&window) {
             let state = request_state.borrow();
             state
                 .current_cue_index
                 .and_then(|index| state.cues.get(index).cloned())
+        } else {
+            None
         };
         let Some(cue) = cue else {
             tracing::warn!("word analysis requested with no sentence in focus");
@@ -1213,10 +1469,10 @@ fn main() -> anyhow::Result<()> {
     let video_path = video_path_from_args(&args);
     if video_path.is_none() {
         tracing::info!(
-            "no video path given; use the \"Open video…\" button or run as `trango <path/to/video>`"
+            "no video path given; use the \"Open…\" button or run as `trango <path/to/video>`"
         );
     }
-    current_media.borrow_mut().video_path = video_path.clone();
+    current_media.borrow_mut().media_path = video_path.clone();
     let video_player = Rc::new(video_player::VideoPlayer::attach(
         &window,
         video_path.as_deref(),
@@ -1225,10 +1481,11 @@ fn main() -> anyhow::Result<()> {
     wire_cue_navigation(&window, &player_state, Rc::clone(&video_player));
     wire_scrub_bar(&window, Rc::clone(&video_player));
     wire_speed_slider(&window, Rc::clone(&video_player));
+    wire_pause_playback(&window, Rc::clone(&video_player));
 
     let startup_config = config::load();
 
-    wire_open_video_dialog(
+    wire_open_media_dialog(
         &window,
         &player_state,
         Rc::clone(&video_player),
@@ -1262,6 +1519,7 @@ fn main() -> anyhow::Result<()> {
     ));
     window.set_ollama_target_language(target_language.borrow().clone().into());
     wire_ollama_target_language(&window, Rc::clone(&target_language));
+    wire_settings_dialog(&window);
 
     wire_word_analysis_batch(
         &window,
@@ -1276,6 +1534,26 @@ fn main() -> anyhow::Result<()> {
         &current_media,
         Rc::clone(&selected_ollama_model),
         Rc::clone(&target_language),
+    );
+
+    let mut startup_audio_capture = audio_capture::AudioCapture::default();
+    startup_audio_capture.ffmpeg_path = ffmpeg_path_from_env();
+    let recording_video_player = Rc::clone(&video_player);
+    let recording_state = Rc::clone(&player_state);
+    let recording_media = Rc::clone(&current_media);
+    system_audio_capture::wire_audio_capture(
+        &window,
+        startup_audio_capture,
+        move |window, recording_path| {
+            open_selected_media(
+                window,
+                &recording_state,
+                &recording_video_player,
+                open_media_dialog::MediaKind::Audio,
+                recording_path,
+                &recording_media,
+            );
+        },
     );
 
     let reload_video_player = Rc::clone(&video_player);
@@ -1297,6 +1575,26 @@ mod tests {
     use subtitle::SubtitleGenerator;
 
     use super::*;
+
+    /// Restores `.0` to the real config.toml (`config::save`) when
+    /// dropped — including when a test panics partway through, unlike a
+    /// bare `config::save(&original_config)` at the end of a test block,
+    /// which never runs if an assertion in between it and the start of
+    /// the block panics. That gap is exactly how a stale
+    /// `audio_recording_folder` pointing at an already-deleted temp test
+    /// directory once ended up persisted to a real developer's
+    /// config.toml — only noticed because the Settings screen's new
+    /// audio-recording-folder-exists check started surfacing it visibly.
+    /// Tests that temporarily overwrite config.toml should bind one of
+    /// these right after capturing `config::load()`, so the restore
+    /// happens no matter how the rest of the test exits.
+    struct ConfigRestoreGuard(config::TrangoConfig);
+
+    impl Drop for ConfigRestoreGuard {
+        fn drop(&mut self) {
+            config::save(&self.0);
+        }
+    }
 
     #[test]
     fn test_version_is_set() {
@@ -1438,7 +1736,7 @@ mod tests {
             ..Default::default()
         };
 
-        // When:  resolving the default Open Video dialog folder
+        // When:  resolving the Open dialog's default Video-mode folder
         // Then:  the CLI video's parent directory wins over the saved folder
         assert_eq!(
             default_video_folder(&args, &config),
@@ -1456,7 +1754,7 @@ mod tests {
             ..Default::default()
         };
 
-        // When:  resolving the default Open Video dialog folder
+        // When:  resolving the Open dialog's default Video-mode folder
         // Then:  it's the saved folder
         assert_eq!(
             default_video_folder(&args, &config),
@@ -1469,7 +1767,7 @@ mod tests {
         // Given: argv with no video path, and no saved video folder either
         let args = vec!["trango".to_string()];
 
-        // When:  resolving the default Open Video dialog folder
+        // When:  resolving the Open dialog's default Video-mode folder
         // Then:  it falls back to the current working directory
         assert_eq!(
             default_video_folder(&args, &config::TrangoConfig::default()),
@@ -1483,12 +1781,42 @@ mod tests {
         //        component (a bare filename), and no saved video folder
         let args = vec!["trango".to_string(), "video.mp4".to_string()];
 
-        // When:  resolving the default Open Video dialog folder
+        // When:  resolving the Open dialog's default Video-mode folder
         // Then:  it falls back to the current working directory, since
         //        "video.mp4"'s parent is the empty path, not a real folder
         assert_eq!(
             default_video_folder(&args, &config::TrangoConfig::default()),
             std::env::current_dir().expect("failed to read current directory")
+        );
+    }
+
+    #[test]
+    fn test_media_kind_for_source_matches_source() {
+        // Given/When/Then: each MediaSource maps to the same-named
+        //                   MediaKind, since the two sources share one
+        //                   Open dialog distinguished only by which kind
+        //                   of file it lists
+        assert_eq!(
+            media_kind_for_source(MediaSource::Video),
+            open_media_dialog::MediaKind::Video
+        );
+        assert_eq!(
+            media_kind_for_source(MediaSource::Audio),
+            open_media_dialog::MediaKind::Audio
+        );
+    }
+
+    #[test]
+    fn test_open_media_dialog_title_names_the_kind() {
+        // Given/When/Then: the dialog's title names whichever kind of file
+        //                   it's currently listing
+        assert_eq!(
+            open_media_dialog_title(open_media_dialog::MediaKind::Video),
+            "Open video file"
+        );
+        assert_eq!(
+            open_media_dialog_title(open_media_dialog::MediaKind::Audio),
+            "Open audio file"
         );
     }
 
@@ -1508,27 +1836,81 @@ mod tests {
         window.set_version(env!("CARGO_PKG_VERSION").into());
         assert_eq!(window.get_version(), env!("CARGO_PKG_VERSION"));
 
-        // When:  reading sentence_mode_active before wiring
-        // Then:  it's still app-window.slint's own hardcoded default (false)
+        // When:  reading playback_mode before wiring
+        // Then:  it's still app-window.slint's own hardcoded default (Normal)
+        assert_eq!(window.get_playback_mode(), PlaybackModeUi::Normal);
         assert!(!window.get_sentence_mode_active());
 
         // When:  wiring a fresh PlayerState
-        // Then:  it defaults to SentenceBySentence (the primary language-
-        //        learning use case), mirrored into sentence_mode_active
+        // Then:  it defaults to SentenceBySentence mode (the primary
+        //        language-learning use case) and Video source, mirrored
+        //        into playback_mode/media_source
         let player_state = wire_player_state(&window);
         assert_eq!(player_state.borrow().mode, PlaybackMode::SentenceBySentence);
+        assert_eq!(
+            window.get_playback_mode(),
+            PlaybackModeUi::SentenceBySentence
+        );
         assert!(window.get_sentence_mode_active());
+        assert_eq!(player_state.borrow().media_source, MediaSource::Video);
+        assert_eq!(window.get_media_source(), MediaSourceUi::Video);
 
-        // When:  invoking toggle-mode, as a segmented control click does
+        // When:  invoking select-mode(Normal), as a segmented control click
+        //        on the "Normal" segment does
         // Then:  both the Rust-owned PlayerState and the mirrored Slint
         //        property switch to Normal
-        window.invoke_toggle_mode();
+        window.invoke_select_mode(PlaybackModeUi::Normal);
         assert_eq!(player_state.borrow().mode, PlaybackMode::Normal);
+        assert_eq!(window.get_playback_mode(), PlaybackModeUi::Normal);
         assert!(!window.get_sentence_mode_active());
 
-        // When:  invoking toggle-mode again
+        // When:  invoking select-media-source(Audio), as the Video/Audio
+        //        segmented control's "Audio" segment does
+        // Then:  both the Rust-owned PlayerState and the mirrored Slint
+        //        property switch to Audio, independently of playback_mode
+        window.invoke_select_media_source(MediaSourceUi::Audio);
+        assert_eq!(player_state.borrow().media_source, MediaSource::Audio);
+        assert_eq!(window.get_media_source(), MediaSourceUi::Audio);
+        assert_eq!(player_state.borrow().mode, PlaybackMode::Normal);
+
+        // When:  invoking select-media-source(Video) again
+        // Then:  both flip back to Video
+        window.invoke_select_media_source(MediaSourceUi::Video);
+        assert_eq!(player_state.borrow().media_source, MediaSource::Video);
+        assert_eq!(window.get_media_source(), MediaSourceUi::Video);
+
+        // When:  a video is loaded (video-loaded + loaded-media-source both
+        //        default to Video, matching the Video source already
+        //        active)
+        // Then:  media-ready is true — the mpv underlay/ScrubBar/SpeedSlider
+        //        should show
+        window.set_video_loaded(true);
+        assert!(window.get_media_ready());
+
+        // When:  switching to the Audio source without loading anything
+        //        there (as a bare Video/Audio click does — the loaded video
+        //        is still the same mpv instance's file, see media-ready's
+        //        doc comment)
+        // Then:  media-ready is false, so the Audio panel doesn't show the
+        //        stale video's ScrubBar or let its picture bleed through
+        window.invoke_select_media_source(MediaSourceUi::Audio);
+        assert!(!window.get_media_ready());
+
+        // When:  an audio recording is then loaded, mirroring
+        //        loaded-media-source to Audio (as open_selected_media does)
+        // Then:  media-ready is true again, now for the Audio source
+        window.set_loaded_media_source(MediaSourceUi::Audio);
+        assert!(window.get_media_ready());
+
+        // When:  switching back to Video
+        // Then:  media-ready is false again — the loaded file is audio, not
+        //        video
+        window.invoke_select_media_source(MediaSourceUi::Video);
+        assert!(!window.get_media_ready());
+
+        // When:  invoking select-mode(SentenceBySentence) again
         // Then:  both flip back to SentenceBySentence
-        window.invoke_toggle_mode();
+        window.invoke_select_mode(PlaybackModeUi::SentenceBySentence);
         assert_eq!(player_state.borrow().mode, PlaybackMode::SentenceBySentence);
         assert!(window.get_sentence_mode_active());
 
@@ -1590,33 +1972,131 @@ mod tests {
         assert!(!player_state.borrow().show_translation);
         assert!(!window.get_show_translation());
 
-        // When:  opening the Open Video dialog with an Up row, a subfolder,
-        //        and two video entries
+        // When:  wiring the Ctrl+A word-analysis popup (`TODO.md` Vaihe 24)
+        //        with a model selected and a cache file already holding an
+        //        analysis for the current cue, then requesting it on the
+        //        (default) Video source
+        // Then:  the popup opens with the cached analysis
+        let word_analysis_cache_path = ::word_analysis::cache_path_for(&subtitle_path);
+        let mut word_analysis_cache = ::word_analysis::AnalysisCache {
+            model: "llama3.1:8b".to_string(),
+            entries: std::collections::HashMap::new(),
+        };
+        word_analysis_cache.entries.insert(
+            player_state.borrow().cues[0].index,
+            ::word_analysis::WordAnalysis {
+                words: vec![::word_analysis::WordEntry {
+                    word: "Welcome".to_string(),
+                    translation: "Tervetuloa".to_string(),
+                    pronunciation: "wel-kuhm".to_string(),
+                }],
+            },
+        );
+        ::word_analysis::save_cache(&word_analysis_cache_path, &word_analysis_cache);
+
+        let word_analysis_current_media = Rc::new(RefCell::new(CurrentMedia {
+            media_path: None,
+            subtitle_path: Some(subtitle_path.clone()),
+            translation_path: None,
+        }));
+        let word_analysis_selected_model: Rc<RefCell<Option<String>>> =
+            Rc::new(RefCell::new(Some("llama3.1:8b".to_string())));
+        let word_analysis_target_language = Rc::new(RefCell::new("English".to_string()));
+        wire_word_analysis_popup(
+            &window,
+            &player_state,
+            &word_analysis_current_media,
+            Rc::clone(&word_analysis_selected_model),
+            Rc::clone(&word_analysis_target_language),
+        );
+
+        assert_eq!(player_state.borrow().media_source, MediaSource::Video);
+        window.invoke_show_word_analysis();
+        assert_eq!(window.get_word_analysis_status(), WordAnalysisStatus::Done);
+        let word_analysis_rows = window.get_word_analysis_rows();
+        assert_eq!(word_analysis_rows.row_count(), 1);
+        assert_eq!(
+            word_analysis_rows.row_data(0).expect("row 0 exists").word,
+            "Welcome"
+        );
+        window.invoke_close_word_analysis_popup();
+        assert!(!window.get_is_word_analysis_popup_open());
+
+        // When:  switching to the Audio source with nothing loaded there
+        //        yet (loaded-media-source still Video, forced explicitly
+        //        here as a clean baseline regardless of what the earlier
+        //        media-ready assertions above left it at)
+        // Then:  the sentence card/list blank out — panel_content_ready is
+        //        false, so on-select-media-source re-derives the display
+        //        from an empty PlayerState instead of leaving the Video
+        //        source's sentence stuck on screen — and Ctrl+A reports no
+        //        sentence in focus rather than reusing the Video source's
+        //        cached analysis
+        window.set_loaded_media_source(MediaSourceUi::Video);
+        window.invoke_select_media_source(MediaSourceUi::Audio);
+        assert_eq!(window.get_sentence_list_rows().row_count(), 0);
+        assert_eq!(window.get_sentence_list_current_index(), -1);
+        assert_eq!(window.get_sentence_label(), "Sentence – / –");
+        assert!(!window.get_has_current_sentence());
+
+        window.invoke_show_word_analysis();
+        assert_eq!(window.get_word_analysis_status(), WordAnalysisStatus::Error);
+        assert_eq!(
+            window.get_word_analysis_error_message(),
+            "No sentence is currently in focus."
+        );
+        window.invoke_close_word_analysis_popup();
+
+        // When:  a matching file loads for the Audio source (mirroring
+        //        loaded-media-source the way open_selected_media does) and
+        //        the source is re-selected
+        // Then:  the real sentence list/card and Ctrl+A's cached analysis
+        //        are both back — PlayerState.cues was never touched by any
+        //        of the above, only the display
+        window.set_loaded_media_source(MediaSourceUi::Audio);
+        window.invoke_select_media_source(MediaSourceUi::Audio);
+        assert_eq!(window.get_sentence_list_rows().row_count(), 5);
+        assert_eq!(window.get_sentence_list_current_index(), 0);
+
+        window.invoke_show_word_analysis();
+        assert_eq!(window.get_word_analysis_status(), WordAnalysisStatus::Done);
+        let word_analysis_rows = window.get_word_analysis_rows();
+        assert_eq!(word_analysis_rows.row_count(), 1);
+        assert_eq!(
+            word_analysis_rows.row_data(0).expect("row 0 exists").word,
+            "Welcome"
+        );
+        window.invoke_close_word_analysis_popup();
+        window.invoke_select_media_source(MediaSourceUi::Video);
+        let _ = std::fs::remove_file(&word_analysis_cache_path);
+
+        // When:  opening the Open dialog with an Up row, a subfolder, and
+        //        two video entries
         // Then:  it opens with the folder label mirrored, one row per
         //        entry, and the first *video* row pre-selected (not row 0,
         //        which is the non-selectable Up row)
         let entries = vec![
-            open_video_dialog::FolderEntry::Up(PathBuf::from("/")),
-            open_video_dialog::FolderEntry::Folder {
+            open_media_dialog::FolderEntry::Up(PathBuf::from("/")),
+            open_media_dialog::FolderEntry::Folder {
                 path: PathBuf::from("/videos/clips"),
                 name: "clips".to_string(),
             },
-            open_video_dialog::FolderEntry::Video(open_video_dialog::VideoFileEntry {
+            open_media_dialog::FolderEntry::File(open_media_dialog::MediaFileEntry {
                 path: PathBuf::from("/videos/a.mp4"),
                 name: "a.mp4".to_string(),
                 size_label: "10 MB".to_string(),
             }),
-            open_video_dialog::FolderEntry::Video(open_video_dialog::VideoFileEntry {
+            open_media_dialog::FolderEntry::File(open_media_dialog::MediaFileEntry {
                 path: PathBuf::from("/videos/b.mkv"),
                 name: "b.mkv".to_string(),
                 size_label: "20 MB".to_string(),
             }),
         ];
-        open_video_dialog::open_dialog(&window, Path::new("/videos"), &entries);
-        assert!(window.get_is_open_video_dialog_open());
-        assert_eq!(window.get_open_video_folder_label(), "/videos");
-        assert_eq!(window.get_open_video_selected_index(), 2);
-        let dialog_rows = window.get_open_video_rows();
+        open_media_dialog::open_dialog(&window, Path::new("/videos"), &entries);
+        assert!(window.get_is_open_media_dialog_open());
+        assert_eq!(window.get_open_media_folder_label(), "/videos");
+        assert_eq!(window.get_open_media_selected_index(), 2);
+        let dialog_rows = window.get_open_media_rows();
         assert_eq!(dialog_rows.row_count(), 4);
         assert!(dialog_rows.row_data(0).expect("row 0 exists").is_navigable);
         assert!(dialog_rows.row_data(1).expect("row 1 exists").is_navigable);
@@ -1625,15 +2105,15 @@ mod tests {
 
         // When:  selecting the second video row, as a row click does
         // Then:  the row model reflects the new selection
-        open_video_dialog::mark_selected(&window, &entries, 3);
-        let dialog_rows = window.get_open_video_rows();
+        open_media_dialog::mark_selected(&window, &entries, 3);
+        let dialog_rows = window.get_open_media_rows();
         assert!(!dialog_rows.row_data(2).expect("row 2 exists").is_selected);
         assert!(dialog_rows.row_data(3).expect("row 3 exists").is_selected);
 
         // When:  cancelling, as the backdrop/✕/Cancel button does
         // Then:  the dialog closes
-        window.set_is_open_video_dialog_open(false);
-        assert!(!window.get_is_open_video_dialog_open());
+        window.set_is_open_media_dialog_open(false);
+        assert!(!window.get_is_open_media_dialog_open());
 
         // When:  wiring the Open Subtitles dialog (Vaihe 19) for a video
         //        whose original subtitle is already tracked as linked, and
@@ -1643,7 +2123,7 @@ mod tests {
         //        (no translation tracked yet)
         let sample_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../test-media/sample");
         let current_media = Rc::new(RefCell::new(CurrentMedia {
-            video_path: Some(sample_dir.join("sample.mp4")),
+            media_path: Some(sample_dir.join("sample.mp4")),
             subtitle_path: Some(subtitle_path.clone()),
             translation_path: None,
         }));
@@ -1736,7 +2216,7 @@ mod tests {
         std::fs::write(&generate_video_path, b"").expect("failed to write fixture video file");
 
         *current_media.borrow_mut() = CurrentMedia {
-            video_path: Some(generate_video_path.clone()),
+            media_path: Some(generate_video_path.clone()),
             subtitle_path: None,
             translation_path: None,
         };
@@ -1828,7 +2308,7 @@ mod tests {
         let fake_model_path = async_dir.join("ggml-fake-model.bin");
         std::fs::write(&fake_model_path, b"").expect("failed to write fixture model file");
         *current_media.borrow_mut() = CurrentMedia {
-            video_path: Some(async_video_path),
+            media_path: Some(async_video_path),
             subtitle_path: None,
             translation_path: None,
         };
@@ -1861,5 +2341,290 @@ mod tests {
 
         std::fs::remove_dir_all(&generate_dir).expect("failed to clean up temp test dir");
         std::fs::remove_dir_all(&async_dir).expect("failed to clean up temp test dir");
+
+        // When:  invoking toggle-audio-capture (Ctrl+Space), wired to a
+        //        fake ffmpeg/pactl (real pactl/PulseAudio aren't something
+        //        this test environment can rely on)
+        // Then:  the first call autodetects the monitor source and starts
+        //        a capture, writing to the path AudioCapture::start was
+        //        given; the second call stops it, and the file the fake
+        //        ffmpeg wrote is left on disk, proving the whole
+        //        start/stop -> WAV-file pipeline (TODO.md Vaihe 26/27) end
+        //        to end, including the visible filename and its rename
+        //        after stopping
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            // The toggle handler persists `audio_recording_folder` to the
+            // real config file on every successful start (TODO.md Vaihe
+            // 27) — restored via ConfigRestoreGuard so running the test
+            // suite doesn't leave the developer's real config pointing at
+            // a temp test directory, even if an assertion below panics.
+            let original_config = config::load();
+            let _config_restore_guard = ConfigRestoreGuard(original_config.clone());
+
+            let audio_capture_dir = std::env::temp_dir().join("trango-test-audio-capture-toggle");
+            let _ = std::fs::remove_dir_all(&audio_capture_dir);
+            std::fs::create_dir_all(&audio_capture_dir).expect("failed to create temp test dir");
+            config::save(&config::TrangoConfig {
+                audio_recording_folder: Some(audio_capture_dir.clone()),
+                ..original_config.clone()
+            });
+
+            let fake_pactl_path = audio_capture_dir.join("fake-pactl.sh");
+            std::fs::write(&fake_pactl_path, "#!/bin/sh\necho 'fake-sink'\n")
+                .expect("failed to write fake pactl script");
+            std::fs::set_permissions(&fake_pactl_path, std::fs::Permissions::from_mode(0o755))
+                .expect("failed to make fake pactl executable");
+
+            // Logs its argv, writes a marker to whatever path it was given
+            // as its last argument (standing in for the WAV file a real
+            // ffmpeg would write), then blocks on stdin until the
+            // graceful quit signal arrives.
+            let fake_ffmpeg_path = audio_capture_dir.join("fake-ffmpeg.sh");
+            std::fs::write(
+                &fake_ffmpeg_path,
+                format!(
+                    "#!/bin/sh\necho \"$@\" > {}/ffmpeg-args.log\nfor last in \"$@\"; do :; done\nprintf 'fake wav content' > \"$last\"\nread -r _line\nexit 0\n",
+                    audio_capture_dir.display()
+                ),
+            )
+            .expect("failed to write fake ffmpeg script");
+            std::fs::set_permissions(&fake_ffmpeg_path, std::fs::Permissions::from_mode(0o755))
+                .expect("failed to make fake ffmpeg executable");
+
+            let mut fake_audio_capture = audio_capture::AudioCapture::default();
+            fake_audio_capture.ffmpeg_path = fake_ffmpeg_path;
+            fake_audio_capture.pactl_path = fake_pactl_path;
+            fake_audio_capture.graceful_stop_timeout = std::time::Duration::from_millis(500);
+            // wire_audio_capture can't be given a real
+            // video_player::VideoPlayer here, for the same reason
+            // wire_open_subtitles_dialog above can't — stopped_calls
+            // instead records each call's recording path, standing in for
+            // a real open_selected_media just well enough to verify a
+            // finished recording is handed off (TODO.md Vaihe 28).
+            let stopped_calls: Rc<RefCell<Vec<PathBuf>>> = Rc::new(RefCell::new(Vec::new()));
+            let stopped_calls_for_closure = Rc::clone(&stopped_calls);
+            let audio_capture_state = system_audio_capture::wire_audio_capture(
+                &window,
+                fake_audio_capture,
+                move |_window, recording_path| {
+                    stopped_calls_for_closure
+                        .borrow_mut()
+                        .push(recording_path.to_path_buf());
+                },
+            );
+
+            window.invoke_toggle_audio_capture();
+            assert!(audio_capture_state.borrow().is_recording());
+            assert_eq!(window.get_audio_capture_error_message(), "");
+            assert!(window.get_is_audio_recording());
+            let recorded_filename = window.get_audio_recording_filename().to_string();
+            assert!(recorded_filename.ends_with(".wav"), "{recorded_filename}");
+            let recorded_path = audio_capture_dir.join(&recorded_filename);
+            // AudioCapture::start only spawns the ffmpeg (here: fake
+            // ffmpeg script) child process and returns immediately, same
+            // as it would for a real ffmpeg — the file only appears once
+            // that child actually gets scheduled and runs its first
+            // write, which under CI load can trail invoke_toggle_audio_capture's
+            // return by more than a single poll. Retries briefly instead
+            // of asserting immediately to avoid flaking on that race.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            while !recorded_path.is_file() && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            assert!(recorded_path.is_file(), "{recorded_path:?}");
+
+            window.invoke_toggle_audio_capture();
+            assert!(!audio_capture_state.borrow().is_recording());
+            assert_eq!(*stopped_calls.borrow(), vec![recorded_path.clone()]);
+            assert_eq!(window.get_audio_capture_error_message(), "");
+            assert!(!window.get_is_audio_recording());
+
+            // The recording this capture wrote should still be on disk
+            // (TODO.md Vaihe 26 records to a single file, not a temp
+            // buffer that gets cleaned up), under the timestamped default
+            // filename shown while recording.
+            assert_eq!(
+                std::fs::read_to_string(&recorded_path).unwrap(),
+                "fake wav content"
+            );
+
+            // When:  the filename field is edited (Enter) after the
+            //        recording has stopped
+            // Then:  the file on disk is renamed to match, and the
+            //        displayed filename reflects the new name
+            window.invoke_rename_audio_recording_file("der_anruf.wav".into());
+            assert_eq!(window.get_audio_recording_filename(), "der_anruf.wav");
+            assert!(!recorded_path.exists());
+            assert_eq!(
+                std::fs::read_to_string(audio_capture_dir.join("der_anruf.wav")).unwrap(),
+                "fake wav content"
+            );
+
+            std::fs::remove_dir_all(&audio_capture_dir).expect("failed to clean up temp test dir");
+
+            // When:  toggle-audio-capture is wired to an AudioCapture whose
+            //        ffmpeg_path names a binary that doesn't exist (fake
+            //        pactl still autodetects fine)
+            // Then:  audio-capture-error-message surfaces the "ffmpeg not
+            //        found" explanation instead of only logging it, so a
+            //        broken install doesn't look like Ctrl+Space did
+            //        nothing
+            let broken_dir = std::env::temp_dir().join("trango-test-audio-capture-error");
+            let _ = std::fs::remove_dir_all(&broken_dir);
+            std::fs::create_dir_all(&broken_dir).expect("failed to create temp test dir");
+            // Points audio_recording_folder at broken_dir (which exists),
+            // so this test's "ffmpeg not found" assertion below can't be
+            // preempted by the folder-doesn't-exist check added ahead of
+            // it in wire_audio_capture's toggle handler.
+            config::save(&config::TrangoConfig {
+                audio_recording_folder: Some(broken_dir.clone()),
+                ..original_config.clone()
+            });
+            let fake_pactl_path = broken_dir.join("fake-pactl.sh");
+            std::fs::write(&fake_pactl_path, "#!/bin/sh\necho 'fake-sink'\n")
+                .expect("failed to write fake pactl script");
+            std::fs::set_permissions(&fake_pactl_path, std::fs::Permissions::from_mode(0o755))
+                .expect("failed to make fake pactl executable");
+            let mut broken_audio_capture = audio_capture::AudioCapture::default();
+            broken_audio_capture.ffmpeg_path = broken_dir.join("no-such-ffmpeg-binary");
+            broken_audio_capture.pactl_path = fake_pactl_path;
+            let broken_audio_capture_state = system_audio_capture::wire_audio_capture(
+                &window,
+                broken_audio_capture,
+                |_window, _recording_path| {},
+            );
+
+            window.invoke_toggle_audio_capture();
+            assert!(!broken_audio_capture_state.borrow().is_recording());
+            assert!(window
+                .get_audio_capture_error_message()
+                .contains("ffmpeg not found"));
+
+            std::fs::remove_dir_all(&broken_dir).expect("failed to clean up temp test dir");
+
+            // When:  toggle-audio-capture is invoked with
+            //        audio_recording_folder pointing at a folder that
+            //        doesn't exist
+            // Then:  audio-capture-error-message explains the folder is
+            //        missing, rather than silently doing nothing —
+            //        ffmpeg's own stderr is discarded
+            //        (AudioCapture::start's Stdio::null()), so without this
+            //        check the failure wouldn't surface anywhere the user
+            //        could see it
+            let missing_recording_folder =
+                std::env::temp_dir().join("trango-test-audio-capture-missing-folder");
+            let _ = std::fs::remove_dir_all(&missing_recording_folder);
+            config::save(&config::TrangoConfig {
+                audio_recording_folder: Some(missing_recording_folder.clone()),
+                ..original_config.clone()
+            });
+
+            let missing_folder_dir =
+                std::env::temp_dir().join("trango-test-audio-capture-missing-folder-setup");
+            let _ = std::fs::remove_dir_all(&missing_folder_dir);
+            std::fs::create_dir_all(&missing_folder_dir).expect("failed to create temp test dir");
+            let fake_pactl_path = missing_folder_dir.join("fake-pactl.sh");
+            std::fs::write(&fake_pactl_path, "#!/bin/sh\necho 'fake-sink'\n")
+                .expect("failed to write fake pactl script");
+            std::fs::set_permissions(&fake_pactl_path, std::fs::Permissions::from_mode(0o755))
+                .expect("failed to make fake pactl executable");
+            let mut missing_folder_capture = audio_capture::AudioCapture::default();
+            missing_folder_capture.pactl_path = fake_pactl_path;
+            let missing_folder_state = system_audio_capture::wire_audio_capture(
+                &window,
+                missing_folder_capture,
+                |_window, _recording_path| {},
+            );
+
+            assert_eq!(
+                window.get_audio_recording_folder_label(),
+                missing_recording_folder.display().to_string()
+            );
+
+            window.invoke_toggle_audio_capture();
+            assert!(!missing_folder_state.borrow().is_recording());
+            assert!(!window.get_is_audio_recording());
+            assert!(window
+                .get_audio_capture_error_message()
+                .contains("Recording folder does not exist"));
+
+            std::fs::remove_dir_all(&missing_folder_dir).expect("failed to clean up temp test dir");
+        }
+
+        // When:  the Settings dialog (top bar's gear icon) is opened with a
+        //        known config.toml
+        // Then:  its display properties mirror that config, and editing the
+        //        audio-monitor-source/audio-recording-folder fields
+        //        persists immediately (same as wire_ollama_target_language)
+        //        and updates the Audio panel's "Saving to:" label
+        {
+            let original_config = config::load();
+            let _config_restore_guard = ConfigRestoreGuard(original_config.clone());
+
+            let settings_dir = std::env::temp_dir().join("trango-test-settings-dialog");
+            let _ = std::fs::remove_dir_all(&settings_dir);
+            std::fs::create_dir_all(&settings_dir).expect("failed to create temp test dir");
+            config::save(&config::TrangoConfig {
+                video_folder: Some(settings_dir.join("videos")),
+                audio_monitor_source: Some("alsa_output.analog-stereo.monitor".to_string()),
+                audio_recording_folder: Some(settings_dir.clone()),
+                ..config::TrangoConfig::default()
+            });
+
+            wire_settings_dialog(&window);
+
+            window.invoke_settings_dialog_requested();
+            assert!(window.get_is_settings_dialog_open());
+            assert!(window.get_settings_config_path().contains("config.toml"));
+            assert_eq!(
+                window.get_settings_video_folder(),
+                settings_dir.join("videos").display().to_string()
+            );
+            assert_eq!(
+                window.get_settings_audio_monitor_source(),
+                "alsa_output.analog-stereo.monitor"
+            );
+            assert_eq!(
+                window.get_settings_audio_recording_folder(),
+                settings_dir.display().to_string()
+            );
+            assert!(window.get_settings_audio_recording_folder_exists());
+
+            window.invoke_close_settings_dialog();
+            assert!(!window.get_is_settings_dialog_open());
+
+            let new_video_folder = settings_dir.join("other-videos");
+            window.invoke_set_settings_video_folder(new_video_folder.display().to_string().into());
+            assert_eq!(config::load().video_folder, Some(new_video_folder.clone()));
+            assert_eq!(
+                window.get_settings_video_folder(),
+                new_video_folder.display().to_string()
+            );
+
+            window.invoke_set_settings_audio_monitor_source("custom.monitor".into());
+            assert_eq!(
+                config::load().audio_monitor_source,
+                Some("custom.monitor".to_string())
+            );
+
+            let missing_folder = settings_dir.join("does-not-exist-yet");
+            window.invoke_set_settings_audio_recording_folder(
+                missing_folder.display().to_string().into(),
+            );
+            assert_eq!(
+                config::load().audio_recording_folder,
+                Some(missing_folder.clone())
+            );
+            assert!(!window.get_settings_audio_recording_folder_exists());
+            assert_eq!(
+                window.get_audio_recording_folder_label(),
+                missing_folder.display().to_string()
+            );
+
+            std::fs::remove_dir_all(&settings_dir).expect("failed to clean up temp test dir");
+        }
     }
 }

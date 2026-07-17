@@ -5,9 +5,28 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ## [Unreleased]
 
 ### Added
+- Settings screen: a gear icon in the top bar opens a dialog showing and editing every `config.toml` setting in one place — video folder, audio monitor source, and audio recording folder are plain text fields that save immediately; whisper model, Ollama model, and target language reopen the same pickers/field already used elsewhere in the app. `audio_monitor_source` previously had no UI at all and required hand-editing `config.toml`
+- Audio source's placeholder panel now always shows which folder a new recording will be saved to ("Saving to: …"), kept in sync with the Settings screen's audio-recording-folder field
+- Starting a recording (Ctrl+Space/Rec) into a folder that doesn't exist now surfaces "Recording folder does not exist: …" in the Audio panel instead of silently failing — `ffmpeg`'s own error was previously discarded (`Stdio::null()`), so a missing folder looked like the shortcut/button did nothing
+
 ### Changed
 ### Fixed
+- Switching the top bar's Video/Audio source no longer leaves whatever was playing in the panel being hidden running silently behind the other one: clicking either segment now pauses mpv first. The visible panel's ScrubBar/SpeedSlider/mpv picture also only show once the actually-loaded file matches that panel (`AppWindow::media-ready`) — previously a loaded video's scrub bar and picture could bleed into the Audio panel just because *some* file was loaded, since both sources always shared one mpv instance
+- Switching to the Audio source now also blanks the current-sentence card and sentence list until a matching file is loaded there, instead of leaving the Video source's sentence stuck on screen — Ctrl+A reports "No sentence is currently in focus" rather than analyzing that stale sentence. Cue navigation itself still never depends on which source is visible; only what's shown/analyzed as "current" does now
 ### Removed
+
+## [0.1.52] - 2026-07-17
+
+### Added
+- Independent Video/Audio source toggle in the top bar (`playback_state::MediaSource`), alongside the existing Normal/Sentence-by-sentence toggle — any combination of source and mode now works
+- Audio source: Ctrl+Space starts/stops capturing the system's own audio output (e.g. a video playing in the browser) to a single WAV file via an `ffmpeg -f pulse -i <monitor-source>` subprocess. The PulseAudio/PipeWire monitor source is autodetected via `pactl get-default-sink`, overridable through `config.toml`'s `audio_monitor_source`. Linux/PulseAudio-PipeWire only. A failed start/stop (e.g. missing `pactl`/`ffmpeg`) surfaces an explanatory message in the Audio source's placeholder panel instead of only logging it
+- Audio source's placeholder panel shows a Rec/Stop button (same command as Ctrl+Space) and the current recording's filename: a default `<date>_<time>.wav` name locked for the duration of the recording, editable afterwards (Enter commits a rename on disk). `config.rs`'s `audio_recording_folder` remembers the last folder a recording was written to, same principle as `video_folder`
+- Audio source can open and play back an existing `.wav` file: the top bar's "Open…" button is now shared by both sources, listing video files in the Video source and `.wav` recordings in the Audio source. A picked or freshly recorded audio file loads through the same `video_player::VideoPlayer` path as a video, so the scrub bar/speed slider/play-pause and same-stem `.srt` auto-linking all work identically once one is loaded
+- "Generate subtitles" now also works for the Audio source's recorded/opened `.wav` files, via the same "Subtitles…" button/dialog and `WhisperCliGenerator` the Video source uses — `WhisperCliGenerator::generate` skips its `ffmpeg` audio-extraction step for `.wav` input, since it's already audio
+- Validated that sentence list, Ctrl+A word analysis, and the translation toggle work identically in the Audio source as in the Video source, since they never depended on a video being loaded — locked in with new tests that switch to the Audio source mid-run
+
+### Fixed
+- Pressing Space to replay a file that had already played to its end (Normal mode's/Audio's unbounded `VideoPlayer::toggle_playback`) looked like a no-op — mpv's `keep-open=yes` pauses at EOF rather than unloading, but unpausing there without seeking just re-hits the same EOF. `toggle_playback` now checks mpv's `eof-reached` property and seeks back to `0` first, so Space restarts playback from the beginning instead
 
 ## [0.1.51] - 2026-07-16
 

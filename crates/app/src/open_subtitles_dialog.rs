@@ -9,8 +9,8 @@
 //! doesn't handle `winit::event::WindowEvent::DroppedFile` at all, so its
 //! `DropArea` only ever receives drags started by an in-app `DragArea` —
 //! there's no such source here. `main.rs`'s `wire_open_subtitles_dialog`
-//! instead reuses the `FileListDialog` component (`open_video_dialog.rs`'s
-//! Open Video dialog) as a small "pick a `.srt` from this folder" picker.
+//! instead reuses the `FileListDialog` component (`open_media_dialog.rs`'s
+//! Open dialog) as a small "pick a `.srt` from this folder" picker.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -83,8 +83,8 @@ fn file_name(path: &Path) -> String {
 
 /// Lists `.srt` files directly inside `folder` (case-insensitive
 /// extension match), sorted by name — the translation-link file picker's
-/// contents. Unlike the Open Video dialog
-/// (`open_video_dialog::list_folder_entries`), there's no subfolder
+/// contents. Unlike the Open dialog
+/// (`open_media_dialog::list_folder_entries`), there's no subfolder
 /// navigation: a translation file is expected right next to the video, and
 /// this picker is reached from inside the already-scoped Open Subtitles
 /// modal rather than being a general-purpose file browser. Returns an

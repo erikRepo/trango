@@ -1,12 +1,19 @@
 // TrangoPlayer main window shell.
 //
 // Top bar in its full visual form per STYLE.md's design tokens (wordmark,
-// segmented control, ghost buttons) — pixel reference is
-// sketch/design_reference.dc.html#1c. The segmented control's `toggle-mode`
-// callback is handled in Rust (crates/app/src/main.rs), which drives
-// playback-state::PlayerState::toggle_mode() and mirrors the result back
-// into `sentence-mode-active`, which also drives the bottom `HintBar`'s
-// mode-specific content (see its own doc comment).
+// segmented control, toggle, ghost buttons) — pixel reference is
+// sketch/design_reference.dc.html#1c, extended with a segmented control for
+// the Video/Audio source and a "Sentence by sentence" toggle (TODO.md Vaihe
+// 25, not in the mock). The two controls are independent: `select-mode`
+// (handled in Rust, crates/app/src/main.rs) drives
+// playback-state::PlayerState::set_mode() and mirrors the result back into
+// `playback-mode`, which also drives the bottom `HintBar`'s mode-specific
+// content; `select-media-source` drives PlayerState::set_media_source() and
+// mirrors into `media-source`, which switches the video area between the
+// mpv frame and the Audio source's placeholder panel. Both source buttons
+// also call `pause-playback` first (video_player::VideoPlayer::pause()),
+// since there's one shared mpv instance/loaded file underneath both
+// panels — see `media-ready`'s doc comment.
 
 import { LineEdit, ListView, ScrollView } from "std-widgets.slint";
 
@@ -48,8 +55,28 @@ export enum WordAnalysisBatchStatus {
     Error,
 }
 
-/// One pill in the top bar's Normal / Sentence-by-sentence segmented
-/// control; filled with the accent color while `active`, muted otherwise.
+/// Mirrors `playback_state::PlaybackMode` for the top bar's "Sentence by
+/// sentence" toggle (on = `SentenceBySentence`, off = `Normal` — "Normal" is
+/// never shown in the UI). Named `PlaybackModeUi` rather than `PlaybackMode`
+/// to avoid colliding with the Rust type of the same name that
+/// `crates/app/src/main.rs` imports alongside this generated module.
+export enum PlaybackModeUi {
+    Normal,
+    SentenceBySentence,
+}
+
+/// Mirrors `playback_state::MediaSource` (`TODO.md` Vaihe 25) for the top
+/// bar's Video/Audio segmented control and the video/placeholder-panel
+/// switch below. Named `MediaSourceUi` for the same reason `PlaybackModeUi`
+/// is: avoids colliding with the Rust type `crates/app/src/main.rs` imports
+/// alongside this generated module.
+export enum MediaSourceUi {
+    Video,
+    Audio,
+}
+
+/// One pill in the top bar's Video / Audio source segmented control; filled
+/// with the accent color while `active`, muted otherwise.
 component SegmentButton {
     in property <string> label;
     in property <bool> active;
@@ -118,10 +145,10 @@ component ToggleSwitch {
     }
 }
 
-/// A bordered, no-fill "Open video…" / "Subtitles…" top bar button.
-/// "Open video…" is wired to the Open Video dialog (Vaihe 18); "Subtitles…"
-/// to the Open Subtitles dialog (Vaihe 19) — both are `FileListDialog`
-/// instances, see below.
+/// A bordered, no-fill "Open" / "Subtitles…" top bar button.
+/// "Open" is wired to the Open dialog (Vaihe 18, generalized to audio in
+/// Vaihe 28); "Subtitles…" to the Open Subtitles dialog (Vaihe 19) — both
+/// are `FileListDialog` instances, see below.
 component GhostButton {
     in property <string> label;
     callback clicked;
@@ -146,6 +173,84 @@ component GhostButton {
                 font-family: "JetBrains Mono";
                 font-size: 12px;
                 font-weight: 500;
+                vertical-alignment: center;
+            }
+        }
+
+        TouchArea {
+            clicked => { root.clicked(); }
+        }
+    }
+}
+
+/// Small square icon-only button — used for the top bar's Settings gear.
+/// Fixed-size box rather than GhostButton's auto-sized `layout.min-width`,
+/// since that width is measured from its "JetBrains Mono" label glyph
+/// metrics — a glyph rendered from a different (fallback) font, as "⚙"
+/// would be, mismeasures and clips (see RecordButton's doc comment below
+/// for the same issue hit there).
+component IconButton {
+    in property <string> glyph;
+    callback clicked;
+
+    width: 32px;
+    height: 32px;
+
+    Rectangle {
+        border-width: 1px;
+        border-radius: 6px;
+        border-color: Palette.border;
+
+        Text {
+            text: root.glyph;
+            color: Palette.ghost-text;
+            font-family: "Inter";
+            font-size: 15px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        TouchArea {
+            clicked => { root.clicked(); }
+        }
+    }
+}
+
+/// Rec/stop control for the Audio source's placeholder panel (`TODO.md`
+/// Vaihe 27): filled red with a "Stop" label while `recording`, bordered
+/// with a "Rec" label otherwise. Wired to the same `toggle-audio-capture`
+/// callback as Ctrl+Space, so either one starts/stops the same capture.
+/// Plain text labels only, deliberately no "●"/"■" glyph prefix — mixing a
+/// non-ASCII glyph into "JetBrains Mono" text measured for an
+/// auto-sized (`layout.min-width`) button clipped the label's last
+/// character, since the glyph's actual rendered (fallback-font) width
+/// didn't match what was measured for layout.
+component RecordButton {
+    in property <bool> recording;
+    callback clicked;
+
+    min-width: layout.min-width;
+    min-height: layout.min-height;
+
+    Rectangle {
+        border-width: 1px;
+        border-radius: 6px;
+        border-color: root.recording ? Palette.error-text : Palette.border;
+        background: root.recording ? Palette.error-text : transparent;
+
+        layout := HorizontalLayout {
+            padding-left: 14px;
+            padding-right: 14px;
+            padding-top: 7px;
+            padding-bottom: 7px;
+
+            Text {
+                text: root.recording ? "Stop" : "Rec";
+                color: root.recording ? white : Palette.error-text;
+                font-family: "JetBrains Mono";
+                font-size: 12px;
+                font-weight: 600;
+                horizontal-alignment: center;
                 vertical-alignment: center;
             }
         }
@@ -368,7 +473,7 @@ component SentenceListCard inherits Rectangle {
 /// `is-selected`; clicking it navigates the dialog to a different folder)
 /// or a selectable file (`is-selected` driving the accent-tinted
 /// background/chip color). Set from Rust in
-/// `crates/app/src/open_video_dialog.rs` (video files, with folder
+/// `crates/app/src/open_media_dialog.rs` (video or audio files, with folder
 /// navigation) and `crates/app/src/open_subtitles_dialog.rs` (translation
 /// `.srt` files, flat — see `FileListDialog`'s doc comment on why the same
 /// row shape covers both).
@@ -381,13 +486,14 @@ struct FileListRow {
 
 /// A generic file-picker modal: header (`title` + "✕"), a scrollable list
 /// of `rows` under `folder-label`, and a footer with "Cancel" + a filled
-/// `confirm-label` button. Used for both the Open Video dialog (`TODO.md`
-/// Vaihe 18 — pixel reference `sketch/design_reference.dc.html#2a`, left
-/// mock, extended here with in-dialog folder navigation not shown in that
-/// static mock) and the Open Subtitles dialog's translation-link picker
-/// (Vaihe 19, see `OpenSubtitlesDialog` below) — both are "browse a
-/// folder's files and pick one", just scoped to different extensions and
-/// (for the video dialog only) with subfolder navigation.
+/// `confirm-label` button. Used for the Open dialog (`TODO.md` Vaihe 18 —
+/// pixel reference `sketch/design_reference.dc.html#2a`, left mock,
+/// extended here with in-dialog folder navigation not shown in that static
+/// mock; generalized to list audio recordings too in Vaihe 28) and the Open
+/// Subtitles dialog's translation-link picker (Vaihe 19, see
+/// `OpenSubtitlesDialog` below) — both are "browse a folder's files and
+/// pick one", just scoped to different extensions and (for the Open
+/// dialog only) with subfolder navigation.
 /// `folder-label`/`rows`/`selected-index` are set from Rust when the
 /// dialog opens and again whenever a navigable row changes the listed
 /// folder. Clicking a row emits `row-clicked` with its index — the Rust
@@ -778,6 +884,293 @@ component WordAnalysisPopup {
                                 }
                             }
                         }
+                    }
+                }
+
+                Rectangle {
+                    height: 60px;
+                    border-width: 1px;
+                    border-color: Palette.border;
+
+                    HorizontalLayout {
+                        padding-left: 20px;
+                        padding-right: 20px;
+                        alignment: end;
+                        cross-axis-alignment: center;
+
+                        Rectangle {
+                            border-width: 1px;
+                            border-radius: 6px;
+                            border-color: Palette.border;
+
+                            HorizontalLayout {
+                                padding-left: 16px;
+                                padding-right: 16px;
+                                padding-top: 8px;
+                                padding-bottom: 8px;
+
+                                Text {
+                                    text: "Close";
+                                    color: Palette.ghost-text;
+                                    font-family: "Inter";
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            TouchArea {
+                                clicked => { root.close(); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// One editable "label / value" row in `SettingsDialog` below — a small-
+/// caps mono label above a `LineEdit`, matching the section-header style
+/// used elsewhere in the dialogs (e.g. OpenSubtitlesDialog's "Original
+/// subtitle").
+component SettingsEditRow {
+    in property <string> label;
+    in property <string> value;
+    in property <string> placeholder;
+    callback edited(string);
+
+    VerticalLayout {
+        spacing: 4px;
+
+        Text {
+            text: root.label;
+            color: Palette.muted-text;
+            font-family: "JetBrains Mono";
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 0.8px;
+        }
+
+        LineEdit {
+            text: root.value;
+            placeholder-text: root.placeholder;
+            font-size: 13px;
+            edited(text) => { root.edited(text); }
+        }
+    }
+}
+
+/// Settings screen (`TODO.md`-adjacent — not in the original list, added
+/// on request): shows and edits every `config::TrangoConfig` field
+/// (docs/src/usage/settings.md) in one place. Whisper/Ollama model
+/// selection reopens the same picker dialogs reached from the Open
+/// Subtitles dialog (`select-whisper-model`/`select-ollama-model`, wired
+/// to the same top-level `select-whisper-model-requested`/
+/// `select-ollama-model-requested` callbacks) rather than duplicating
+/// folder-browsing/Ollama-listing UI here; every other field is a plain
+/// `LineEdit` that saves immediately on Enter/focus-out, same as the Open
+/// Subtitles dialog's target-language field — no separate "Save" action.
+component SettingsDialog {
+    in property <string> config-path;
+    in property <string> video-folder;
+    in property <bool> whisper-model-selected: false;
+    in property <string> whisper-model-name;
+    in property <bool> ollama-model-selected: false;
+    in property <string> ollama-model-name;
+    in property <string> ollama-target-language;
+    in property <string> audio-monitor-source;
+    in property <string> audio-recording-folder;
+    in property <bool> audio-recording-folder-exists: true;
+    callback set-video-folder(string);
+    callback select-whisper-model();
+    callback select-ollama-model();
+    callback set-ollama-target-language(string);
+    callback set-audio-monitor-source(string);
+    callback set-audio-recording-folder(string);
+    callback close();
+
+    Rectangle {
+        background: rgba(0, 0, 0, 0.55);
+
+        TouchArea {
+            clicked => { root.close(); }
+        }
+
+        Rectangle {
+            width: 560px;
+            height: 560px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: Palette.modal-bg;
+            border-width: 1px;
+            border-radius: 12px;
+            border-color: Palette.border;
+            drop-shadow-color: rgba(0, 0, 0, 0.6);
+            drop-shadow-blur: 40px;
+            drop-shadow-offset-y: 16px;
+            clip: true;
+
+            TouchArea {
+                // Swallows clicks inside the card so they don't fall
+                // through to the backdrop's close handler above.
+            }
+
+            VerticalLayout {
+                Rectangle {
+                    height: 52px;
+                    border-width: 1px;
+                    border-color: Palette.border;
+
+                    HorizontalLayout {
+                        padding-left: 20px;
+                        padding-right: 20px;
+                        alignment: space-between;
+                        cross-axis-alignment: center;
+
+                        Text {
+                            text: "Settings";
+                            color: Palette.primary-text;
+                            font-family: "Inter";
+                            font-size: 15px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+
+                        TouchArea {
+                            width: 20px;
+                            height: 20px;
+                            clicked => { root.close(); }
+
+                            Text {
+                                text: "✕";
+                                color: Palette.muted-text;
+                                font-family: "Inter";
+                                font-size: 16px;
+                                font-weight: 600;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    vertical-stretch: 1;
+                    padding: 20px;
+                    spacing: 14px;
+
+                    SettingsEditRow {
+                        label: "VIDEO FOLDER";
+                        value: root.video-folder;
+                        placeholder: "not set yet — picked from the last video you opened";
+                        edited(text) => { root.set-video-folder(text); }
+                    }
+
+                    VerticalLayout {
+                        spacing: 4px;
+
+                        Text {
+                            text: "WHISPER MODEL";
+                            color: Palette.muted-text;
+                            font-family: "JetBrains Mono";
+                            font-size: 10px;
+                            font-weight: 600;
+                            letter-spacing: 0.8px;
+                        }
+
+                        Rectangle {
+                            HorizontalLayout {
+                                Text {
+                                    text: root.whisper-model-selected
+                                        ? root.whisper-model-name + " (change)"
+                                        : "select a whisper model…";
+                                    color: Palette.accent;
+                                    font-family: "Inter";
+                                    font-size: 13px;
+                                    font-weight: 500;
+                                    wrap: word-wrap;
+                                }
+                            }
+
+                            TouchArea {
+                                clicked => { root.select-whisper-model(); }
+                            }
+                        }
+                    }
+
+                    VerticalLayout {
+                        spacing: 4px;
+
+                        Text {
+                            text: "OLLAMA MODEL";
+                            color: Palette.muted-text;
+                            font-family: "JetBrains Mono";
+                            font-size: 10px;
+                            font-weight: 600;
+                            letter-spacing: 0.8px;
+                        }
+
+                        Rectangle {
+                            HorizontalLayout {
+                                Text {
+                                    text: root.ollama-model-selected
+                                        ? root.ollama-model-name + " (change)"
+                                        : "select an Ollama model…";
+                                    color: Palette.accent;
+                                    font-family: "Inter";
+                                    font-size: 13px;
+                                    font-weight: 500;
+                                    wrap: word-wrap;
+                                }
+                            }
+
+                            TouchArea {
+                                clicked => { root.select-ollama-model(); }
+                            }
+                        }
+                    }
+
+                    SettingsEditRow {
+                        label: "WORD ANALYSIS TARGET LANGUAGE";
+                        value: root.ollama-target-language;
+                        placeholder: "e.g. English";
+                        edited(text) => { root.set-ollama-target-language(text); }
+                    }
+
+                    SettingsEditRow {
+                        label: "AUDIO MONITOR SOURCE (OVERRIDE)";
+                        value: root.audio-monitor-source;
+                        placeholder: "auto-detected via pactl";
+                        edited(text) => { root.set-audio-monitor-source(text); }
+                    }
+
+                    SettingsEditRow {
+                        label: "AUDIO RECORDING FOLDER";
+                        value: root.audio-recording-folder;
+                        placeholder: "current working directory";
+                        edited(text) => { root.set-audio-recording-folder(text); }
+                    }
+
+                    if !root.audio-recording-folder-exists : Text {
+                        text: "This folder doesn't exist yet — recording will fail until it does.";
+                        color: Palette.error-text;
+                        font-family: "Inter";
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+
+                    Rectangle {
+                        height: 1px;
+                        background: Palette.border;
+                    }
+
+                    Text {
+                        text: "Config file: " + root.config-path;
+                        color: Palette.muted-text;
+                        font-family: "JetBrains Mono";
+                        font-size: 11px;
+                        wrap: word-wrap;
                     }
                 }
 
@@ -1621,7 +2014,42 @@ component OpenSubtitlesDialog {
 
 export component AppWindow inherits Window {
     in property <string> version;
-    in property <bool> sentence-mode-active: false;
+    // Mirrors playback_state::PlaybackMode — kept in sync from Rust by
+    // main.rs's wire_player_state, which also derives HintBar's/nav-focus's
+    // narrower sentence-mode-active bool from this. Hardcoded to Normal here
+    // as this component's own default; wire_player_state overwrites it with
+    // PlayerState::new()'s real default (SentenceBySentence) immediately.
+    in property <PlaybackModeUi> playback-mode: PlaybackModeUi.Normal;
+    // Derived from playback-mode for nav-focus's key-pressed guard and
+    // HintBar. `out` rather than private so tests can assert on it directly
+    // instead of only on the coarser playback-mode.
+    out property <bool> sentence-mode-active: root.playback-mode == PlaybackModeUi.SentenceBySentence;
+    // Mirrors playback_state::MediaSource — kept in sync from Rust by
+    // main.rs's wire_player_state, which also drives nav-focus's Ctrl+Space
+    // guard and the video-area/placeholder-panel switch below. Hardcoded to
+    // Video here as this component's own default, matching
+    // MediaSource::default().
+    in property <MediaSourceUi> media-source: MediaSourceUi.Video;
+    // Invoked by the top bar's Video/Audio segmented control with the
+    // clicked segment's target source — wired in main.rs to
+    // playback_state::PlayerState::set_media_source().
+    callback select-media-source(MediaSourceUi);
+    // Invoked alongside select-media-source, before it, by the same
+    // segmented control clicks — wired in main.rs to
+    // video_player::VideoPlayer::pause(). A source switch only changes
+    // which panel is visible (there's still one shared mpv instance/loaded
+    // file underneath, see loaded-media-source below), so without this,
+    // whatever was playing in the panel being hidden would keep running
+    // silently behind the other one.
+    callback pause-playback();
+    // Which source (Video or Audio) the currently loaded file in mpv
+    // actually is — set in main.rs's open_selected_media alongside
+    // video-loaded, independently of media-source above (the visible
+    // panel). Used below to only show playback controls/the video
+    // underlay in the panel matching what's actually loaded, rather than,
+    // e.g., a loaded video's ScrubBar bleeding into the Audio panel just
+    // because *some* file happens to be loaded.
+    in property <MediaSourceUi> loaded-media-source: MediaSourceUi.Video;
     // Whether crates/app/src/video_player.rs has an mpv OpenGL render
     // context underlay active. While true, the video area below is left
     // fully transparent so that underlay (drawn straight into the window's
@@ -1629,6 +2057,13 @@ export component AppWindow inherits Window {
     // visible through it; opaque window-bg is only needed as a placeholder
     // when no video is loaded yet.
     in property <bool> video-loaded: false;
+    // Whether the currently loaded file (video-loaded) actually is the kind
+    // of media the visible panel (media-source) shows — false, e.g., right
+    // after switching from Video to Audio with a video still loaded from
+    // before. Gates the mpv underlay/ScrubBar/SpeedSlider/Audio placeholder
+    // below so a stale load from the other source doesn't bleed into this
+    // one.
+    out property <bool> media-ready: root.video-loaded && root.loaded-media-source == root.media-source;
     // The video frame Rectangle's resolved on-screen geometry, relative to
     // this window — read by `video_player.rs`'s `render_frame` each frame so
     // the mpv underlay it draws can be confined to exactly this box (via an
@@ -1667,7 +2102,10 @@ export component AppWindow inherits Window {
     // crates/app/src/sentence_list.rs — see SentenceListCard above.
     in property <[SentenceListRow]> sentence-list-rows: [];
     in property <int> sentence-list-current-index: -1;
-    callback toggle-mode();
+    // Invoked by the top bar's "Sentence by sentence" toggle with the
+    // resulting target mode — wired in main.rs to
+    // playback_state::PlayerState::set_mode().
+    callback select-mode(PlaybackModeUi);
     // Invoked by the current-sentence card's Translation toggle switch —
     // wired in main.rs's wire_player_state to
     // playback_state::PlayerState::toggle_translation().
@@ -1688,23 +2126,28 @@ export component AppWindow inherits Window {
     // video_player::VideoPlayer::seek_to_fraction. Unlike jump-to-cue above,
     // this only relocates the playhead; it never changes play/pause state.
     callback seek-requested(float);
-    // Open Video dialog state (TODO.md Vaihe 18), set from Rust by
-    // crates/app/src/open_video_dialog.rs — see FileListDialog above.
-    in property <bool> is-open-video-dialog-open: false;
-    in property <string> open-video-folder-label: "";
-    in property <[FileListRow]> open-video-rows: [];
-    in property <int> open-video-selected-index: -1;
-    // Invoked by the top bar's "Open video…" GhostButton; wired in main.rs's
-    // wire_open_video_dialog to list the default folder's video files and
-    // open the dialog.
-    callback open-video-dialog-requested();
+    // Open dialog state (TODO.md Vaihe 18, generalized to audio in Vaihe
+    // 28), set from Rust by crates/app/src/open_media_dialog.rs — see
+    // FileListDialog above. Shared by the Video and Audio sources' "Open…"
+    // button: open-media-dialog-title and the listed rows depend on
+    // whichever source is active when the button is clicked
+    // (main.rs's wire_open_media_dialog).
+    in property <bool> is-open-media-dialog-open: false;
+    in property <string> open-media-dialog-title: "Open video file";
+    in property <string> open-media-folder-label: "";
+    in property <[FileListRow]> open-media-rows: [];
+    in property <int> open-media-selected-index: -1;
+    // Invoked by the top bar's "Open…" GhostButton; wired in main.rs's
+    // wire_open_media_dialog to list the default folder's video or audio
+    // files (depending on media-source) and open the dialog.
+    callback open-media-dialog-requested();
     // Invoked by the dialog's backdrop click / "✕" / "Cancel" — closes it.
-    callback cancel-open-video-dialog();
+    callback cancel-open-media-dialog();
     // Invoked by a dialog row click, with that row's index — marks it
     // selected.
-    callback select-open-video-row(int);
+    callback select-open-media-row(int);
     // Invoked by the dialog's "Open" button — loads the selected file.
-    callback confirm-open-video();
+    callback confirm-open-media();
     // Open Subtitles dialog state (TODO.md Vaihe 19), set from Rust by
     // crates/app/src/open_subtitles_dialog.rs — see OpenSubtitlesDialog
     // below.
@@ -1775,7 +2218,7 @@ export component AppWindow inherits Window {
     in property <string> whisper-model-name: "";
     // Invoked by the Open Subtitles dialog's model row. Opens the model
     // picker (a FileListDialog scoped to .bin/.gguf files, same chrome as
-    // the Open Video dialog), starting from an autodiscovered or
+    // the Open dialog), starting from an autodiscovered or
     // previously-picked folder (model_picker::default_start_folder).
     callback select-whisper-model-requested();
     in property <bool> is-model-picker-dialog-open: false;
@@ -1819,6 +2262,43 @@ export component AppWindow inherits Window {
     // sentence currently shown in the current-sentence card. Set from Rust
     // by crates/app/src/word_analysis.rs's wire_word_analysis_popup.
     callback show-word-analysis();
+    // Ctrl+Space (TODO.md Vaihe 26) and the Audio panel's RecordButton
+    // (Vaihe 27): starts/stops system-audio capture in the Audio source —
+    // gated to that source in nav-focus's key-pressed handler below, since
+    // capture has no meaning while a video is loaded. Set from Rust by
+    // crates/app/src/system_audio_capture.rs. A failure (e.g. missing
+    // pactl/ffmpeg) is surfaced via audio-capture-error-message below,
+    // rather than only logged, so a broken setup doesn't look like
+    // Ctrl+Space/the button silently did nothing.
+    callback toggle-audio-capture();
+    // Mirrors the most recent start/stop attempt's outcome: "" on success,
+    // an explanatory message on failure (e.g. "pactl not found..." or a
+    // failed rename). Cleared again on the next successful attempt. Shown
+    // in the Audio source's placeholder below.
+    in property <string> audio-capture-error-message: "";
+    // Whether a system-audio capture is currently in progress (TODO.md
+    // Vaihe 27) — drives RecordButton's Rec/Stop state and locks the
+    // filename field below against edits while true. Set from Rust by
+    // crates/app/src/system_audio_capture.rs alongside every successful
+    // start/stop.
+    in property <bool> is-audio-recording: false;
+    // The current (or, once stopped, most recently finished) recording's
+    // filename, e.g. "2026-07-17_18-42-05.wav" — "" before any recording
+    // has been made this session. Set from Rust on every successful
+    // start/rename; editable via the filename LineEdit below once
+    // is-audio-recording is false.
+    in property <string> audio-recording-filename: "";
+    // Fired (Enter key) when the filename field is edited after a
+    // recording has stopped; renames the file on disk to match. Ignored by
+    // Rust while is-audio-recording is true.
+    callback rename-audio-recording-file(string);
+    // The folder a new Audio-source recording will be written to
+    // (`system_audio_capture::default_recording_folder`), shown in the
+    // Audio panel so it's clear where Ctrl+Space/the Rec button will save
+    // before a recording is even started, and kept in sync if it's
+    // changed via the Settings dialog below. Set from Rust by
+    // crates/app/src/system_audio_capture.rs.
+    in property <string> audio-recording-folder-label: "";
     callback close-word-analysis-popup();
     in property <bool> is-word-analysis-popup-open: false;
     in property <WordAnalysisStatus> word-analysis-status: WordAnalysisStatus.Idle;
@@ -1832,6 +2312,30 @@ export component AppWindow inherits Window {
     in property <int> word-analysis-batch-progress-current: 0;
     in property <int> word-analysis-batch-progress-total: 0;
     in property <string> word-analysis-batch-error-message: "";
+
+    // Settings screen (top bar's gear icon): shows most of
+    // config::TrangoConfig's remembered settings (docs/src/usage/settings.md)
+    // in one place — set from Rust by crates/app/src/settings_dialog.rs.
+    // Most fields mirror properties already kept in sync elsewhere
+    // (whisper-model-name etc.) rather than duplicating that state; only
+    // fields with no other UI get their own settings-* property below.
+    callback settings-dialog-requested();
+    in property <bool> is-settings-dialog-open: false;
+    in property <string> settings-config-path: "";
+    in property <string> settings-video-folder: "";
+    // audio-monitor-source previously had *no* UI at all (config.toml had
+    // to be hand-edited — see settings.md); audio-recording-folder mirrors
+    // the same config field the Audio panel's audio-recording-folder-label
+    // above is derived from. Both save immediately on edit, the same way
+    // the Open Subtitles dialog's target-language field does
+    // (set-ollama-target-language), rather than needing a separate "Save".
+    in property <string> settings-audio-monitor-source: "";
+    in property <string> settings-audio-recording-folder: "";
+    in property <bool> settings-audio-recording-folder-exists: true;
+    callback set-settings-video-folder(string);
+    callback set-settings-audio-monitor-source(string);
+    callback set-settings-audio-recording-folder(string);
+    callback close-settings-dialog();
 
     title: "TrangoPlayer v" + version;
     // `preferred-width`/`-height`, not `width`/`height`: per Slint's
@@ -1883,6 +2387,15 @@ export component AppWindow inherits Window {
                 // current-sentence card is showing right now, same as
                 // Ctrl+T above — not mode-gated for the same reason.
                 root.show-word-analysis();
+                accept
+            } else if (event.modifiers.control && event.text == " ") {
+                // Starts/stops system-audio capture (TODO.md Vaihe 26,
+                // Audio source only) — checked before the plain-Space
+                // branch below, since Ctrl held or not still reports the
+                // same " " text.
+                if (root.media-source == MediaSourceUi.Audio) {
+                    root.toggle-audio-capture();
+                }
                 accept
             } else if (event.text == " ") {
                 // Space (play/pause) works in both modes — see
@@ -1952,31 +2465,63 @@ export component AppWindow inherits Window {
                         }
                     }
 
-                    Rectangle {
-                        background: Palette.segmented-bg;
-                        border-radius: 7px;
+                    HorizontalLayout {
+                        // Wider than the 8px used for buttons within a
+                        // group — visually separates the Video/Audio
+                        // segmented control from the unrelated Sentence-by-
+                        // sentence toggle next to it.
+                        spacing: 24px;
 
-                        HorizontalLayout {
-                            padding: 3px;
-                            spacing: 2px;
+                        // Video/Audio source, independent of the Sentence-
+                        // by-sentence toggle next to it — separate control
+                        // group since the two choices are orthogonal.
+                        Rectangle {
+                            background: Palette.segmented-bg;
+                            border-radius: 7px;
 
-                            SegmentButton {
-                                label: "Normal";
-                                active: !root.sentence-mode-active;
-                                clicked => {
-                                    if (root.sentence-mode-active) {
-                                        root.toggle-mode();
+                            HorizontalLayout {
+                                padding: 3px;
+                                spacing: 2px;
+
+                                SegmentButton {
+                                    label: "Video";
+                                    active: root.media-source == MediaSourceUi.Video;
+                                    clicked => {
+                                        root.pause-playback();
+                                        root.select-media-source(MediaSourceUi.Video);
+                                    }
+                                }
+
+                                SegmentButton {
+                                    label: "Audio";
+                                    active: root.media-source == MediaSourceUi.Audio;
+                                    clicked => {
+                                        root.pause-playback();
+                                        root.select-media-source(MediaSourceUi.Audio);
                                     }
                                 }
                             }
+                        }
 
-                            SegmentButton {
-                                label: "Sentence by sentence";
-                                active: root.sentence-mode-active;
-                                clicked => {
-                                    if (!root.sentence-mode-active) {
-                                        root.toggle-mode();
-                                    }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            cross-axis-alignment: center;
+
+                            Text {
+                                text: "Sentence by sentence";
+                                color: Palette.muted-text;
+                                font-family: "Inter";
+                                font-size: 13px;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                            }
+
+                            ToggleSwitch {
+                                on: root.sentence-mode-active;
+                                toggled => {
+                                    root.select-mode(root.sentence-mode-active
+                                        ? PlaybackModeUi.Normal
+                                        : PlaybackModeUi.SentenceBySentence);
                                 }
                             }
                         }
@@ -1986,13 +2531,18 @@ export component AppWindow inherits Window {
                         spacing: 8px;
 
                         GhostButton {
-                            label: "Open video…";
-                            clicked => { root.open-video-dialog-requested(); }
+                            label: "Open";
+                            clicked => { root.open-media-dialog-requested(); }
                         }
 
                         GhostButton {
                             label: "Subtitles…";
                             clicked => { root.open-subtitles-dialog-requested(); }
+                        }
+
+                        IconButton {
+                            glyph: "⚙";
+                            clicked => { root.settings-dialog-requested(); }
                         }
                     }
                 }
@@ -2007,25 +2557,97 @@ export component AppWindow inherits Window {
 
                     video-frame := Rectangle {
                         // Video frame area, filling the remaining column height.
-                        // Transparent while a video is loaded so the mpv underlay
-                        // shows through (see `video-loaded` above); otherwise
-                        // filled with the window background color as a
-                        // placeholder. Its resolved on-screen geometry is
+                        // Transparent while a video is loaded and matches the
+                        // visible panel so the mpv underlay shows through (see
+                        // `media-ready` above); otherwise filled with the
+                        // window background color as a placeholder — also
+                        // covering a loaded video's picture while the Audio
+                        // panel is showing, since that overlay is itself
+                        // transparent. Its resolved on-screen geometry is
                         // exposed below (`video-frame-x`/-y/-width/-height) so
                         // `video_player.rs` can confine the mpv underlay to
                         // exactly this box instead of the whole window — see
-                        // `render_frame`'s doc comment.
-                        background: root.video-loaded ? transparent : Palette.window-bg;
+                        // `render_frame`'s doc comment. Kept unconditionally
+                        // instantiated (rather than swapped out via `if`) even
+                        // in the Audio source, so those geometry accessors
+                        // keep resolving; the Audio placeholder below is just
+                        // an overlay child instead.
+                        background: root.media-ready ? transparent : Palette.window-bg;
+
+                        if root.media-source == MediaSourceUi.Audio : VerticalLayout {
+                            // Rec/stop control, filename display/rename
+                            // (TODO.md Vaihe 27), always available so a new
+                            // recording can start at any time. Once a
+                            // recording or opened audio file is loaded
+                            // (media-ready), the placeholder text below
+                            // gives way to the ScrubBar/SpeedSlider below
+                            // this Rectangle, which play it back the same
+                            // way they do a video (TODO.md Vaihe 28).
+                            alignment: center;
+                            spacing: 10px;
+
+                            if !root.media-ready : Text {
+                                text: "Audio source — no recording loaded";
+                                color: Palette.muted-text;
+                                font-family: "Inter";
+                                font-size: 13px;
+                                horizontal-alignment: center;
+                            }
+
+                            if root.audio-recording-folder-label != "" : Text {
+                                text: "Saving to: " + root.audio-recording-folder-label;
+                                color: Palette.muted-text;
+                                font-family: "JetBrains Mono";
+                                font-size: 11px;
+                                horizontal-alignment: center;
+                                wrap: word-wrap;
+                            }
+
+                            HorizontalLayout {
+                                alignment: center;
+                                spacing: 8px;
+
+                                RecordButton {
+                                    recording: root.is-audio-recording;
+                                    clicked => { root.toggle-audio-capture(); }
+                                }
+
+                                if root.audio-recording-filename != "" : LineEdit {
+                                    width: 220px;
+                                    text: root.audio-recording-filename;
+                                    enabled: !root.is-audio-recording;
+                                    font-size: 12px;
+                                    horizontal-alignment: center;
+                                    accepted(text) => { root.rename-audio-recording-file(text); }
+                                }
+                            }
+
+                            if root.audio-capture-error-message != "" : Text {
+                                text: root.audio-capture-error-message;
+                                color: Palette.error-text;
+                                font-family: "Inter";
+                                font-size: 12px;
+                                horizontal-alignment: center;
+                                wrap: word-wrap;
+                            }
+                        }
                     }
 
-                    ScrubBar {
+                    // Shown in the Video source unconditionally (even
+                    // before anything's loaded, as an idle 0:00 state), and
+                    // in the Audio source once a matching recording or
+                    // opened audio file is loaded (media-ready, TODO.md
+                    // Vaihe 28) — there's nothing to scrub/speed-control
+                    // before that, and a video loaded from before a source
+                    // switch shouldn't show its scrub bar here either.
+                    if root.media-source != MediaSourceUi.Audio || root.media-ready : ScrubBar {
                         current-time-label: root.current-time-label;
                         duration-label: root.duration-label;
                         progress: root.scrub-progress;
                         seek-requested(fraction) => { root.seek-requested(fraction); }
                     }
 
-                    SpeedSlider {
+                    if root.media-source != MediaSourceUi.Audio || root.media-ready : SpeedSlider {
                         current-speed: root.current-playback-speed;
                         current-speed-label: root.current-playback-speed-label;
                         speed-requested(fraction) => { root.speed-requested(fraction); }
@@ -2060,17 +2682,17 @@ export component AppWindow inherits Window {
             }
         }
 
-        if root.is-open-video-dialog-open : FileListDialog {
+        if root.is-open-media-dialog-open : FileListDialog {
             width: parent.width;
             height: parent.height;
-            title: "Open video file";
+            title: root.open-media-dialog-title;
             confirm-label: "Open";
-            folder-label: root.open-video-folder-label;
-            rows: root.open-video-rows;
-            selected-index: root.open-video-selected-index;
-            row-clicked(index) => { root.select-open-video-row(index); }
-            cancel => { root.cancel-open-video-dialog(); }
-            confirm => { root.confirm-open-video(); }
+            folder-label: root.open-media-folder-label;
+            rows: root.open-media-rows;
+            selected-index: root.open-media-selected-index;
+            row-clicked(index) => { root.select-open-media-row(index); }
+            cancel => { root.cancel-open-media-dialog(); }
+            confirm => { root.confirm-open-media(); }
         }
 
         if root.is-open-subtitles-dialog-open : OpenSubtitlesDialog {
@@ -2100,6 +2722,33 @@ export component AppWindow inherits Window {
             link-translation => { root.link-translation-requested(); }
             cancel => { root.cancel-open-subtitles-dialog(); }
             confirm => { root.confirm-open-subtitles-dialog(); }
+        }
+
+        // Rendered before the model pickers below so that opening one of
+        // them from inside the Settings dialog (select-whisper-model/
+        // select-ollama-model) layers the picker on top rather than
+        // underneath — same document-order convention as
+        // OpenSubtitlesDialog above and the pickers it also reaches.
+        if root.is-settings-dialog-open : SettingsDialog {
+            width: parent.width;
+            height: parent.height;
+            config-path: root.settings-config-path;
+            video-folder: root.settings-video-folder;
+            whisper-model-selected: root.whisper-model-selected;
+            whisper-model-name: root.whisper-model-name;
+            ollama-model-selected: root.ollama-model-selected;
+            ollama-model-name: root.ollama-model-name;
+            ollama-target-language: root.ollama-target-language;
+            audio-monitor-source: root.settings-audio-monitor-source;
+            audio-recording-folder: root.settings-audio-recording-folder;
+            audio-recording-folder-exists: root.settings-audio-recording-folder-exists;
+            set-video-folder(text) => { root.set-settings-video-folder(text); }
+            select-whisper-model => { root.select-whisper-model-requested(); }
+            select-ollama-model => { root.select-ollama-model-requested(); }
+            set-ollama-target-language(text) => { root.set-ollama-target-language(text); }
+            set-audio-monitor-source(text) => { root.set-settings-audio-monitor-source(text); }
+            set-audio-recording-folder(text) => { root.set-settings-audio-recording-folder(text); }
+            close => { root.close-settings-dialog(); }
         }
 
         // Rendered after OpenSubtitlesDialog so it layers on top when both

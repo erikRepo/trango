@@ -1,8 +1,7 @@
 # Settings
 
-TrangoPlayer has no separate settings screen — the few things it
-remembers are saved automatically as you use the app, and picked up
-again the next time it starts.
+The gear icon in the top bar opens the Settings screen, showing and
+editing everything TrangoPlayer remembers between runs in one place.
 
 ## What's remembered
 
@@ -10,12 +9,37 @@ Stored in a small config file (`$XDG_CONFIG_HOME/trango/config.toml`,
 falling back to `$HOME/.config/trango/config.toml`), written whenever
 you change one of these:
 
-- The folder the last video you opened was in — so "Open video…" starts
-  there next time.
+- The folder the last video you opened was in — so "Open" starts there
+  next time you're in the Video source.
 - The whisper model you last picked (see
   [Generating subtitles automatically](generating-subtitles.md)).
 - The Ollama model and target language you last picked (see
   [Word-by-word analysis](word-analysis.md)).
+- The folder your last Audio-source recording was opened from or saved
+  to — new recordings, and "Open" in the Audio source, both default
+  there too (see [Playback modes](playback-modes.md)). The Audio
+  source's placeholder panel always shows this folder ("Saving to:
+  …"), and starting a recording into a folder that no longer exists
+  shows an error instead of silently failing.
+
+Every field in the Settings screen is editable, and saves immediately —
+no separate "Save" button:
+
+- **Video folder**, **audio recording folder** — plain text fields;
+  type a path and it's used from then on.
+- **Whisper model**, **Ollama model** — clicking the current value (or
+  "select a model…") reopens the same picker dialogs used elsewhere in
+  the app, rather than typing a path.
+- **Word analysis target language** — the same field as the Subtitles
+  dialog's language box; editing it in either place updates the other.
+- **Audio monitor source** — overrides the Audio source's Ctrl+Space
+  recording's autodetection of which PulseAudio/PipeWire "monitor"
+  source captures your system's audio output (normally asks `pactl`
+  for the default sink). Set this if autodetection picks the wrong
+  device — for example, you have multiple audio outputs and want to
+  record from a non-default one — to the exact source name (check
+  `pactl list sources short`) to skip autodetection entirely. Empty
+  means "keep autodetecting".
 
 If this file is missing or unreadable, TrangoPlayer just starts with
 nothing remembered rather than failing to open — losing a remembered
@@ -30,7 +54,8 @@ that isn't on `PATH`, point TrangoPlayer at it directly with an
 environment variable:
 
 - `TRANGO_WHISPER_CLI_PATH` — path to the `whisper-cli` binary.
-- `TRANGO_FFMPEG_PATH` — path to the `ffmpeg` binary.
+- `TRANGO_FFMPEG_PATH` — path to the `ffmpeg` binary, used both for
+  subtitle generation and for the Audio source's system audio capture.
 
 These are environment variables rather than settings inside the app
 because they're one-time system install paths that rarely change, unlike

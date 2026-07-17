@@ -8,7 +8,7 @@ either left open there, or found through real usage/testing.
 Opens on a default folder (CLI video's parent, else `config.toml`'s
 remembered `video_folder`, else cwd) but isn't limited to it — an "‥ Up"
 row and subfolder clicks navigate in place
-(`open_video_dialog::list_folder_entries`). Chosen over a native OS
+(`open_media_dialog::list_folder_entries`). Chosen over a native OS
 picker to stay consistent with SPEC.md's "no OS-native file picker"
 direction.
 
@@ -43,6 +43,13 @@ then runs `whisper-cli` against that. `extract_audio` and
 `run_whisper_cli` are separately testable against fake binaries;
 `run_command` retries briefly on `ETXTBSY` (freshly written test binaries
 occasionally racing `exec`).
+
+`TODO.md` Vaihe 29 reuses this same `generate` for the Audio source's
+"Generate subtitles" (same button/dialog as the Video source — no new call
+site was needed, since Vaihe 28 already generalized `CurrentMedia` to hold
+either a video or a recorded/opened `.wav` path). `generate` skips
+`extract_audio` when its input is already a `.wav` — the only extension the
+Audio source ever loads — and hands it to `whisper-cli` directly.
 
 **Background thread, not the UI thread.** Real transcription can take
 minutes; `spawn_generate` runs it on `std::thread::spawn`, reporting back
@@ -248,6 +255,142 @@ Slint's bidi support improves, or if this affects enough real subtitle
 content to justify manually inserting Unicode directional-isolate marks
 (U+2066/U+2069) around embedded Latin runs before handing cue text to
 `sentence_card.rs`.
+
+## Audio source: system-audio capture, not YouTube download/caption scraping
+
+Live subtitle recording without a video (`TODO.md` Vaihe 25–31) needs some
+source of audio/text to transcribe. Two alternatives were considered and
+rejected for copyright reasons: playing/downloading the source video
+directly (e.g. via `yt-dlp` + mpv's `ytdl_hook`), and scraping a site's
+already-generated captions (e.g. `yt-dlp --write-auto-sub --skip-download`).
+Both would have trango fetch copyrighted content from a third party.
+Instead, Vaihe 26 onward capture the system's own audio *output* — whatever
+is already playing locally, from any source — and never persist more than
+the resulting `.srt`; no video/audio file trango didn't already have is
+ever downloaded or saved.
+
+## System audio capture: `pactl`'s default-sink monitor, graceful `ffmpeg` stop
+
+`TODO.md` Vaihe 26 needed a monitor source to feed `ffmpeg -f pulse -i`.
+Rather than parsing `pactl list sources` for whichever ones end in
+`.monitor` (several, if multiple outputs exist — ambiguous to pick
+between), `AudioCapture::default_monitor_source` asks `pactl
+get-default-sink` and appends `.monitor` itself, since PulseAudio/
+PipeWire guarantee that naming convention. `config.rs`'s
+`audio_monitor_source` overrides this for setups where the default sink
+isn't the one to capture.
+
+Killing `ffmpeg` outright (`SIGKILL`) leaves the WAV header's size field
+wrong, since `ffmpeg` only finalizes it on a clean exit. `AudioCapture::stop`
+instead writes `q` to `ffmpeg`'s stdin — the same key it reads
+interactively to quit gracefully — and only falls back to `kill()` after
+`graceful_stop_timeout` (a test-injectable field; production uses 5s).
+
+A missing `pactl`/`ffmpeg` install only showed up in the log (usually
+invisible to a user running the packaged app), making Ctrl+Space look
+like it silently did nothing. `system_audio_capture::wire_audio_capture`
+now also mirrors every start/stop outcome into `audio-capture-error-message`
+(`AppWindow` property, shown in the Audio source's placeholder), cleared on
+success — a small, targeted piece of Vaihe 29's UI pulled forward, without
+building the full rec/stop control it also adds.
+
+## `MediaSource`, split out from `PlaybackMode`
+
+Which source is active (video file vs. audio) and how navigation behaves
+(Normal vs. Sentence by sentence) are independent choices, so a single
+`PlaybackMode` enum can't express both — a three-way mode would have no way
+to select "audio source" and "Sentence by sentence" together.
+`playback_state::MediaSource` (Video/Audio) exists alongside the original
+two-variant `PlaybackMode`; `PlayerState` holds both fields independently.
+The top bar mirrors this with two separate segmented-control groups —
+Video/Audio and Normal/Sentence-by-sentence — rather than one combined
+control (not in the mock, `sketch/design_reference.dc.html#1c`, which only
+showed the mode pair). The video area's `Rectangle` stays unconditionally
+instantiated in the Audio source too (so `video-frame-x/-y/-width/-height`,
+read every frame by `video_player.rs`, keep resolving) — the Audio
+placeholder is an overlay child inside it, not a swapped-out sibling.
+
+## System audio capture reverted to a single WAV file, not live segmentation
+
+An earlier version of Vaihe 26 had `ffmpeg` stream raw PCM to its stdout
+so a `VadSegmenter` could chop it into speech segments for per-segment
+`whisper-cli` transcription, growing the sentence list live. That
+approach (`webrtc-vad`, `vad.rs`, `live_transcription.rs`) was removed:
+it added real complexity (FFI, a non-`Send` VAD instance, a channel
+draining onto the UI thread) for transcription quality no better than
+running `whisper-cli` once over the finished recording. `AudioCapture`
+now just has `ffmpeg` write directly to a WAV file; `TODO.md` Vaihe 29
+runs "Generate subtitles" over that file as a whole, the same
+`WhisperCliGenerator` path video files use.
+
+## Recording filename: `chrono` dependency, rename only after stop
+
+`TODO.md` Vaihe 27's default filename needs a local (not UTC) date+time —
+the std library has no timezone-aware formatting for `SystemTime`, so
+`chrono` was added to `crates/app` rather than hand-rolling civil-date
+math. The filename is locked while a recording is in progress and only
+renamable afterwards, matching a normal recorder's behavior; the rename
+handler rejects any value that isn't a single plain path component so a
+pasted value containing `/` or `..` can't move the file outside its
+recording folder.
+
+## Validated: cue-based features never depended on video
+
+`TODO.md` Vaihe 30 asked whether sentence list, Ctrl+A word analysis, and
+the translation toggle secretly assumed a video was loaded. They don't:
+`sentence_card.rs`/`sentence_list.rs`/`word_analysis.rs` and
+`playback_state::PlayerState`'s cue navigation only ever read
+`cues`/`current_cue_index`/`show_translation`, never `MediaSource` or
+anything video-specific — confirmed by grepping for `MediaSource` outside
+`main.rs`'s own source-selection code and `video_player.rs`. No code
+changed; `crates/app/tests/e2e_sentence_navigation.rs` and
+`main.rs`'s `test_app_window_properties` gained tests that switch to the
+Audio source mid-run and repeat the same navigation/Ctrl+A/sentence-list
+assertions, locking the guarantee in against regressions.
+
+## Source switch pauses playback and gates controls by the loaded file's kind
+
+Video and Audio share one `video_player::VideoPlayer`/mpv instance — the
+top bar's source buttons only ever swapped which panel was visible, never
+touched playback. That meant switching sources left whatever was playing
+running audibly behind the hidden panel, and a loaded video's ScrubBar
+could appear in the Audio panel (or its picture show through) just because
+*some* file happened to be loaded, regardless of kind. Fixed two ways: the
+Video/Audio segment buttons now call a new `pause-playback` callback
+(`video_player::VideoPlayer::pause()`) before `select-media-source`, and
+`AppWindow::media-ready` (`video-loaded && loaded-media-source ==
+media-source`) gates the mpv underlay/ScrubBar/SpeedSlider/Audio
+placeholder so they only activate once the actually-loaded file's kind
+matches the visible panel. `loaded-media-source` is set in
+`open_selected_media`, the single choke point both the Open dialog and the
+post-recording auto-load go through. Two independent player "slots" (each
+source remembering its own loaded file/position) was considered and
+rejected as unnecessarily large for the actual complaint — the one shared
+mpv instance never caused problems the previous UI just failed to gate
+against.
+
+## Sentence card/list and Ctrl+A also gated by panel_content_ready
+
+Once playback controls were gated by `media-ready` above, the same
+complaint showed up one layer up: switching to a not-yet-loaded Audio
+panel left the Video source's current-sentence card and sentence list
+sitting on screen untouched, and Ctrl+A would still analyze that stale
+sentence — the "Validated: cue-based features never depended on video"
+decision above had made this a deliberate, tested guarantee (switching
+source never touches cues), which now reads as the bug rather than the
+fix. Revised: `main.rs`'s `panel_content_ready` (same `media-source !=
+Audio || media-ready` condition as the Slint gate) decides what the
+sentence card/list *display*, blanking it to an empty `PlayerState`'s
+placeholder in `on_select_media_source` when the newly-selected panel
+isn't ready, and restoring the real one when switching back to a source
+that is. The Ctrl+A handler checks the same condition before reading
+`current_cue_index`, so it reports "No sentence is currently in focus"
+rather than reusing the other source's cache entry. `PlayerState.cues`
+itself is never touched — only what's displayed/analyzed — so cue
+navigation's source-independence (the `e2e_sentence_navigation.rs`
+guarantee) still holds unchanged; only the two Slint-facing consumers
+that read the *current* cue for on-screen display now also check which
+panel is showing it.
 
 ## CI: PR checks and .deb release automation
 

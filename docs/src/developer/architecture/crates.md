@@ -1,6 +1,6 @@
 # Crate structure
 
-trango is a Cargo workspace with four members, all inheriting `version`,
+trango is a Cargo workspace with five members, all inheriting `version`,
 `edition`, and `rust-version` from `[workspace.package]` in the root
 `Cargo.toml`.
 
@@ -20,8 +20,11 @@ Slint/libmpv dependency.
 ## `crates/playback-state` (library)
 
 Depends on `subtitle`. `PlaybackMode` (`Normal` | `SentenceBySentence`,
-default `SentenceBySentence`) and `PlayerState { mode, cues,
-current_cue_index, show_translation }`.
+default `SentenceBySentence`) and `MediaSource` (`Video` | `Audio`, default
+`Video`) are independent enums — which source is active and how navigation
+behaves are separate choices. `PlayerState { mode, media_source, cues,
+current_cue_index, show_translation }`; `set_mode(mode)`/
+`set_media_source(source)` switch directly to either value.
 
 Cue navigation is pure logic returning a `SeekCommand`/`PlaySpanCommand`
 — "what the player should do" — rather than driving mpv directly:
@@ -55,9 +58,20 @@ and response-parsing are plain functions tested with canned strings;
 `HttpOllamaClient` itself is tested against a local mock HTTP server
 (`TcpListener` on a random port).
 
+## `crates/audio-capture` (library)
+
+System audio capture for the Audio source (see [System audio
+capture](system-audio-capture.md)). `AudioCapture` runs `ffmpeg -f pulse`
+as a subprocess (`start`/`stop`, the latter asking `ffmpeg` to quit
+gracefully via stdin before falling back to killing it), and
+`default_monitor_source` asks `pactl` for the default sink's matching
+`.monitor` source. Same external-process-via-`Command` pattern as
+`subtitle::WhisperCliGenerator`, tested against fake shell-script
+binaries the same way. No Slint/libmpv dependency.
+
 ## `crates/app` (binary, package `trango`)
 
-Ties Slint, libmpv, and the two library crates together. Package name
+Ties Slint, libmpv, and the library crates together. Package name
 `trango` (binary name), directory `crates/app`; UI-facing product name is
 **TrangoPlayer**.
 
@@ -68,21 +82,23 @@ video path — because Slint's `RenderingSetup` notification only ever
 fires once per window (see [Video playback](video-playback.md) for why
 this can't be deferred). A CLI video argument starts loading immediately;
 otherwise the video area stays a placeholder until one is picked via the
-top bar's "Open video…" (`open_video_dialog.rs`: lists a folder's
-subfolders/videos as rows, auto-matches a same-stem `.srt`, only `Video`
-rows are selectable) or a second/third CLI argument (`subs.srt`, and a
+top bar's "Open" button (`open_media_dialog.rs`: lists a folder's
+subfolders/video-or-audio files as rows depending on the active source,
+auto-matches a same-stem `.srt`, only file rows are selectable) or a
+second/third CLI argument (`subs.srt`, and a
 translation `subs.en.srt` merged via `subtitle::merge_translation`). A
 subtitle or translation file that can't be read/parsed is logged and
 skipped rather than blocking video playback.
 
 `wire_player_state` creates the shared `Rc<RefCell<PlayerState>>`
 (UI-thread-only, so no `Send`/`Sync` needed) and wires
-`toggle-mode`/`toggle-translation` to `PlayerState`'s methods, mirroring
+`select-mode`/`toggle-translation` to `PlayerState`'s methods, mirroring
 the result back into `AppWindow` properties the top bar/translation
 toggle read directly.
 
-## Why four crates instead of one
+## Why five crates instead of one
 
-Splitting `subtitle`, `playback-state`, and `word-analysis` out of the
-binary keeps most business logic testable without Slint/libmpv, and keeps
-files small (CLAUDE.md: aim for ~200 lines/file).
+Splitting `subtitle`, `playback-state`, `word-analysis`, and
+`audio-capture` out of the binary keeps most business logic testable
+without Slint/libmpv, and keeps files small (CLAUDE.md: aim for ~200
+lines/file).

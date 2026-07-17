@@ -5,20 +5,23 @@ If a video has no subtitle file, the **"Subtitles…"** dialog's
 subtitle file automatically, using
 [whisper.cpp](https://github.com/ggml-org/whisper.cpp)'s `whisper-cli`
 speech-recognition tool. This runs entirely on your own computer — nothing
-is uploaded anywhere.
+is uploaded anywhere. The same button works the same way in the Audio
+source, for a recorded or opened audio file.
 
 TrangoPlayer doesn't bundle whisper-cli itself, so it needs to be
 installed and reachable separately. Note that this is **not** the
 `openai-whisper` Python package (whose CLI is `whisper`, with different
 flags) — it specifically means whisper.cpp's own `whisper-cli` binary.
 
-**`ffmpeg` is also required.** `whisper-cli` only reads a handful of raw
-audio formats — not video containers like `.mp4`/`.mkv` — so TrangoPlayer
-extracts the video's audio to a temporary file with `ffmpeg` first. This
-happens automatically, but `ffmpeg` needs to be installed and on your
-`PATH`. It's extremely commonly preinstalled, or a one-line install:
-`sudo apt install ffmpeg` / `brew install ffmpeg` / the
+**`ffmpeg` is also required for video.** `whisper-cli` only reads a
+handful of raw audio formats — not video containers like `.mp4`/`.mkv` —
+so TrangoPlayer extracts the video's audio to a temporary file with
+`ffmpeg` first. This happens automatically, but `ffmpeg` needs to be
+installed and on your `PATH`. It's extremely commonly preinstalled, or a
+one-line install: `sudo apt install ffmpeg` / `brew install ffmpeg` / the
 [official builds](https://ffmpeg.org/download.html) for Windows.
+Generating subtitles for the Audio source's recordings doesn't need
+`ffmpeg` — they're already audio, so `whisper-cli` reads them directly.
 
 ## Installing whisper-cli
 

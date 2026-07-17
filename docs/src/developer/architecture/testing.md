@@ -27,6 +27,10 @@ instead of hand-built `Cue` literals:
 - A separate test confirms the paired `sample.mp4` video fixture exists on
   disk and is non-empty, tying the video file to the subtitle track this
   suite exercises.
+- Two more tests (`TODO.md` Vaihe 30) repeat the cue-navigation and
+  `sync_cue_to_time` walks with `PlayerState::media_source` set to `Audio`,
+  confirming cue-based features never depended on a video actually being
+  loaded — see `docs/src/developer/specs.md`.
 
 ## What this suite deliberately does not cover
 

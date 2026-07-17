@@ -115,6 +115,13 @@ source; the subtitle-generation reload workaround (see [Design
 decisions](../specs.md)) predates this fix and is now a bonus (re-arming
 the start-of-playback seek) rather than the only recovery path.
 
+Staying loaded-but-paused at EOF still means unpausing without seeking
+does nothing (`time-pos` immediately re-hits the same EOF). `Normal`
+mode's/Audio's unbounded `VideoPlayer::toggle_playback` checks mpv's
+`eof-reached` property and seeks back to `0` first when set, so Space
+replays from the start instead of looking like a no-op once a file has
+played through.
+
 ## `attach` always runs at startup
 
 `attach` is called exactly once, unconditionally, right after `AppWindow`
@@ -128,9 +135,9 @@ render context — and its `loadfile` — never got created, permanently
 idling the core.
 
 `load_file` (used by both `attach`'s own startup load and the public
-`VideoPlayer::load_video`, called from `open_selected_video` when a video
+`VideoPlayer::load_video`, called from `open_selected_media` when a video
 is picked later) handles the `loadfile` call, `video-loaded`, and the
-sentence-by-sentence start-seek arming either way. `open_selected_video`
+sentence-by-sentence start-seek arming either way. `open_selected_media`
 always resolves subtitles *before* calling `load_video`, since the
 start-pause needs `player_state.cues` to already reflect the new video,
 not the previous one.

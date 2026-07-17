@@ -1,0 +1,9 @@
+[package]
+name = "audio-capture"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+thiserror = "2.0.18"
+tracing = "0.1"
