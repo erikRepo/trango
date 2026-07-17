@@ -12,4 +12,3 @@ dependency gets a page here when it's added (see `CLAUDE.md`).
 - [toml](toml.md)
 - [ureq](ureq.md)
 - [serde_json](serde_json.md)
-- [webrtc-vad](webrtc-vad.md)

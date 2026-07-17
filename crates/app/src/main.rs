@@ -5,7 +5,6 @@
 //! wired in later development steps (see `TODO.md`).
 
 mod config;
-mod live_transcription;
 mod model_picker;
 mod ollama_model_picker;
 mod open_subtitles_dialog;
@@ -1347,12 +1346,7 @@ fn main() -> anyhow::Result<()> {
 
     let mut startup_audio_capture = audio_capture::AudioCapture::default();
     startup_audio_capture.ffmpeg_path = ffmpeg_path_from_env();
-    system_audio_capture::wire_audio_capture(
-        &window,
-        startup_audio_capture,
-        Rc::clone(&player_state),
-        Rc::clone(&selected_model),
-    );
+    system_audio_capture::wire_audio_capture(&window, startup_audio_capture);
 
     let reload_video_player = Rc::clone(&video_player);
     wire_open_subtitles_dialog(
@@ -1963,11 +1957,15 @@ mod tests {
         std::fs::remove_dir_all(&generate_dir).expect("failed to clean up temp test dir");
         std::fs::remove_dir_all(&async_dir).expect("failed to clean up temp test dir");
 
-        // When:  invoking toggle-audio-capture (Ctrl+Space) with no whisper
-        //        model selected
-        // Then:  it's a clear Error rather than a silent no-op, and no
-        //        capture is started (the button is also disabled in this
-        //        state in the UI, whisper-model-selected)
+        // When:  invoking toggle-audio-capture (Ctrl+Space), wired to a
+        //        fake ffmpeg/pactl (real pactl/PulseAudio aren't something
+        //        this test environment can rely on)
+        // Then:  the first call autodetects the monitor source and starts
+        //        a capture, writing to the path AudioCapture::start was
+        //        given; the second call stops it, and the file the fake
+        //        ffmpeg wrote is left on disk, proving the whole
+        //        start/stop -> WAV-file pipeline (TODO.md Vaihe 26) end to
+        //        end
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -1982,157 +1980,70 @@ mod tests {
             std::fs::set_permissions(&fake_pactl_path, std::fs::Permissions::from_mode(0o755))
                 .expect("failed to make fake pactl executable");
 
-            // A synthesized silence-speech-silence PCM fixture (same
-            // multi-harmonic-tone technique audio-capture's own VAD tests
-            // use) that the fake ffmpeg below streams to stdout, standing
-            // in for a real captured recording.
-            let speech_fixture_path = audio_capture_dir.join("speech.pcm");
-            let mut audio = synth_pcm_silence(300);
-            audio.extend(synth_pcm_speech(600));
-            audio.extend(synth_pcm_silence(900));
-            let bytes: Vec<u8> = audio.iter().flat_map(|s| s.to_le_bytes()).collect();
-            std::fs::write(&speech_fixture_path, &bytes).expect("failed to write PCM fixture");
-
+            // Logs its argv, writes a marker to whatever path it was given
+            // as its last argument (standing in for the WAV file a real
+            // ffmpeg would write), then blocks on stdin until the
+            // graceful quit signal arrives.
             let fake_ffmpeg_path = audio_capture_dir.join("fake-ffmpeg.sh");
             std::fs::write(
                 &fake_ffmpeg_path,
                 format!(
-                    "#!/bin/sh\necho \"$@\" > {}/ffmpeg-args.log\ncat {}\nread -r _line\nexit 0\n",
-                    audio_capture_dir.display(),
-                    speech_fixture_path.display()
+                    "#!/bin/sh\necho \"$@\" > {}/ffmpeg-args.log\nfor last in \"$@\"; do :; done\nprintf 'fake wav content' > \"$last\"\nread -r _line\nexit 0\n",
+                    audio_capture_dir.display()
                 ),
             )
             .expect("failed to write fake ffmpeg script");
             std::fs::set_permissions(&fake_ffmpeg_path, std::fs::Permissions::from_mode(0o755))
                 .expect("failed to make fake ffmpeg executable");
 
-            let fake_whisper_cli_path = audio_capture_dir.join("fake-whisper-cli.sh");
-            std::fs::write(
-                &fake_whisper_cli_path,
-                r#"#!/bin/sh
-of=""
-prev=""
-for arg in "$@"; do
-    if [ "$prev" = "-of" ]; then of="$arg"; fi
-    prev="$arg"
-done
-printf '1\n00:00:00,000 --> 00:00:01,000\n[live transcription test cue]\n' > "${of}.srt"
-"#,
-            )
-            .expect("failed to write fake whisper-cli script");
-            std::fs::set_permissions(
-                &fake_whisper_cli_path,
-                std::fs::Permissions::from_mode(0o755),
-            )
-            .expect("failed to make fake whisper-cli executable");
-            std::env::set_var("TRANGO_WHISPER_CLI_PATH", &fake_whisper_cli_path);
-
             let mut fake_audio_capture = audio_capture::AudioCapture::default();
             fake_audio_capture.ffmpeg_path = fake_ffmpeg_path;
             fake_audio_capture.pactl_path = fake_pactl_path;
             fake_audio_capture.graceful_stop_timeout = std::time::Duration::from_millis(500);
-            let (audio_capture_state, live_transcription) =
-                system_audio_capture::wire_audio_capture(
-                    &window,
-                    fake_audio_capture,
-                    Rc::clone(&player_state),
-                    Rc::clone(&selected_model),
-                );
+            let audio_capture_state =
+                system_audio_capture::wire_audio_capture(&window, fake_audio_capture);
 
-            *selected_model.borrow_mut() = None;
-            window.invoke_toggle_audio_capture();
-            assert!(!audio_capture_state.borrow().is_recording());
-            assert_eq!(
-                window.get_audio_capture_error_message(),
-                "Select a whisper model first."
-            );
-
-            // When:  invoking toggle-audio-capture with a whisper model
-            //        selected, wired to the fake ffmpeg/pactl/whisper-cli
-            //        above (real pactl/PulseAudio/whisper-cli aren't
-            //        something this test environment can rely on)
-            // Then:  the first call autodetects the monitor source and
-            //        starts a capture; the synthesized speech segment it
-            //        streams gets transcribed on a background thread and,
-            //        once live_transcription::LiveTranscription::drain
-            //        picks the result up, appears as a new cue in
-            //        PlayerState/the sentence list — proving the whole
-            //        capture -> VAD -> whisper-cli -> live cue list
-            //        pipeline (TODO.md Vaihe 28) end to end
-            let cues_before = player_state.borrow().cues.len();
-            *selected_model.borrow_mut() =
-                Some(audio_capture_dir.join("ggml-fake-model-for-capture.bin"));
             window.invoke_toggle_audio_capture();
             assert!(audio_capture_state.borrow().is_recording());
             assert_eq!(window.get_audio_capture_error_message(), "");
 
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-            while player_state.borrow().cues.len() == cues_before
-                && std::time::Instant::now() < deadline
-            {
-                live_transcription.drain(&window, &player_state);
-                std::thread::sleep(std::time::Duration::from_millis(20));
-            }
-            assert_eq!(player_state.borrow().cues.len(), cues_before + 1);
-            let new_cue = player_state.borrow().cues[cues_before].clone();
-            assert_eq!(new_cue.text, "[live transcription test cue]");
-            assert!(
-                (250..=400).contains(&new_cue.start.as_millis()),
-                "new cue started at {:?}, expected near the segment's ~300ms onset",
-                new_cue.start
-            );
-            let rows = window.get_sentence_list_rows();
-            assert_eq!(rows.row_count(), cues_before + 1);
-
             window.invoke_toggle_audio_capture();
             assert!(!audio_capture_state.borrow().is_recording());
             assert_eq!(window.get_audio_capture_error_message(), "");
 
-            // No per-segment temp WAV/SRT should be left lying around once
-            // transcription and cleanup have run (TODO.md Vaihe 28's "no
-            // audio stays on disk" requirement). Scoped to this process's
-            // own pid prefix (temp_segment_audio_path's naming scheme) so
-            // unrelated debris from other runs can't be mistaken for a
-            // leak here; polled briefly since the synthesized fixture's
-            // VAD-detected onset/settling can occasionally produce a
-            // second, very short spurious segment whose own background
-            // transcription thread may still be mid-cleanup right after
-            // stop() returns.
-            let pid_prefix = format!("trango-segment-{}-", std::process::id());
-            let leftover_deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-            let find_leftover_segment_files = || -> Vec<PathBuf> {
-                std::fs::read_dir(std::env::temp_dir())
-                    .unwrap()
-                    .filter_map(|entry| entry.ok())
-                    .map(|entry| entry.path())
-                    .filter(|path| {
-                        path.file_name()
-                            .and_then(|name| name.to_str())
-                            .is_some_and(|name| name.starts_with(&pid_prefix))
-                    })
-                    .collect()
-            };
-            let mut leftover_segment_files = find_leftover_segment_files();
-            while !leftover_segment_files.is_empty()
-                && std::time::Instant::now() < leftover_deadline
-            {
-                std::thread::sleep(std::time::Duration::from_millis(50));
-                leftover_segment_files = find_leftover_segment_files();
-            }
-            assert!(
-                leftover_segment_files.is_empty(),
-                "leftover segment files: {leftover_segment_files:?}"
+            // The recording this capture wrote should still be on disk
+            // (TODO.md Vaihe 26 records to a single file, not a temp
+            // buffer that gets cleaned up). Scoped to this process's own
+            // pid prefix (temp_recording_path's naming scheme) so
+            // unrelated debris from other runs can't be mistaken for it.
+            let pid_prefix = format!("trango-recording-{}-", std::process::id());
+            let recording_files: Vec<PathBuf> = std::fs::read_dir(std::env::temp_dir())
+                .unwrap()
+                .filter_map(|entry| entry.ok())
+                .map(|entry| entry.path())
+                .filter(|path| {
+                    path.file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name.starts_with(&pid_prefix))
+                })
+                .collect();
+            assert_eq!(recording_files.len(), 1, "{recording_files:?}");
+            assert_eq!(
+                std::fs::read_to_string(&recording_files[0]).unwrap(),
+                "fake wav content"
             );
+            for path in &recording_files {
+                std::fs::remove_file(path).expect("failed to clean up recording file");
+            }
 
-            std::env::remove_var("TRANGO_WHISPER_CLI_PATH");
             std::fs::remove_dir_all(&audio_capture_dir).expect("failed to clean up temp test dir");
 
             // When:  toggle-audio-capture is wired to an AudioCapture whose
             //        ffmpeg_path names a binary that doesn't exist (fake
             //        pactl still autodetects fine)
             // Then:  audio-capture-error-message surfaces the "ffmpeg not
-            //        found" explanation instead of only logging it — a
-            //        broken install shouldn't look like Ctrl+Space did
+            //        found" explanation instead of only logging it, so a
+            //        broken install doesn't look like Ctrl+Space did
             //        nothing
             let broken_dir = std::env::temp_dir().join("trango-test-audio-capture-error");
             let _ = std::fs::remove_dir_all(&broken_dir);
@@ -2145,13 +2056,8 @@ printf '1\n00:00:00,000 --> 00:00:01,000\n[live transcription test cue]\n' > "${
             let mut broken_audio_capture = audio_capture::AudioCapture::default();
             broken_audio_capture.ffmpeg_path = broken_dir.join("no-such-ffmpeg-binary");
             broken_audio_capture.pactl_path = fake_pactl_path;
-            let (broken_audio_capture_state, _broken_live_transcription) =
-                system_audio_capture::wire_audio_capture(
-                    &window,
-                    broken_audio_capture,
-                    Rc::clone(&player_state),
-                    Rc::clone(&selected_model),
-                );
+            let broken_audio_capture_state =
+                system_audio_capture::wire_audio_capture(&window, broken_audio_capture);
 
             window.invoke_toggle_audio_capture();
             assert!(!broken_audio_capture_state.borrow().is_recording());
@@ -2161,32 +2067,5 @@ printf '1\n00:00:00,000 --> 00:00:01,000\n[live transcription test cue]\n' > "${
 
             std::fs::remove_dir_all(&broken_dir).expect("failed to clean up temp test dir");
         }
-    }
-
-    /// `duration_ms` of silence (all-zero samples) at 16kHz — used by
-    /// `test_app_window_properties`'s live-transcription end-to-end check
-    /// to build a synthesized PCM fixture, mirroring the technique
-    /// `audio-capture`'s own VAD tests use.
-    #[cfg(unix)]
-    fn synth_pcm_silence(duration_ms: u64) -> Vec<i16> {
-        vec![0i16; duration_ms as usize * 16]
-    }
-
-    /// `duration_ms` of a synthesized multi-harmonic tone at 16kHz,
-    /// reliably classified as voice by `webrtc_vad` — identical technique
-    /// to `audio-capture`'s own VAD tests.
-    #[cfg(unix)]
-    fn synth_pcm_speech(duration_ms: u64) -> Vec<i16> {
-        let n = duration_ms as usize * 16;
-        (0..n)
-            .map(|i| {
-                let t = i as f32 / 16_000.0;
-                let s = 0.5 * (2.0 * std::f32::consts::PI * 150.0 * t).sin()
-                    + 0.3 * (2.0 * std::f32::consts::PI * 300.0 * t).sin()
-                    + 0.2 * (2.0 * std::f32::consts::PI * 450.0 * t).sin()
-                    + 0.1 * (2.0 * std::f32::consts::PI * 900.0 * t).sin();
-                (s * 8000.0) as i16
-            })
-            .collect()
     }
 }

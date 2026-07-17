@@ -9,6 +9,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.56] - 2026-07-17
+
+### Changed
+- `audio_capture::AudioCapture::start`/`stop` now record straight to a single WAV file on disk (`ffmpeg -f pulse -i <monitor-source> -ar 16000 -ac 1 <output-path>`) instead of streaming raw PCM to `ffmpeg`'s stdout for live segmentation — Ctrl+Space is back to a plain recorder toggle, like a normal recorder, with no live transcription while capturing
+
+### Removed
+- Live per-segment transcription while recording: `crates/audio-capture/src/vad.rs` (`VadSegmenter`) and the `webrtc-vad` dependency, and `crates/app/src/live_transcription.rs`. `system_audio_capture.rs` no longer requires a whisper model to be selected before Ctrl+Space starts a recording — transcribing the finished file is deferred to a later step (`TODO.md` Vaihe 29)
+
 ## [0.1.55] - 2026-07-17
 
 ### Changed
