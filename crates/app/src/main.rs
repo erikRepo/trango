@@ -21,7 +21,7 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use playback_state::{PlaybackMode, PlayerState, SeekCommand};
+use playback_state::{MediaSource, PlaybackMode, PlayerState, SeekCommand};
 use slint::Model;
 
 slint::include_modules!();
@@ -76,35 +76,58 @@ fn to_ui_mode(mode: PlaybackMode) -> PlaybackModeUi {
     match mode {
         PlaybackMode::Normal => PlaybackModeUi::Normal,
         PlaybackMode::SentenceBySentence => PlaybackModeUi::SentenceBySentence,
-        PlaybackMode::NoVideo => PlaybackModeUi::NoVideo,
     }
 }
 
-/// The inverse of [`to_ui_mode`], converting a segmented-control click's
-/// target segment back to the `playback_state` mode it names.
+/// The inverse of [`to_ui_mode`], converting the Normal/Sentence-by-sentence
+/// segmented control's clicked segment back to the `playback_state` mode it
+/// names.
 fn from_ui_mode(mode: PlaybackModeUi) -> PlaybackMode {
     match mode {
         PlaybackModeUi::Normal => PlaybackMode::Normal,
         PlaybackModeUi::SentenceBySentence => PlaybackMode::SentenceBySentence,
-        PlaybackModeUi::NoVideo => PlaybackMode::NoVideo,
     }
 }
 
-/// Owns a fresh `PlayerState` — defaulting to `SentenceBySentence` mode, the
-/// primary language-learning use case — and mirrors that default into the
-/// window's `playback-mode` property, since `app-window.slint` itself only
-/// hardcodes `Normal`. Also wires the window's `select-mode` callback
-/// (invoked by the top bar's three-way segmented control with its clicked
-/// segment's target mode) to `PlayerState::set_mode()`, mirroring each
-/// subsequent mode change back into `playback-mode` too, and the window's
-/// `toggle-translation` callback (invoked by the current-sentence card's
-/// toggle switch) to `PlayerState::toggle_translation()`, mirroring
-/// `show_translation` into the window's `show-translation` property the
-/// same way. Returns the shared state so callers can inspect it (used by
-/// tests; later steps will read it too).
+/// Converts `playback_state::MediaSource` to the Slint-generated
+/// `MediaSourceUi` mirrored into `AppWindow::media-source` — kept as a
+/// separate type from `MediaSource` for the same reason `to_ui_mode` keeps
+/// `PlaybackModeUi` separate from `PlaybackMode`.
+fn to_ui_source(source: MediaSource) -> MediaSourceUi {
+    match source {
+        MediaSource::Video => MediaSourceUi::Video,
+        MediaSource::Audio => MediaSourceUi::Audio,
+    }
+}
+
+/// The inverse of [`to_ui_source`], converting the Video/Audio segmented
+/// control's clicked segment back to the `playback_state` source it names.
+fn from_ui_source(source: MediaSourceUi) -> MediaSource {
+    match source {
+        MediaSourceUi::Video => MediaSource::Video,
+        MediaSourceUi::Audio => MediaSource::Audio,
+    }
+}
+
+/// Owns a fresh `PlayerState` — defaulting to `SentenceBySentence` mode and
+/// `Video` source, the primary language-learning use case — and mirrors
+/// those defaults into the window's `playback-mode`/`media-source`
+/// properties, since `app-window.slint` itself only hardcodes `Normal`/
+/// `Video`. Also wires the window's `select-mode` callback (invoked by the
+/// top bar's Normal/Sentence-by-sentence segmented control with its clicked
+/// segment's target mode) to `PlayerState::set_mode()`, the window's
+/// `select-media-source` callback (invoked by the top bar's Video/Audio
+/// segmented control) to `PlayerState::set_media_source()`, mirroring each
+/// subsequent change back into `playback-mode`/`media-source` respectively,
+/// and the window's `toggle-translation` callback (invoked by the current-
+/// sentence card's toggle switch) to `PlayerState::toggle_translation()`,
+/// mirroring `show_translation` into the window's `show-translation`
+/// property the same way. Returns the shared state so callers can inspect
+/// it (used by tests; later steps will read it too).
 fn wire_player_state(window: &AppWindow) -> Rc<RefCell<PlayerState>> {
     let state = Rc::new(RefCell::new(PlayerState::new()));
     window.set_playback_mode(to_ui_mode(state.borrow().mode));
+    window.set_media_source(to_ui_source(state.borrow().media_source));
     window.set_show_translation(state.borrow().show_translation);
 
     let state_for_callback = Rc::clone(&state);
@@ -115,6 +138,17 @@ fn wire_player_state(window: &AppWindow) -> Rc<RefCell<PlayerState>> {
         tracing::debug!(?mode, "playback mode selected");
         if let Some(window) = window_weak.upgrade() {
             window.set_playback_mode(to_ui_mode(mode));
+        }
+    });
+
+    let source_state = Rc::clone(&state);
+    let source_window_weak = window.as_weak();
+    window.on_select_media_source(move |ui_source| {
+        let source = from_ui_source(ui_source);
+        source_state.borrow_mut().set_media_source(source);
+        tracing::debug!(?source, "media source selected");
+        if let Some(window) = source_window_weak.upgrade() {
+            window.set_media_source(to_ui_source(source));
         }
     });
 
@@ -1556,8 +1590,9 @@ mod tests {
         assert!(!window.get_sentence_mode_active());
 
         // When:  wiring a fresh PlayerState
-        // Then:  it defaults to SentenceBySentence (the primary language-
-        //        learning use case), mirrored into playback_mode
+        // Then:  it defaults to SentenceBySentence mode (the primary
+        //        language-learning use case) and Video source, mirrored
+        //        into playback_mode/media_source
         let player_state = wire_player_state(&window);
         assert_eq!(player_state.borrow().mode, PlaybackMode::SentenceBySentence);
         assert_eq!(
@@ -1565,6 +1600,8 @@ mod tests {
             PlaybackModeUi::SentenceBySentence
         );
         assert!(window.get_sentence_mode_active());
+        assert_eq!(player_state.borrow().media_source, MediaSource::Video);
+        assert_eq!(window.get_media_source(), MediaSourceUi::Video);
 
         // When:  invoking select-mode(Normal), as a segmented control click
         //        on the "Normal" segment does
@@ -1575,13 +1612,20 @@ mod tests {
         assert_eq!(window.get_playback_mode(), PlaybackModeUi::Normal);
         assert!(!window.get_sentence_mode_active());
 
-        // When:  invoking select-mode(NoVideo), as the third segment does
-        // Then:  both switch to NoVideo, and sentence_mode_active is false
-        //        there too (only SentenceBySentence sets it)
-        window.invoke_select_mode(PlaybackModeUi::NoVideo);
-        assert_eq!(player_state.borrow().mode, PlaybackMode::NoVideo);
-        assert_eq!(window.get_playback_mode(), PlaybackModeUi::NoVideo);
-        assert!(!window.get_sentence_mode_active());
+        // When:  invoking select-media-source(Audio), as the Video/Audio
+        //        segmented control's "Audio" segment does
+        // Then:  both the Rust-owned PlayerState and the mirrored Slint
+        //        property switch to Audio, independently of playback_mode
+        window.invoke_select_media_source(MediaSourceUi::Audio);
+        assert_eq!(player_state.borrow().media_source, MediaSource::Audio);
+        assert_eq!(window.get_media_source(), MediaSourceUi::Audio);
+        assert_eq!(player_state.borrow().mode, PlaybackMode::Normal);
+
+        // When:  invoking select-media-source(Video) again
+        // Then:  both flip back to Video
+        window.invoke_select_media_source(MediaSourceUi::Video);
+        assert_eq!(player_state.borrow().media_source, MediaSource::Video);
+        assert_eq!(window.get_media_source(), MediaSourceUi::Video);
 
         // When:  invoking select-mode(SentenceBySentence) again
         // Then:  both flip back to SentenceBySentence

@@ -1,8 +1,10 @@
-//! The `PlaybackMode` enum distinguishing continuous playback,
-//! sentence-by-sentence stepping, and cue-only operation without a video.
+//! The `PlaybackMode` enum distinguishing continuous playback from
+//! sentence-by-sentence stepping — orthogonal to which source (video file or
+//! audio) is currently active, see [`crate::MediaSource`].
 
-/// Whether the player runs continuous playback, stops after each cue, or has
-/// no video loaded at all (subtitle-only, see `TODO.md` Vaihe 25).
+/// Whether the player runs continuous playback or stops after each cue,
+/// waiting for manual navigation. Independent of [`crate::MediaSource`]:
+/// both modes are valid in either source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PlaybackMode {
     /// Continuous playback, uninterrupted by cue boundaries.
@@ -10,9 +12,6 @@ pub enum PlaybackMode {
     /// Playback pauses at the end of each cue, waiting for manual navigation.
     #[default]
     SentenceBySentence,
-    /// No video loaded — cues come from a linked subtitle or, eventually,
-    /// live recording (Vaihe 26+) rather than mpv playback.
-    NoVideo,
 }
 
 #[cfg(test)]
@@ -29,11 +28,10 @@ mod tests {
     }
 
     #[test]
-    fn test_no_video_is_distinct_from_the_other_two_modes() {
-        // Given: the three PlaybackMode variants
-        // When:  comparing NoVideo against Normal and SentenceBySentence
-        // Then:  none of them are equal
-        assert_ne!(PlaybackMode::NoVideo, PlaybackMode::Normal);
-        assert_ne!(PlaybackMode::NoVideo, PlaybackMode::SentenceBySentence);
+    fn test_normal_is_distinct_from_sentence_by_sentence() {
+        // Given: the two PlaybackMode variants
+        // When:  comparing them
+        // Then:  they are not equal
+        assert_ne!(PlaybackMode::Normal, PlaybackMode::SentenceBySentence);
     }
 }

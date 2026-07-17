@@ -36,7 +36,7 @@ pub struct TrangoConfig {
     pub video_folder: Option<PathBuf>,
     /// Overrides `audio_capture::AudioCapture::default_monitor_source`'s
     /// `pactl`-based autodetection (`TODO.md` Vaihe 26) for system audio
-    /// capture in "No video" mode. `None` uses the autodetected monitor
+    /// capture in the Audio source. `None` uses the autodetected monitor
     /// source; set this if autodetection picks the wrong device or
     /// `pactl` isn't reliable in your setup — see `docs/src/usage/`.
     pub audio_monitor_source: Option<String>,

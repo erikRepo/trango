@@ -1,9 +1,9 @@
 # System audio capture
 
 `crates/audio-capture`'s `AudioCapture` captures the system's own audio
-*output* for "No video" mode's Ctrl+Space shortcut (`TODO.md` Vaihe 26) —
+*output* for the Audio source's Ctrl+Space shortcut (`TODO.md` Vaihe 26) —
 the foundation for live subtitle generation without a loaded video (see
-`docs/src/developer/specs.md`'s "No video mode: system-audio capture" for
+`docs/src/developer/specs.md`'s "Audio source: system-audio capture" for
 why this captures locally playing audio instead of downloading/scraping
 from a source like YouTube).
 

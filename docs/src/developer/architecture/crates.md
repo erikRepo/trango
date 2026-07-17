@@ -19,10 +19,12 @@ Slint/libmpv dependency.
 
 ## `crates/playback-state` (library)
 
-Depends on `subtitle`. `PlaybackMode` (`Normal` | `SentenceBySentence` |
-`NoVideo`, default `SentenceBySentence`) and `PlayerState { mode, cues,
-current_cue_index, show_translation }`; `set_mode(mode)` switches directly
-to any of the three.
+Depends on `subtitle`. `PlaybackMode` (`Normal` | `SentenceBySentence`,
+default `SentenceBySentence`) and `MediaSource` (`Video` | `Audio`, default
+`Video`) are independent enums — which source is active and how navigation
+behaves are separate choices. `PlayerState { mode, media_source, cues,
+current_cue_index, show_translation }`; `set_mode(mode)`/
+`set_media_source(source)` switch directly to either value.
 
 Cue navigation is pure logic returning a `SeekCommand`/`PlaySpanCommand`
 — "what the player should do" — rather than driving mpv directly:
@@ -58,7 +60,7 @@ and response-parsing are plain functions tested with canned strings;
 
 ## `crates/audio-capture` (library)
 
-System audio capture for "No video" mode (see [System audio
+System audio capture for the Audio source (see [System audio
 capture](system-audio-capture.md)). `AudioCapture` runs `ffmpeg -f pulse`
 as a subprocess (`start`/`stop`, the latter asking `ffmpeg` to quit
 gracefully via stdin before falling back to killing it), and

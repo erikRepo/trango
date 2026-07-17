@@ -249,7 +249,7 @@ content to justify manually inserting Unicode directional-isolate marks
 (U+2066/U+2069) around embedded Latin runs before handing cue text to
 `sentence_card.rs`.
 
-## No video mode: system-audio capture, not YouTube download/caption scraping
+## Audio source: system-audio capture, not YouTube download/caption scraping
 
 Live subtitle recording without a video (`TODO.md` Vaihe 25–31) needs some
 source of audio/text to transcribe. Two alternatives were considered and
@@ -283,25 +283,27 @@ A missing `pactl`/`ffmpeg` install only showed up in the log (usually
 invisible to a user running the packaged app), making Ctrl+Space look
 like it silently did nothing. `system_audio_capture::wire_audio_capture`
 now also mirrors every start/stop outcome into `audio-capture-error-message`
-(`AppWindow` property, shown in the "No video" placeholder), cleared on
+(`AppWindow` property, shown in the Audio source's placeholder), cleared on
 success — a small, targeted piece of Vaihe 29's UI pulled forward, without
 building the full rec/stop control it also adds.
 
-## `PlaybackMode::NoVideo` and the segmented control's third segment
+## `MediaSource`, split out from `PlaybackMode`
 
-`TODO.md` Vaihe 25 adds a third `PlaybackMode` variant for subtitle-only
-operation. Two-state `PlayerState::toggle_mode()` couldn't express a
-three-way choice, so it was replaced outright with `set_mode(mode)` — each
-of the top bar's three `SegmentButton`s now names its own target mode
-directly instead of toggling relative to the current one. The mock
-(`sketch/design_reference.dc.html#1c`) only showed two segments; "No video"
-was added as a third pill in the same segmented-control group rather than a
-separate button, keeping all three mode choices visually equivalent. The
-video area's `Rectangle` stays unconditionally instantiated even in
-`NoVideo` mode (so `video-frame-x/-y/-width/-height`, read every frame by
-`video_player.rs`, keep resolving) — the "No video" placeholder is an
-overlay child inside it, not a swapped-out sibling. Scrub bar and speed
-slider are hidden in `NoVideo` mode since there's no mpv position to show.
+Which source is active (video file vs. audio) and how navigation behaves
+(Normal vs. Sentence by sentence) are independent choices, so a single
+`PlaybackMode` enum can't express both — a three-way mode would have no way
+to select "audio source" and "Sentence by sentence" together.
+`playback_state::MediaSource` (Video/Audio) exists alongside the original
+two-variant `PlaybackMode`; `PlayerState` holds both fields independently.
+The top bar mirrors this with two separate segmented-control groups —
+Video/Audio and Normal/Sentence-by-sentence — rather than one combined
+control (not in the mock, `sketch/design_reference.dc.html#1c`, which only
+showed the mode pair). The video area's `Rectangle` stays unconditionally
+instantiated in the Audio source too (so `video-frame-x/-y/-width/-height`,
+read every frame by `video_player.rs`, keep resolving) — the Audio
+placeholder is an overlay child inside it, not a swapped-out sibling. Scrub
+bar and speed slider are hidden in the Audio source since there's no mpv
+position to show.
 
 ## Live transcription: raw PCM pipe, not a growing WAV file
 

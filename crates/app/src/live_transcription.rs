@@ -7,7 +7,7 @@
 //! [`LiveTranscription`] itself owns a repeating `slint::Timer` that drains
 //! that channel back on the UI thread, appending each batch to `PlayerState`
 //! (`PlayerState::push_cues`) and refreshing the sentence list/current-
-//! sentence card whenever any arrive — the "No video" mode sentence list
+//! sentence card whenever any arrive — the Audio source's sentence list
 //! updates live, a few hundred milliseconds behind however long each
 //! segment's `whisper-cli` call took.
 //!

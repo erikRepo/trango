@@ -6,14 +6,18 @@ use std::time::Duration;
 
 use subtitle::Cue;
 
+use crate::media_source::MediaSource;
 use crate::mode::PlaybackMode;
 
-/// The player's full observable state: current mode, loaded cues, cursor
-/// position within them, and whether translations are shown.
+/// The player's full observable state: current mode, active source, loaded
+/// cues, cursor position within them, and whether translations are shown.
 #[derive(Debug, Clone, Default)]
 pub struct PlayerState {
     /// Current playback mode.
     pub mode: PlaybackMode,
+    /// Which source panel (video or audio) is currently active — orthogonal
+    /// to `mode`.
+    pub media_source: MediaSource,
     /// The subtitle cues currently loaded for this player.
     pub cues: Vec<Cue>,
     /// Index into `cues` of the cue currently in focus, if any.
@@ -24,17 +28,23 @@ pub struct PlayerState {
 
 impl PlayerState {
     /// Builds a fresh `PlayerState`: `SentenceBySentence` mode (see
-    /// `PlaybackMode`'s default), no cues, no cursor, translation hidden.
+    /// `PlaybackMode`'s default), `Video` source (see `MediaSource`'s
+    /// default), no cues, no cursor, translation hidden.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Switches to `mode` directly — used by the top bar's segmented
-    /// control, where each of the three segments (Normal/Sentence by
-    /// sentence/No video) names its target mode explicitly rather than
-    /// cycling through a fixed pair.
+    /// Switches to `mode` directly — used by the top bar's Normal/Sentence-
+    /// by-sentence toggle, which names its target mode explicitly rather
+    /// than cycling through the pair.
     pub fn set_mode(&mut self, mode: PlaybackMode) {
         self.mode = mode;
+    }
+
+    /// Switches to `source` directly — used by the top bar's Video/Audio
+    /// source buttons, independent of `set_mode` above.
+    pub fn set_media_source(&mut self, source: MediaSource) {
+        self.media_source = source;
     }
 
     /// Replaces the loaded cues and resets the cursor to the first cue, or
@@ -53,7 +63,7 @@ impl PlayerState {
     /// already-loaded ones, re-indexing them to continue the existing
     /// sequence, and moves the cursor onto the last newly appended cue —
     /// the most recently transcribed sentence becomes the one shown as
-    /// current, since "No video" mode has no mpv position to sync from.
+    /// current, since the Audio source has no mpv position to sync from.
     /// Does nothing if `new_cues` is empty.
     pub fn push_cues(&mut self, new_cues: Vec<Cue>) {
         if new_cues.is_empty() {
@@ -112,10 +122,11 @@ mod tests {
     fn test_new_state_starts_in_sentence_by_sentence_mode_with_no_cues() {
         // Given: nothing
         // When:  building a fresh PlayerState
-        // Then:  mode is SentenceBySentence, cues are empty, cursor is None,
-        //        translation hidden
+        // Then:  mode is SentenceBySentence, source is Video, cues are
+        //        empty, cursor is None, translation hidden
         let state = PlayerState::new();
         assert_eq!(state.mode, PlaybackMode::SentenceBySentence);
+        assert_eq!(state.media_source, MediaSource::Video);
         assert!(state.cues.is_empty());
         assert_eq!(state.current_cue_index, None);
         assert!(!state.show_translation);
@@ -132,13 +143,36 @@ mod tests {
     }
 
     #[test]
-    fn test_set_mode_to_no_video() {
-        // Given: a fresh state (defaults to SentenceBySentence)
-        // When:  setting the mode to NoVideo
-        // Then:  it becomes NoVideo
+    fn test_set_media_source_switches_video_to_audio() {
+        // Given: a fresh state (defaults to Video)
+        // When:  setting the source to Audio
+        // Then:  it becomes Audio
         let mut state = PlayerState::new();
-        state.set_mode(PlaybackMode::NoVideo);
-        assert_eq!(state.mode, PlaybackMode::NoVideo);
+        state.set_media_source(MediaSource::Audio);
+        assert_eq!(state.media_source, MediaSource::Audio);
+    }
+
+    #[test]
+    fn test_set_media_source_back_to_video() {
+        // Given: a state switched to Audio
+        // When:  setting the source back to Video
+        // Then:  it is Video again
+        let mut state = PlayerState::new();
+        state.set_media_source(MediaSource::Audio);
+        state.set_media_source(MediaSource::Video);
+        assert_eq!(state.media_source, MediaSource::Video);
+    }
+
+    #[test]
+    fn test_media_source_and_playback_mode_are_independent() {
+        // Given: a fresh state
+        // When:  switching the source to Audio and the mode to Normal
+        // Then:  both changes stick independently of each other
+        let mut state = PlayerState::new();
+        state.set_media_source(MediaSource::Audio);
+        state.set_mode(PlaybackMode::Normal);
+        assert_eq!(state.media_source, MediaSource::Audio);
+        assert_eq!(state.mode, PlaybackMode::Normal);
     }
 
     #[test]

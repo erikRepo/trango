@@ -3,7 +3,7 @@
 //! per completed `audio_capture::SpeechSegment`, a background
 //! `subtitle::WhisperCliGenerator::transcribe_segment` call whose resulting
 //! cues feed `live_transcription::LiveTranscription` (`TODO.md` Vaihe 28) —
-//! "No video" mode's sentence list grows live as speech is captured. Still
+//! the Audio source's sentence list grows live as speech is captured. Still
 //! no capture-state UI beyond the error message (`TODO.md` Vaihe 29 adds a
 //! visible rec/stop control).
 

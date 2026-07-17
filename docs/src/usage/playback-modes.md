@@ -1,7 +1,9 @@
 # Playback modes
 
-TrangoPlayer has three modes, switched with the segmented control in the
-top bar: **Normal**, **Sentence by sentence**, and **No video**.
+The top bar has two independent choices, each its own segmented control:
+which **source** is active (**Video** or **Audio**), and how **navigation**
+behaves (**Normal** or **Sentence by sentence**). Any combination of the two
+works.
 
 ## Sentence by sentence
 
@@ -20,9 +22,9 @@ instead of the clock:
   own.
 
 Nothing plays until you press Space. Jumping between lines with the
-arrow keys or the sentence list only moves the playhead and leaves the
-video paused — this is deliberate, so you can look at a line as long as
-you like before deciding to hear it.
+arrow keys or the sentence list only moves the playhead and leaves
+playback paused — this is deliberate, so you can look at a line as long
+as you like before deciding to hear it.
 
 This mode needs a subtitle file to know where the sentence boundaries
 are. See [Subtitles](subtitles.md) for linking or generating one.
@@ -32,47 +34,49 @@ are. See [Subtitles](subtitles.md) for linking or generating one.
 Continuous playback with a scrub bar, closer to an ordinary video
 player. Space still works here — it's a plain play/pause toggle, with no
 per-line seeking or auto-pausing. Click or drag the scrub bar to seek to
-any point in the video.
+any point.
 
-## No video
+## Video / Audio source
 
-Selecting this mode replaces the video area with an empty placeholder —
-there's no video loaded or playing, and the scrub bar/speed slider are
-hidden since there's no playhead. The sentence list and Ctrl+A word
-analysis still work on whatever subtitle is linked.
+**Video** plays a loaded video file through the scrub bar and speed
+slider, same as always. **Audio** replaces the video area with an empty
+placeholder — there's no video loaded or playing, and the scrub bar/speed
+slider are hidden since there's no playhead. The sentence list and Ctrl+A
+word analysis still work on whatever subtitle is linked, regardless of
+which source is selected.
 
-**Ctrl+Space** starts capturing your system's own audio output (whatever
-is currently playing on your PC — a browser video, for example); pressing
-it again stops it. As speech is detected, each spoken sentence is
-transcribed in the background and appears as a new row in the sentence
-list within a few seconds — no video or subtitle file needed, and no
-audio is ever saved to disk. A whisper model must already be selected
-(see [Generating subtitles](generating-subtitles.md)) — starting without one shows
-an explanatory message instead of silently doing nothing, as does a
-failed start/stop (e.g. `pactl`/`ffmpeg` aren't installed). There's no
-on-screen indicator of an *in-progress* recording yet. See
-[Settings](settings.md) for where the monitor source comes from and how
-to override it, and note this only works on Linux with PulseAudio/
-PipeWire (see the developer docs' architecture section for why).
+**Ctrl+Space**, in the Audio source, starts capturing your system's own
+audio output (whatever is currently playing on your PC — a browser video,
+for example); pressing it again stops it. As speech is detected, each
+spoken sentence is transcribed in the background and appears as a new row
+in the sentence list within a few seconds — no video or subtitle file
+needed, and no audio is ever saved to disk. A whisper model must already
+be selected (see [Generating subtitles](generating-subtitles.md)) —
+starting without one shows an explanatory message instead of silently
+doing nothing, as does a failed start/stop (e.g. `pactl`/`ffmpeg` aren't
+installed). There's no on-screen indicator of an *in-progress* recording
+yet. See [Settings](settings.md) for where the monitor source comes from
+and how to override it, and note this only works on Linux with
+PulseAudio/PipeWire (see the developer docs' architecture section for
+why).
 
 ## Playback speed
 
-A speed slider sits below the scrub bar, always visible in either mode.
-Its right edge is normal speed (1.0x) — dragging it left only slows the
-video down, in steps down to 0.5x, marked "0.5x"/"0.75x"/"1.0x" along
-the track. Useful for hearing a fast line more clearly without losing
-per-sentence navigation in Sentence by sentence mode.
+A speed slider sits below the scrub bar, always visible in the Video
+source. Its right edge is normal speed (1.0x) — dragging it left only
+slows the video down, in steps down to 0.5x, marked "0.5x"/"0.75x"/"1.0x"
+along the track. Useful for hearing a fast line more clearly without
+losing per-sentence navigation in Sentence by sentence mode.
 
-## Common to both modes
+## Common to all combinations
 
 - **Ctrl+T** toggles a translated line underneath the current sentence,
-  if a translation subtitle is linked. Works in either mode, and is
-  purely visual — it doesn't affect playback. See
-  [Subtitles](subtitles.md).
+  if a translation subtitle is linked. Purely visual — it doesn't affect
+  playback. See [Subtitles](subtitles.md).
 - **Ctrl+A** looks up a word-by-word breakdown of the current sentence.
   See [Word-by-word analysis](word-analysis.md).
 
 The bottom hint bar always shows whichever of these shortcuts actually
-do something in the mode you're currently in.
+do something in the navigation mode you're currently in.
 
 For the full shortcut list, see [Keyboard shortcuts](keyboard-shortcuts.md).

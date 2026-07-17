@@ -18,7 +18,7 @@ you change one of these:
   [Word-by-word analysis](word-analysis.md)).
 
 An `audio_monitor_source` setting isn't picked from the UI — add it to
-`config.toml` by hand if needed. "No video" mode's Ctrl+Space recording
+`config.toml` by hand if needed. The Audio source's Ctrl+Space recording
 (see [Playback modes](playback-modes.md)) autodetects which PulseAudio/
 PipeWire "monitor" source captures your system's audio output by asking
 `pactl` for the default sink. If that picks the wrong device — for
@@ -40,7 +40,7 @@ environment variable:
 
 - `TRANGO_WHISPER_CLI_PATH` — path to the `whisper-cli` binary.
 - `TRANGO_FFMPEG_PATH` — path to the `ffmpeg` binary, used both for
-  subtitle generation and for "No video" mode's system audio capture.
+  subtitle generation and for the Audio source's system audio capture.
 
 These are environment variables rather than settings inside the app
 because they're one-time system install paths that rarely change, unlike

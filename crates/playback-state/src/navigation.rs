@@ -34,7 +34,7 @@ impl PlayerState {
     /// the cursor. Calling this repeatedly always yields the same command
     /// for the same cue. `None` outside `SentenceBySentence` mode — bounding
     /// playback to one cue's span is a `SentenceBySentence`-only concept, so
-    /// `Normal`/`NoVideo` mode ignores `current_cue_index` here even if a
+    /// `Normal` mode ignores `current_cue_index` here even if a
     /// subtitle happens to be loaded, letting the caller fall back to a
     /// plain, unbounded play/pause toggle instead (see
     /// `crates/app/src/main.rs`'s `repeat-cue` handler) — otherwise `Normal`
@@ -227,19 +227,6 @@ mod tests {
         state.set_cues(three_cues());
         state.set_mode(PlaybackMode::Normal);
         assert_eq!(state.mode, PlaybackMode::Normal);
-
-        assert_eq!(state.repeat_current_cue(), None);
-    }
-
-    #[test]
-    fn test_repeat_current_cue_in_no_video_mode_returns_none() {
-        // Given: a state in NoVideo mode with cues loaded (subtitle-only
-        //        playback, TODO.md Vaihe 25 — no mpv span to bound)
-        // When:  calling repeat_current_cue
-        // Then:  it returns None, same as Normal mode
-        let mut state = PlayerState::new();
-        state.set_cues(three_cues());
-        state.set_mode(PlaybackMode::NoVideo);
 
         assert_eq!(state.repeat_current_cue(), None);
     }

@@ -9,6 +9,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 ### Removed
 
+## [0.1.55] - 2026-07-17
+
+### Changed
+- Top bar's three-way segmented control (Normal / Sentence by sentence / No video) split into two independent segmented controls: Video/Audio for the source, and Normal/Sentence by sentence for navigation — any combination now works, whereas the old third "No video" mode couldn't be combined with sentence-by-sentence navigation. `playback_state::PlaybackMode` is back to its original two variants; a new `MediaSource` enum (`Video`/`Audio`) holds the source choice independently on `PlayerState`
+- Ctrl+Space (system audio capture) and the video-area placeholder/scrub-bar/speed-slider visibility now key off the Audio source rather than a `NoVideo` playback mode
+
 ## [0.1.54] - 2026-07-16
 
 ### Added

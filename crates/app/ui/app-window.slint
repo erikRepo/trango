@@ -1,13 +1,16 @@
 // TrangoPlayer main window shell.
 //
 // Top bar in its full visual form per STYLE.md's design tokens (wordmark,
-// segmented control, ghost buttons) — pixel reference is
-// sketch/design_reference.dc.html#1c, extended with a third "No video"
-// segment (TODO.md Vaihe 25, not in the mock). The segmented control's
-// `select-mode` callback is handled in Rust (crates/app/src/main.rs), which
-// drives playback-state::PlayerState::set_mode() and mirrors the result back
-// into `playback-mode`, which also drives the bottom `HintBar`'s
-// mode-specific content (see its own doc comment).
+// segmented controls, ghost buttons) — pixel reference is
+// sketch/design_reference.dc.html#1c, extended with a second segmented
+// control for the Video/Audio source (TODO.md Vaihe 25, not in the mock).
+// The two segmented controls are independent: `select-mode` (handled in
+// Rust, crates/app/src/main.rs) drives playback-state::PlayerState::set_mode()
+// and mirrors the result back into `playback-mode`, which also drives the
+// bottom `HintBar`'s mode-specific content; `select-media-source` drives
+// PlayerState::set_media_source() and mirrors into `media-source`, which
+// switches the video area between the mpv frame and the Audio source's
+// placeholder panel.
 
 import { LineEdit, ListView, ScrollView } from "std-widgets.slint";
 
@@ -50,14 +53,23 @@ export enum WordAnalysisBatchStatus {
 }
 
 /// Mirrors `playback_state::PlaybackMode` (`TODO.md` Vaihe 25) for the top
-/// bar's segmented control and the video/placeholder-panel switch below.
-/// Named `PlaybackModeUi` rather than `PlaybackMode` to avoid colliding with
-/// the Rust type of the same name that `crates/app/src/main.rs` imports
-/// alongside this generated module.
+/// bar's Normal/Sentence-by-sentence segmented control. Named `PlaybackModeUi`
+/// rather than `PlaybackMode` to avoid colliding with the Rust type of the
+/// same name that `crates/app/src/main.rs` imports alongside this generated
+/// module.
 export enum PlaybackModeUi {
     Normal,
     SentenceBySentence,
-    NoVideo,
+}
+
+/// Mirrors `playback_state::MediaSource` (`TODO.md` Vaihe 25) for the top
+/// bar's Video/Audio segmented control and the video/placeholder-panel
+/// switch below. Named `MediaSourceUi` for the same reason `PlaybackModeUi`
+/// is: avoids colliding with the Rust type `crates/app/src/main.rs` imports
+/// alongside this generated module.
+export enum MediaSourceUi {
+    Video,
+    Audio,
 }
 
 /// One pill in the top bar's Normal / Sentence-by-sentence segmented
@@ -1640,11 +1652,19 @@ export component AppWindow inherits Window {
     // PlayerState::new()'s real default (SentenceBySentence) immediately.
     in property <PlaybackModeUi> playback-mode: PlaybackModeUi.Normal;
     // Derived from playback-mode for nav-focus's key-pressed guard and
-    // HintBar, neither of which need to distinguish Normal from NoVideo yet
-    // (TODO.md Vaihe 25 only adds the mode, not NoVideo-specific navigation
-    // or hint content). `out` rather than private so tests can assert on it
-    // directly instead of only on the coarser playback-mode.
+    // HintBar. `out` rather than private so tests can assert on it directly
+    // instead of only on the coarser playback-mode.
     out property <bool> sentence-mode-active: root.playback-mode == PlaybackModeUi.SentenceBySentence;
+    // Mirrors playback_state::MediaSource — kept in sync from Rust by
+    // main.rs's wire_player_state, which also drives nav-focus's Ctrl+Space
+    // guard and the video-area/placeholder-panel switch below. Hardcoded to
+    // Video here as this component's own default, matching
+    // MediaSource::default().
+    in property <MediaSourceUi> media-source: MediaSourceUi.Video;
+    // Invoked by the top bar's Video/Audio segmented control with the
+    // clicked segment's target source — wired in main.rs to
+    // playback_state::PlayerState::set_media_source().
+    callback select-media-source(MediaSourceUi);
     // Whether crates/app/src/video_player.rs has an mpv OpenGL render
     // context underlay active. While true, the video area below is left
     // fully transparent so that underlay (drawn straight into the window's
@@ -1845,7 +1865,7 @@ export component AppWindow inherits Window {
     // by crates/app/src/word_analysis.rs's wire_word_analysis_popup.
     callback show-word-analysis();
     // Ctrl+Space (TODO.md Vaihe 26): starts/stops system-audio capture in
-    // "No video" mode — gated to that mode in nav-focus's key-pressed
+    // the Audio source — gated to that source in nav-focus's key-pressed
     // handler below, since capture has no meaning while a video is loaded.
     // Set from Rust by crates/app/src/system_audio_capture.rs. Only a
     // start/stop signal for now; no rec/stop control or filename display
@@ -1856,8 +1876,8 @@ export component AppWindow inherits Window {
     callback toggle-audio-capture();
     // Mirrors the most recent start/stop attempt's outcome: "" on success,
     // an explanatory message on failure (e.g. "pactl not found...").
-    // Cleared again on the next successful attempt. Shown in the "No
-    // video" placeholder below.
+    // Cleared again on the next successful attempt. Shown in the Audio
+    // source's placeholder below.
     in property <string> audio-capture-error-message: "";
     callback close-word-analysis-popup();
     in property <bool> is-word-analysis-popup-open: false;
@@ -1926,10 +1946,10 @@ export component AppWindow inherits Window {
                 accept
             } else if (event.modifiers.control && event.text == " ") {
                 // Starts/stops system-audio capture (TODO.md Vaihe 26,
-                // "No video" mode only) — checked before the plain-Space
+                // Audio source only) — checked before the plain-Space
                 // branch below, since Ctrl held or not still reports the
                 // same " " text.
-                if (root.playback-mode == PlaybackModeUi.NoVideo) {
+                if (root.media-source == MediaSourceUi.Audio) {
                     root.toggle-audio-capture();
                 }
                 accept
@@ -2001,30 +2021,54 @@ export component AppWindow inherits Window {
                         }
                     }
 
-                    Rectangle {
-                        background: Palette.segmented-bg;
-                        border-radius: 7px;
+                    HorizontalLayout {
+                        spacing: 8px;
 
-                        HorizontalLayout {
-                            padding: 3px;
-                            spacing: 2px;
+                        // Video/Audio source, independent of the Normal/
+                        // Sentence-by-sentence toggle below it (TODO.md
+                        // Vaihe 25) — separate segmented-control group since
+                        // the two choices are orthogonal.
+                        Rectangle {
+                            background: Palette.segmented-bg;
+                            border-radius: 7px;
 
-                            SegmentButton {
-                                label: "Normal";
-                                active: root.playback-mode == PlaybackModeUi.Normal;
-                                clicked => { root.select-mode(PlaybackModeUi.Normal); }
+                            HorizontalLayout {
+                                padding: 3px;
+                                spacing: 2px;
+
+                                SegmentButton {
+                                    label: "Video";
+                                    active: root.media-source == MediaSourceUi.Video;
+                                    clicked => { root.select-media-source(MediaSourceUi.Video); }
+                                }
+
+                                SegmentButton {
+                                    label: "Audio";
+                                    active: root.media-source == MediaSourceUi.Audio;
+                                    clicked => { root.select-media-source(MediaSourceUi.Audio); }
+                                }
                             }
+                        }
 
-                            SegmentButton {
-                                label: "Sentence by sentence";
-                                active: root.playback-mode == PlaybackModeUi.SentenceBySentence;
-                                clicked => { root.select-mode(PlaybackModeUi.SentenceBySentence); }
-                            }
+                        Rectangle {
+                            background: Palette.segmented-bg;
+                            border-radius: 7px;
 
-                            SegmentButton {
-                                label: "No video";
-                                active: root.playback-mode == PlaybackModeUi.NoVideo;
-                                clicked => { root.select-mode(PlaybackModeUi.NoVideo); }
+                            HorizontalLayout {
+                                padding: 3px;
+                                spacing: 2px;
+
+                                SegmentButton {
+                                    label: "Normal";
+                                    active: root.playback-mode == PlaybackModeUi.Normal;
+                                    clicked => { root.select-mode(PlaybackModeUi.Normal); }
+                                }
+
+                                SegmentButton {
+                                    label: "Sentence by sentence";
+                                    active: root.playback-mode == PlaybackModeUi.SentenceBySentence;
+                                    clicked => { root.select-mode(PlaybackModeUi.SentenceBySentence); }
+                                }
                             }
                         }
                     }
@@ -2063,20 +2107,20 @@ export component AppWindow inherits Window {
                         // exactly this box instead of the whole window — see
                         // `render_frame`'s doc comment. Kept unconditionally
                         // instantiated (rather than swapped out via `if`) even
-                        // in NoVideo mode, so those geometry accessors keep
-                        // resolving; the No video placeholder below is just an
-                        // overlay child instead.
+                        // in the Audio source, so those geometry accessors
+                        // keep resolving; the Audio placeholder below is just
+                        // an overlay child instead.
                         background: root.video-loaded ? transparent : Palette.window-bg;
 
-                        if root.playback-mode == PlaybackModeUi.NoVideo : VerticalLayout {
+                        if root.media-source == MediaSourceUi.Audio : VerticalLayout {
                             // Placeholder for TODO.md Vaihe 25 — a rec/stop
                             // control, filename, and live transcript land
-                            // here in Vaihe 29.
+                            // here in Vaihe 27-29.
                             alignment: center;
                             spacing: 8px;
 
                             Text {
-                                text: "No video — subtitle-only mode";
+                                text: "Audio source — no video loaded";
                                 color: Palette.muted-text;
                                 font-family: "Inter";
                                 font-size: 13px;
@@ -2094,14 +2138,14 @@ export component AppWindow inherits Window {
                         }
                     }
 
-                    if root.playback-mode != PlaybackModeUi.NoVideo : ScrubBar {
+                    if root.media-source != MediaSourceUi.Audio : ScrubBar {
                         current-time-label: root.current-time-label;
                         duration-label: root.duration-label;
                         progress: root.scrub-progress;
                         seek-requested(fraction) => { root.seek-requested(fraction); }
                     }
 
-                    if root.playback-mode != PlaybackModeUi.NoVideo : SpeedSlider {
+                    if root.media-source != MediaSourceUi.Audio : SpeedSlider {
                         current-speed: root.current-playback-speed;
                         current-speed-label: root.current-playback-speed-label;
                         speed-requested(fraction) => { root.speed-requested(fraction); }

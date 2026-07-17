@@ -522,140 +522,123 @@ kieltä Ollama-promptissa.
 
 ---
 
-## Huom: Vaiheet 25–31 jakavat yhden työhaaran
+## Huom: Vaiheet 25–30 jakavat yhden työhaaran
 
 Poiketen CLAUDE.md:n oletustyönkulusta (oma feature-branch + PR per vaihe):
-Vaiheet 25–31 tehdään **samalla työhaaralla** alusta loppuun, koska ne
-muodostavat yhden loogisen kokonaisuuden (system-audio-pohjainen
-live-tekstitysgenerointi). Jokaisen vaiheen jälkeen tehdään silti commit +
-push samalle haaralle normaalisti (CLAUDE.md:n "valmis"-kriteerit pätevät
-muuten sellaisenaan). `gh pr create` ajetaan vasta kun käyttäjä erikseen
-pyytää PR:n avaamista — ei automaattisesti minkään yksittäisen vaiheen
-jälkeen.
+Vaiheet 25–30 tehdään **samalla työhaaralla** alusta loppuun, koska ne
+muodostavat yhden loogisen kokonaisuuden (audiolähteen lisääminen
+soittimeen videolähteen rinnalle). Jokaisen vaiheen jälkeen tehdään silti
+commit + push samalle haaralle normaalisti (CLAUDE.md:n "valmis"-kriteerit
+pätevät muuten sellaisenaan). `gh pr create` ajetaan vasta kun käyttäjä
+erikseen pyytää PR:n avaamista — ei automaattisesti minkään yksittäisen
+vaiheen jälkeen.
 
-**Poikkeus versiointiin:** `Cargo.toml`-versio bumpataan **kertaalleen**
-koko Vaiheet 25–31 -kokonaisuudelle, ei joka vaiheessa erikseen — tehty jo
-Vaihe 25:ssä (0.1.52). Vaiheet 26–31 **eivät** bumppaa versiota uudelleen;
-ne vain täydentävät samaa `releasenotes.md`:n `[0.1.52]`-merkintää omilla
-`Added`/`Changed`/`Fixed`-riveillään sitä mukaa kun kukin vaihe valmistuu.
+**Suunnanmuutos (2026-07-17):** Alkuperäinen Vaihe 25–31 (versiot
+0.1.52–0.1.54) rakensi live-tekstitysgenerointia: jatkuva audiovirta
+pilkottiin VADilla puhesegmenteiksi lennossa, ja jokainen segmentti
+transkriboitiin omana whisper-cli-kutsunaan heti valmistuttuaan. Tämä
+osoittautui tarpeettoman monimutkaiseksi. Suunnitelma yksinkertaistui:
+nauhoitus tuottaa yhden eheän äänitiedoston levylle — kuin tavallinen
+nauhuri — ja tekstitys generoidaan siitä erillisellä napilla vasta kun
+käyttäjä niin haluaa, samalla kertakutsu-periaatteella kuin videosta jo
+nyt (Vaihe 20/21.5). Samalla top barin kolmen segmentin
+Normal/SentenceBySentence/NoVideo-kontrolli puretaan kahdeksi
+riippumattomaksi valinnaksi: Video/Audio-lähde ja Normal/Sentence-by-
+sentence-navigointi, joka toimii identtisesti kummassakin lähteessä.
+Alla olevat Vaiheet 25–30 korvaavat kokonaan alkuperäiset Vaiheet 25–31;
+VAD-segmentointi (`crates/audio-capture/src/vad.rs`, `webrtc-vad`-
+riippuvuus) ja live-transkriptio (`crates/app/src/live_transcription.rs`,
+suuri osa `crates/app/src/system_audio_capture.rs`:stä) puretaan alla
+olevissa vaiheissa sitä mukaa kun tilalle tuleva toteutus valmistuu.
 
 ---
 
-## Vaihe 25 — `PlaybackMode`: kolmas tila "No video" (pelkkä tekstitys)
+## Vaihe 25 — Top bar: Video/Audio-lähdenapit + oma Normal/SbS-toggle
 
-**Tavoite:** `PlaybackMode`-enumiin kolmas variantti pelkän tekstitystiedoston
-ajamiselle ilman videota — puhdas tilalaajennus, ei vielä audiokaappausta
-eikä generointia. Pohjustaa Vaiheet 26–31.
+**Tavoite:** Top bar jakaa kaksi toisistaan riippumatonta valintaa: mikä
+lähde on käytössä (Video/Audio) ja miten lauseissa navigoidaan (Normal/
+Sentence by sentence). Puhdas tilalaajennus/-uudelleenjärjestely, ei vielä
+audiokaappausta eikä generointia. Pohjustaa Vaiheet 26–30.
 
 Taustaa (keskusteltu, ei alun perin SPEC.md:ssä): tavoite on tuottaa
 tekstitystiedosto ilman että sovellus koskaan lataa tai tallentaa itse
 videota/audiota mistään ulkopuolisesta lähteestä (esim. YouTube) — vain
-käyttäjän omalta koneelta jo soivan äänen kaappaus, ja pelkkä lopputulos-
-`.srt` jää talteen. Sekä YouTuben videon suora toisto/lataus (`yt-dlp`) että
-YouTuben valmiiden tekstitysten kaappaaminen harkittiin ja hylättiin
-tekijänoikeussyistä (kirjaa päätös `docs/src/developer/specs.md`:hen tämän
-vaiheen yhteydessä, ks. myös alla "Ei tässä listassa").
+käyttäjän omalta koneelta jo soivan äänen kaappaus tai jo olemassa olevan
+paikallisen äänitiedoston avaaminen, ja lopputulos-`.srt` jää talteen.
+Sekä YouTuben videon suora toisto/lataus (`yt-dlp`) että YouTuben valmiiden
+tekstitysten kaappaaminen harkittiin ja hylättiin tekijänoikeussyistä
+(päätös kirjattu `docs/src/developer/specs.md`:hen, ks. myös alla "Ei
+tässä listassa").
 
-- `crates/playback-state`: `PlaybackMode { Normal, SentenceBySentence, NoVideo }`
-  (tai vastaava nimi — päätä tässä vaiheessa), `PlayerState` toimii jo nyt
-  ilman video-riippuvuutta (`cues`-kenttä ei koskaan viitannut videoon),
-  joten tämä on lähinnä UI-puolen laajennus
-- Top bar segmented control: kolmas segmentti "No video" (tai oma nappi
-  erillään Normal/SbS-parista — päätä visuaalinen ratkaisu tässä vaiheessa,
-  ei ole mockissa valmiina)
-- Slint: video-widgetin paikalle vaihtoehtoinen paneeli tässä tilassa (tyhjä
-  placeholder riittää tässä vaiheessa — sisältö tulee Vaiheessa 29)
+- `crates/playback-state`: `PlaybackMode` palautuu kahteen arvoon
+  (`Normal`, `SentenceBySentence`) — nykyinen `NoVideo`-variantti poistuu
+  sieltä kokonaan. Uusi, siitä riippumaton tyyppi kuvaa kumpi lähde/paneeli
+  on näkyvissä (esim. `MediaSource { Video, Audio }` — päätä nimi tässä
+  vaiheessa). `PlayerState` toimii jo nyt ilman video-riippuvuutta
+  (`cues`-kenttä ei koskaan viitannut videoon)
+- Top bar: kaksi nappia "Video"/"Audio" valitsemassa lähteen, erillinen
+  Normal/Sentence-by-sentence-toggle näkyy ja toimii identtisesti
+  molemmissa lähteissä (visuaalinen sijoittelu ei ole mockissa valmiina —
+  päätä tässä vaiheessa)
+- Nykyinen kolmen segmentin `SegmentButton`-rivi (`crates/app/ui/app-window.slint`,
+  `PlaybackModeUi::NoVideo`) puretaan kahdeksi erilliseksi kontrolliksi;
+  `crates/app/src/main.rs`:n mode-mäppäys (`to_playback_mode_ui`/`from_...`)
+  päivittyy vastaavasti
+- Slint: video-widgetin paikalle vaihtoehtoinen paneeli Audio-lähteessä
+  (tyhjä placeholder riittää tässä vaiheessa — sisältö tulee Vaiheissa
+  27–29)
 - Sentence list ja Ctrl+A pysyvät kytkettyinä samaan `PlayerState.cues`:iin
-  kuin ennenkin — ei muutoksia niihin tässä vaiheessa (validointi Vaihe 31:ssä)
+  kuin ennenkin — ei muutoksia niihin tässä vaiheessa (validointi
+  Vaihe 30:ssä)
 
-**Voit ajaa/testata:** `cargo test -p playback-state` kattaa uuden
-tilavaihdon; `cargo run -p trango` — top barista voi valita "No video"
--tilan, video-alue korvautuu placeholderilla, sentence list pysyy tyhjänä
-kunnes cueita on ladattu.
+**Voit ajaa/testata:** `cargo test -p playback-state` kattaa Normal/SbS-
+tilavaihdon (kahtena arvona) erillään lähdevalinnasta; `cargo run -p
+trango` — top barista voi valita Video/Audio-lähteen ja Normal/SbS-
+navigoinnin täysin toisistaan riippumatta, Audio-lähteessä video-alue
+korvautuu placeholderilla.
 
 ---
 
-## Vaihe 26 — Järjestelmä-audion kaappaus taustalla (ilman VAD/whisperia)
+## Vaihe 26 — Järjestelmä-audion kaappaus yhdeksi eheäksi tiedostoksi
 
-**Tavoite:** Taustaprosessi joka nauhoittaa PC:n ulostulevan äänen (esim.
-selaimessa soivan YouTube-videon) WAV-tiedostoon/-virtaan, ilman
-transkriptiota vielä — puhdas kaappauskomponentti, testattavissa erikseen
-tallentamalla lyhyt nauhoite ja tarkistamalla tiedosto syntyy.
+**Tavoite:** Ctrl+Space käynnistää/pysäyttää järjestelmän ulostulevan
+äänen (esim. selaimessa soivan videon) nauhoituksen yhdeksi eheäksi
+äänitiedostoksi levylle — kuin tavallinen nauhuri, ei live-segmentointia
+eikä transkriptiota. Korvaa alkuperäisen Vaihe 26:n stdout-striimauksen.
 
-- Kaappaus `ffmpeg -f pulse -i <monitor-source>` -aliprosessina (sama
-  kuvio kuin `extract_audio`:ssa Vaiheessa 21.5, ei uutta Cargo-
-  riippuvuutta) — monitorilähteen tunnistus/oletus `pactl`:n kautta tai
-  konfiguroitava `config.toml`:iin jos autodetect ei ole luotettava.
-  **Kysy käyttäjältä ensin** jos päädytään käyttämään audiokirjastoa
-  (esim. `cpal`) suoran ffmpeg-subprosessin sijaan
-- Vain Linux/PulseAudio-PipeWire tässä vaiheessa — dokumentoi
-  `docs/src/architecture/`-sivulla ettei Windows/macOS-tukea ole vielä
-  (poikkeus CLAUDE.md:n "molemmat alustat" -periaatteeseen, koska
-  audiokaappaus on alustariippuvaisempi kuin `Command::new`-kutsu)
-- Ctrl+Space käynnistää/pysäyttää kaappauksen (pelkkä start/stop-signaali
-  tässä vaiheessa, ei vielä UI-tilaa näkyvissä — se on Vaihe 29)
+- `audio_capture::AudioCapture::start`/`stop`: `ffmpeg -f pulse -i
+  <monitor-source>` kirjoittaa suoraan kohdetiedostoon (esim. `ffmpeg ...
+  output.wav`) sen sijaan että PCM striimataan stdoutiin taustasäikeen
+  luettavaksi (0.1.54:n malli puretaan) — monitorilähteen tunnistus
+  ennallaan `pactl`:n kautta / `config.toml`:n `audio_monitor_source`
+- `crates/audio-capture/src/vad.rs` ja `webrtc-vad`-riippuvuus poistetaan
+  kokonaan käyttämättöminä (CLAUDE.md "Ei dead codea") — kirjaa poisto
+  `releasenotes.md`:n `Removed`-riville ja poista
+  `docs/src/developer/technology/webrtc-vad.md`
+- `crates/app/src/live_transcription.rs` poistetaan; `system_audio_capture.rs`
+  yksinkertaistuu pelkäksi start/stop-ohjaukseksi ilman per-segmentti-
+  whisper-cli-kutsuja
+- Edelleen vain Linux/PulseAudio-PipeWire (ei muutosta aiempaan)
 
-**Voit ajaa/testata:** `cargo run -p trango` No video -tilassa, Ctrl+Space
+**Voit ajaa/testata:** `cargo run -p trango` Audio-lähteessä, Ctrl+Space
 käynnistää ja pysäyttää nauhoituksen — manuaalisesti todennettavissa että
-WAV-tiedosto syntyy ja sisältää soineen äänen (kuten Vaihe 11, ei helposti
-yksikkötestattavissa laitteistoriippuvuuden takia).
+yksi WAV-tiedosto syntyy kokonaisuudessaan levylle ja sisältää soineen
+äänen (kuten Vaihe 11, ei helposti yksikkötestattavissa
+laitteistoriippuvuuden takia).
 
 ---
 
-## Vaihe 27 — VAD-segmentointi kaapatusta audiosta
+## Vaihe 27 — Rec/stop-ohjaus, tiedostonimi ja tallennuskansio
 
-**Tavoite:** Jatkuva audiovirta pilkotaan puhesegmenteiksi taukojen
-kohdalta, jotta whisper saa järkevän kokoisia, lauserajoihin osuvia paloja
-(ei kiinteää liukuvaa ikkunaa — kiinteä ikkuna tuottaa katkonaisia/
-toistuvia tuloksia lauserajoilla).
+**Tavoite:** Audio-paneeliin näkyvä rec/stop-kontrolli, tiedostonimen
+näyttö ja hallinta, tallennuskansion persistointi.
 
-- Selvitä ja **kysy käyttäjältä** ennen valintaa: whisper.cpp:n oma
-  `--vad`/`--vad-model`-tuki (jos ajettavassa whisper-cli-versiossa
-  saatavilla) vs. erillinen VAD-kirjasto/-crate (esim. `webrtc-vad`) vs.
-  yksinkertainen energiakynnys-pohjainen oma toteutus. Ensimmäinen
-  vaihtoehto olisi linjassa Vaiheen 21.5 periaatteen kanssa (ei uutta
-  Cargo-riippuvuutta, ulkoinen työkalu hoitaa raskaan työn)
-- Segmentin raja tuottaa audiopätkän + aikaleiman (suhteessa nauhoituksen
-  alkuun) seuraavalle vaiheelle
-
-**Voit ajaa/testata:** Yksikkötestit segmentointilogiikalle syntetisoidulla/
-testifixtuuri-audiolla (hiljaisuus-puhe-hiljaisuus-kuvio) — tarkistaa että
-segmenttirajat osuvat odotettuihin kohtiin.
-
----
-
-## Vaihe 28 — Per-segmentti whisper-cli-transkriptio → live cue-lista
-
-**Tavoite:** Jokainen VAD:n tuottama segmentti transkriboidaan omana
-whisper-cli-kutsunaan (sama kuvio kuin Vaihe 21.5:ssä, vain useammin ja
-lyhyemmille pätkille), tulos liitetään `PlayerState.cues`:iin lennossa —
-sentence list päivittyy automaattisesti koska se lukee samaa dataa.
-
-- Segmentin WAV poistetaan heti transkription jälkeen — **ei audiota jää
-  levylle prosessin päätyttyä**, vain lopullinen `.srt` (sama periaate
-  kuin `generate()`:n siivous Vaiheessa 21.5, mutta per-segmentti eikä
-  vain lopussa)
-- Cuen `start`/`end`-aikaleimat suhteessa nauhoituksen alkuhetkeen
-- Taustasäie (kuten Vaihe 21.5), UI ei jäädy pitkän nauhoituksen aikana
-
-**Voit ajaa/testata:** `cargo run -p trango` No video -tilassa — puhuttu
-ääni (tai toistettu testivideo taustalla) tuottaa uusia rivejä sentence
-listiin muutaman sekunnin viiveellä; levyltä tarkistettavissa ettei
-väliaikaisia WAV-tiedostoja jää roikkumaan ajon jälkeen.
-
----
-
-## Vaihe 29 — Rec/stop-ohjaus, tiedostonimi ja tallennuskansio
-
-**Tavoite:** No video -tilan paneeliin näkyvä rec/stop-kontrolli,
-tiedostonimen näyttö ja hallinta, kansion persistointi.
-
-- Video-widgetin paikalla oleva paneeli näyttää: rec/stop-tila (Ctrl+Space
-  kytkettynä samaan komentoon kuin nappi), kohdetiedoston nimi
-- Oletustiedostonimi päiväys+aikaleima (esim. `2026-07-16_18-42-05.srt`),
+- Video-widgetin paikalla oleva Audio-paneeli näyttää: rec/stop-tila
+  (Ctrl+Space kytkettynä samaan komentoon kuin nappi), kohdetiedoston nimi
+- Oletustiedostonimi päiväys+aikaleima (esim. `2026-07-17_18-42-05.wav`),
   lukittu nauhoituksen ajaksi; uudelleennimeäminen sallittu vasta stopin
   jälkeen
-- `config.rs`: uusi `subtitle_recording_folder: Option<PathBuf>` samalla
+- `config.rs`: uusi `audio_recording_folder: Option<PathBuf>` samalla
   periaatteella kuin `video_folder` — muistaa viimeksi käytetyn kansion,
   oletuksena sinne seuraavallakin kerralla
 
@@ -666,37 +649,68 @@ samaa kansiota kuin edellinen.
 
 ---
 
-## Vaihe 30 — Jäljessä-mittari (transkription lag-indikaattori)
+## Vaihe 28 — Äänitiedoston avaaminen ja toisto videon tapaan
 
-**Tavoite:** Näkyvä indikaattori siitä kuinka paljon transkriptio on
-jäljessä kaapatusta äänestä (kaapattu aika − viimeksi transkriboidun cuen
-loppuaika).
+**Tavoite:** Audio-lähteessä voi nauhoittamisen lisäksi avata olemassa
+olevan äänitiedoston (esim. edellisen nauhoituksen) ja toistaa sitä
+samoin napein kuin video-lähteessä: seek, scrub bar, play/pause.
 
-- Yksinkertainen teksti tai palkki paneelissa ("7s jäljessä"), päivittyy
-  jokaisen uuden cuen myötä (Vaihe 28:n dataa, ei uutta laskentaa
-  tarvitse muualta)
+- "Open audio…" -dialogi samalla `FileListDialog`-komponentilla kuin Open
+  Video (Vaihe 18), listaa äänitiedostot (esim. `.wav`) kansiosta
+- Ladattu äänitiedosto soitetaan samaa libmpv-pohjaista
+  `video_player.rs`-polkua pitkin kuin video (mpv toistaa äänitiedostoja
+  natiivisti ilman videoraitaa) — scrub bar, aika, play/pause toimivat
+  identtisesti video-lähteen kanssa
+- Auto-match: valinnan yhteydessä etsi samanniminen `.srt` samasta
+  kansiosta (sama käytös kuin Vaihe 18:ssa)
+- Vaihe 26–27:n tuore nauhoitus latautuu automaattisesti soittimeen
+  stopin jälkeen samaa polkua pitkin
 
-**Voit ajaa/testata:** `cargo run -p trango` — nopeasti puhuttu pätkä
-kasvattaa lag-lukemaa hetkellisesti, palautuu kun whisper saa kiinni.
+**Voit ajaa/testata:** `cargo run -p trango` — Audio-lähteessä "Open
+audio…" listaa kansion äänitiedostot, valinta lataa tiedoston soittimeen
+ja sitä voi toistaa/seekata scrub barilla kuten videota.
 
 ---
 
-## Vaihe 31 — Validointi: sentence list ja Ctrl+A ilman videota
+## Vaihe 29 — "Generate subtitles" koko äänitiedostolle
+
+**Tavoite:** Kun äänitiedosto (nauhoitettu tai avattu) on ladattu
+Audio-lähteeseen, sille voi generoida tekstityksen yhdellä napilla — koko
+tiedosto kerralla, ei per-segmentti kuten alkuperäisessä Vaihe 28:ssa.
+Sama Idle/Generating/Done/Error-tilakone kuin Vaihe 20/21.5:ssä videon
+puolella; ei uutta rajapintaa, vain uusi kutsupaikka.
+
+- "Generate subtitles" käytettävissä Audio-lähteessä heti kun
+  äänitiedosto on ladattu (sama Open Subtitles -dialogin nappi kuin
+  video-lähteessä, jos se sopii sellaisenaan — päätä tässä vaiheessa)
+- `WhisperCliGenerator` ajetaan suoraan äänitiedostolle ilman
+  `extract_audio`-välivaihetta, koska lähde on jo pelkkää ääntä
+- Tulos asettaa `PlayerState.cues` samalla tavalla kuin video-lähteen
+  generointi
+
+**Voit ajaa/testata:** `cargo run -p trango` — Audio-lähteessä ladatulle
+äänitiedostolle "Generate subtitles" tuottaa `.srt`:n taustalla, tila
+näkyy Generating→Done, sentence list täyttyy generoinnin valmistuttua.
+
+---
+
+## Vaihe 30 — Validointi: sentence list ja Ctrl+A Audio-lähteessä
 
 **Tavoite:** Varmista ja dokumentoi (ei uutta toiminnallisuutta
 odotettavasti) että kaikki cue-pohjaiset ominaisuudet — sentence list,
-Ctrl+A-sana-analyysi, käännöstoggle — toimivat identtisesti No video
--tilassa kuin video-tiloissa, koska ne eivät koskaan riippuneet videosta.
+Ctrl+A-sana-analyysi, käännöstoggle — toimivat identtisesti Audio-
+lähteessä kuin Video-lähteessä, koska ne eivät koskaan riippuneet
+videosta.
 
-- E2E-testi (kuten Vaihe 13): lataa/generoi cuet ilman videota, aja
-  navigointi + Ctrl+A-analyysi läpi samalla tavalla kuin video-tiloissa
+- E2E-testi (kuten Vaihe 13): lataa/generoi cuet Audio-lähteessä, aja
+  navigointi + Ctrl+A-analyysi läpi samalla tavalla kuin Video-lähteessä
 - Jos jokin osa yllättäen riippuukin videon olemassaolosta (esim. joku
   `Option`-purku joka olettaa videon ladatuksi), korjaa se tässä vaiheessa
 
 **Voit ajaa/testata:** `scripts/test.sh` — uusi E2E-testi vahvistaa cue-
-pohjaisten ominaisuuksien toimivan ilman videota; manuaalinen läpikäynti
-No video -tilassa: sentence list scrollautuu/korostaa, Ctrl+A avaa
-analyysin, käännöstoggle toimii jos käännösanalyysi on ajettu.
+pohjaisten ominaisuuksien toimivan Audio-lähteessä; manuaalinen läpikäynti:
+sentence list scrollautuu/korostaa, Ctrl+A avaa analyysin, käännöstoggle
+toimii jos käännösanalyysi on ajettu.
 
 ---
 
@@ -710,5 +724,10 @@ analyysin, käännöstoggle toimii jos käännösanalyysi on ajettu.
   harkittu ja hylätty tekijänoikeussyistä (ks. Vaihe 25 tausta)
 - YouTuben valmiiden tekstitysten kaappaus (`yt-dlp --write-auto-sub
   --skip-download`) — harkittu, ei valittu; järjestelmä-audion kaappaus
-  (Vaiheet 26–31) valittiin sen sijaan, koska se toimii kaikille
+  (Vaiheet 26–30) valittiin sen sijaan, koska se toimii kaikille
   äänilähteille eikä riipu YouTube-spesifisestä rajapinnasta
+- Live/per-segmentti-tekstitysgenerointi VAD-segmentoinnin varassa
+  (alkuperäiset Vaiheet 27–28, versiot 0.1.53–0.1.54, `webrtc-vad`) —
+  toteutettu ja sittemmin purettu liian monimutkaisena; korvattu
+  suoraviivaisemmalla nauhoita-koko-tiedosto-ja-generoi-erikseen-mallilla
+  (ks. Vaihe 25:n "Suunnanmuutos"-huomautus yllä)
