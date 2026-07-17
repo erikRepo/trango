@@ -8,7 +8,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use playback_state::{PlaybackMode, PlayerState};
+use playback_state::{MediaSource, PlaybackMode, PlayerState};
 use subtitle::{parse_srt, Cue};
 
 /// Path to `test-media/sample/`, shared by both fixture files this test uses.
@@ -135,6 +135,77 @@ fn test_normal_mode_sync_cue_to_time_tracks_continuous_playback_over_sample_cues
     // When:  syncing to a time after the last cue's end (video played to
     //        completion)
     // Then:  the cursor stays on the last cue rather than clearing
+    state.sync_cue_to_time(cues[4].end + Duration::from_secs(1));
+    assert_eq!(state.current_cue_index, Some(4));
+}
+
+#[test]
+fn test_cue_navigation_over_sample_cues_is_identical_in_audio_source() {
+    // Given: PlayerState loaded with the real sample cues, switched to the
+    //        Audio source (`TODO.md` Vaihe 30) — cue navigation only ever
+    //        reads `cues`/`current_cue_index`, never `media_source`, so
+    //        this walks the exact same steps as
+    //        test_cue_navigation_walks_all_sample_cues_forward_and_back
+    //        does in the default Video source
+    // When:  walking next_cue() to the end and previous_cue() back
+    // Then:  the cursor and every returned command match the fixture's real
+    //        timings, exactly as they do in the Video source
+    let cues = sample_cues();
+    let mut state = PlayerState::new();
+    state.set_cues(cues.clone());
+    state.set_media_source(MediaSource::Audio);
+    assert_eq!(state.media_source, MediaSource::Audio);
+    assert_eq!(state.current_cue_index, Some(0));
+
+    for (expected_index, cue) in cues.iter().enumerate().skip(1) {
+        let command = state
+            .next_cue()
+            .unwrap_or_else(|| panic!("expected a seek command advancing to cue {expected_index}"));
+        assert_eq!(state.current_cue_index, Some(expected_index));
+        assert_eq!(command.start, cue.start);
+    }
+    assert_eq!(state.next_cue(), None);
+
+    for (expected_index, cue) in cues.iter().enumerate().rev().skip(1) {
+        let command = state.previous_cue().unwrap_or_else(|| {
+            panic!("expected a seek command going back to cue {expected_index}")
+        });
+        assert_eq!(state.current_cue_index, Some(expected_index));
+        assert_eq!(command.start, cue.start);
+    }
+    assert_eq!(state.previous_cue(), None);
+
+    let repeat_command = state.repeat_current_cue().expect("a cue is in focus");
+    assert_eq!(repeat_command.start, cues[0].start);
+    assert_eq!(repeat_command.end, cues[0].end);
+}
+
+#[test]
+fn test_sync_cue_to_time_over_sample_cues_is_identical_in_audio_source() {
+    // Given: PlayerState in Normal mode over the real sample cues, switched
+    //        to the Audio source — mirrors
+    //        test_normal_mode_sync_cue_to_time_tracks_continuous_playback_over_sample_cues
+    //        to confirm sync_cue_to_time's timestamp-to-cursor math doesn't
+    //        depend on which source is active either
+    // When:  syncing to timestamps before, inside, in a gap between, and
+    //        after all sample cues
+    // Then:  the cursor follows the same as it does in the Video source
+    let cues = sample_cues();
+    let mut state = PlayerState::new();
+    state.set_cues(cues.clone());
+    state.set_media_source(MediaSource::Audio);
+    state.set_mode(PlaybackMode::Normal);
+
+    state.sync_cue_to_time(Duration::from_millis(100));
+    assert_eq!(state.current_cue_index, None);
+
+    state.sync_cue_to_time(cues[2].start + Duration::from_millis(200));
+    assert_eq!(state.current_cue_index, Some(2));
+
+    let gap_time = cues[2].end + (cues[3].start - cues[2].end) / 2;
+    state.sync_cue_to_time(gap_time);
+    assert_eq!(state.current_cue_index, Some(2));
+
     state.sync_cue_to_time(cues[4].end + Duration::from_secs(1));
     assert_eq!(state.current_cue_index, Some(4));
 }

@@ -336,6 +336,20 @@ handler rejects any value that isn't a single plain path component so a
 pasted value containing `/` or `..` can't move the file outside its
 recording folder.
 
+## Validated: cue-based features never depended on video
+
+`TODO.md` Vaihe 30 asked whether sentence list, Ctrl+A word analysis, and
+the translation toggle secretly assumed a video was loaded. They don't:
+`sentence_card.rs`/`sentence_list.rs`/`word_analysis.rs` and
+`playback_state::PlayerState`'s cue navigation only ever read
+`cues`/`current_cue_index`/`show_translation`, never `MediaSource` or
+anything video-specific — confirmed by grepping for `MediaSource` outside
+`main.rs`'s own source-selection code and `video_player.rs`. No code
+changed; `crates/app/tests/e2e_sentence_navigation.rs` and
+`main.rs`'s `test_app_window_properties` gained tests that switch to the
+Audio source mid-run and repeat the same navigation/Ctrl+A/sentence-list
+assertions, locking the guarantee in against regressions.
+
 ## CI: PR checks and .deb release automation
 
 Pull requests against `master` run `.github/workflows/ci.yml`: fmt +

@@ -1783,6 +1783,79 @@ mod tests {
         assert!(!player_state.borrow().show_translation);
         assert!(!window.get_show_translation());
 
+        // When:  wiring the Ctrl+A word-analysis popup (`TODO.md` Vaihe 24)
+        //        with a model selected and a cache file already holding an
+        //        analysis for the current cue, then requesting it — once
+        //        in the (default) Video source and again after switching
+        //        to Audio (`TODO.md` Vaihe 30)
+        // Then:  both requests open the popup with the identical cached
+        //        analysis, proving wire_word_analysis_popup never reads
+        //        media_source at all, exactly as reading its source shows
+        let word_analysis_cache_path = ::word_analysis::cache_path_for(&subtitle_path);
+        let mut word_analysis_cache = ::word_analysis::AnalysisCache {
+            model: "llama3.1:8b".to_string(),
+            entries: std::collections::HashMap::new(),
+        };
+        word_analysis_cache.entries.insert(
+            player_state.borrow().cues[0].index,
+            ::word_analysis::WordAnalysis {
+                words: vec![::word_analysis::WordEntry {
+                    word: "Welcome".to_string(),
+                    translation: "Tervetuloa".to_string(),
+                    pronunciation: "wel-kuhm".to_string(),
+                }],
+            },
+        );
+        ::word_analysis::save_cache(&word_analysis_cache_path, &word_analysis_cache);
+
+        let word_analysis_current_media = Rc::new(RefCell::new(CurrentMedia {
+            media_path: None,
+            subtitle_path: Some(subtitle_path.clone()),
+            translation_path: None,
+        }));
+        let word_analysis_selected_model: Rc<RefCell<Option<String>>> =
+            Rc::new(RefCell::new(Some("llama3.1:8b".to_string())));
+        let word_analysis_target_language = Rc::new(RefCell::new("English".to_string()));
+        wire_word_analysis_popup(
+            &window,
+            &player_state,
+            &word_analysis_current_media,
+            Rc::clone(&word_analysis_selected_model),
+            Rc::clone(&word_analysis_target_language),
+        );
+
+        assert_eq!(player_state.borrow().media_source, MediaSource::Video);
+        window.invoke_show_word_analysis();
+        assert_eq!(window.get_word_analysis_status(), WordAnalysisStatus::Done);
+        let word_analysis_rows = window.get_word_analysis_rows();
+        assert_eq!(word_analysis_rows.row_count(), 1);
+        assert_eq!(
+            word_analysis_rows.row_data(0).expect("row 0 exists").word,
+            "Welcome"
+        );
+        window.invoke_close_word_analysis_popup();
+        assert!(!window.get_is_word_analysis_popup_open());
+
+        // When:  switching to the Audio source
+        // Then:  the sentence list is untouched (on-select-media-source only
+        //        ever sets media_source — see wire_player_state), so it
+        //        still holds the same 5 rows with the same cue current
+        window.invoke_select_media_source(MediaSourceUi::Audio);
+        assert_eq!(window.get_sentence_list_rows().row_count(), 5);
+        assert_eq!(window.get_sentence_list_current_index(), 0);
+
+        window.invoke_show_word_analysis();
+        assert_eq!(window.get_word_analysis_status(), WordAnalysisStatus::Done);
+        let word_analysis_rows = window.get_word_analysis_rows();
+        assert_eq!(word_analysis_rows.row_count(), 1);
+        assert_eq!(
+            word_analysis_rows.row_data(0).expect("row 0 exists").word,
+            "Welcome"
+        );
+        window.invoke_close_word_analysis_popup();
+        window.invoke_select_media_source(MediaSourceUi::Video);
+        let _ = std::fs::remove_file(&word_analysis_cache_path);
+
         // When:  opening the Open dialog with an Up row, a subfolder, and
         //        two video entries
         // Then:  it opens with the folder label mirrored, one row per
