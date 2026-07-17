@@ -34,3 +34,4 @@
     - [toml](developer/technology/toml.md)
     - [ureq](developer/technology/ureq.md)
     - [serde_json](developer/technology/serde_json.md)
+    - [chrono](developer/technology/chrono.md)

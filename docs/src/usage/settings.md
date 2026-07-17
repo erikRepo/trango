@@ -16,6 +16,8 @@ you change one of these:
   [Generating subtitles automatically](generating-subtitles.md)).
 - The Ollama model and target language you last picked (see
   [Word-by-word analysis](word-analysis.md)).
+- The folder your last Audio-source recording was saved to — new
+  recordings default there too (see [Playback modes](playback-modes.md)).
 
 An `audio_monitor_source` setting isn't picked from the UI — add it to
 `config.toml` by hand if needed. The Audio source's Ctrl+Space recording

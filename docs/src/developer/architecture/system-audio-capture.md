@@ -41,9 +41,15 @@ exact source name (see `docs/src/usage/settings.md`).
 
 ## Recording, not live transcription
 
-`crates/app/src/system_audio_capture.rs` just toggles `AudioCapture`
-start/stop — no per-segment processing happens while a recording is in
-progress. `TODO.md` Vaihe 27 onward build a rec/stop UI control, a
-persisted recording folder, and (Vaihe 29) a "Generate subtitles" pass
-over the finished file, reusing the same `WhisperCliGenerator` path
-video files already use.
+`crates/app/src/system_audio_capture.rs` toggles `AudioCapture` start/stop
+— no per-segment processing happens while a recording is in progress.
+Each recording gets a default `<date>_<time>.wav` filename (local time),
+written into `config.rs`'s `audio_recording_folder` (the last folder used,
+falling back to the current working directory the first time). The
+filename is locked while recording; once stopped, editing the Audio
+panel's filename field and pressing Enter renames the file on disk
+(rejecting anything that isn't a plain filename, so it can't be moved
+outside the recording folder). `TODO.md` Vaihe 28 onward add opening/
+playing a finished recording and (Vaihe 29) a "Generate subtitles" pass
+over it, reusing the same `WhisperCliGenerator` path video files already
+use.

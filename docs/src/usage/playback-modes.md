@@ -45,20 +45,18 @@ slider are hidden since there's no playhead. The sentence list and Ctrl+A
 word analysis still work on whatever subtitle is linked, regardless of
 which source is selected.
 
-**Ctrl+Space**, in the Audio source, starts capturing your system's own
-audio output (whatever is currently playing on your PC — a browser video,
-for example); pressing it again stops it. As speech is detected, each
-spoken sentence is transcribed in the background and appears as a new row
-in the sentence list within a few seconds — no video or subtitle file
-needed, and no audio is ever saved to disk. A whisper model must already
-be selected (see [Generating subtitles](generating-subtitles.md)) —
-starting without one shows an explanatory message instead of silently
-doing nothing, as does a failed start/stop (e.g. `pactl`/`ffmpeg` aren't
-installed). There's no on-screen indicator of an *in-progress* recording
-yet. See [Settings](settings.md) for where the monitor source comes from
-and how to override it, and note this only works on Linux with
-PulseAudio/PipeWire (see the developer docs' architecture section for
-why).
+**Ctrl+Space**, in the Audio source — or the Audio panel's Rec/Stop
+button — starts capturing your system's own audio output (whatever is
+currently playing on your PC, e.g. a browser video) to a single WAV file;
+pressing it again stops the recording. The panel shows the recording
+state and a default `<date>_<time>.wav` filename while it runs; once
+stopped, you can rename the file by editing that field and pressing
+Enter. A failed start/stop (e.g. `pactl`/`ffmpeg` aren't installed) shows
+an explanatory message instead of silently doing nothing. See
+[Settings](settings.md) for where the monitor source and recording folder
+come from and how to override them, and note this only works on Linux
+with PulseAudio/PipeWire (see the developer docs' architecture section
+for why).
 
 ## Playback speed
 

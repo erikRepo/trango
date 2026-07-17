@@ -5,6 +5,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ## [Unreleased]
 
 ### Added
+- Audio source's placeholder panel now shows a Rec/Stop button (same `toggle-audio-capture` command as Ctrl+Space) and the current recording's filename (`TODO.md` Vaihe 27): a default `<date>_<time>.wav` name locked for the duration of the recording, editable afterwards (Enter commits a rename on disk)
+- `config.rs`: `audio_recording_folder` remembers the last folder a recording was written to, defaulting new recordings there (falls back to the current working directory on first use, same principle as `video_folder`)
+
 ### Changed
 ### Fixed
 ### Removed

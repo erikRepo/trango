@@ -318,6 +318,17 @@ now just has `ffmpeg` write directly to a WAV file; `TODO.md` Vaihe 29
 runs "Generate subtitles" over that file as a whole, the same
 `WhisperCliGenerator` path video files use.
 
+## Recording filename: `chrono` dependency, rename only after stop
+
+`TODO.md` Vaihe 27's default filename needs a local (not UTC) date+time —
+the std library has no timezone-aware formatting for `SystemTime`, so
+`chrono` was added to `crates/app` rather than hand-rolling civil-date
+math. The filename is locked while a recording is in progress and only
+renamable afterwards, matching a normal recorder's behavior; the rename
+handler rejects any value that isn't a single plain path component so a
+pasted value containing `/` or `..` can't move the file outside its
+recording folder.
+
 ## CI: PR checks and .deb release automation
 
 Pull requests against `master` run `.github/workflows/ci.yml`: fmt +

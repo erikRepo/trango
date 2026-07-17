@@ -373,6 +373,7 @@ mod tests {
             ollama_target_language: None,
             video_folder: None,
             audio_monitor_source: None,
+            audio_recording_folder: None,
         };
 
         assert_eq!(default_start_folder(&config), dir);
@@ -395,6 +396,7 @@ mod tests {
             ollama_target_language: None,
             video_folder: None,
             audio_monitor_source: None,
+            audio_recording_folder: None,
         };
 
         let folder = default_start_folder(&config);

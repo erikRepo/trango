@@ -5216,6 +5216,7 @@ version = "0.1.56"
 dependencies = [
  "anyhow",
  "audio-capture",
+ "chrono",
  "libmpv2",
  "playback-state",
  "serde",

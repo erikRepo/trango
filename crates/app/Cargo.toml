@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1"
 audio-capture = { path = "../audio-capture" }
+chrono = "0.4"
 libmpv2 = { version = "6", features = ["render"] }
 playback-state = { path = "../playback-state" }
 serde = { version = "1", features = ["derive"] }

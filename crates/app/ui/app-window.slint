@@ -180,6 +180,46 @@ component GhostButton {
     }
 }
 
+/// Rec/stop control for the Audio source's placeholder panel (`TODO.md`
+/// Vaihe 27): filled red with a "Stop" label while `recording`, bordered
+/// with a "Rec" label otherwise. Wired to the same `toggle-audio-capture`
+/// callback as Ctrl+Space, so either one starts/stops the same capture.
+component RecordButton {
+    in property <bool> recording;
+    callback clicked;
+
+    min-width: layout.min-width;
+    min-height: layout.min-height;
+
+    Rectangle {
+        border-width: 1px;
+        border-radius: 6px;
+        border-color: root.recording ? Palette.error-text : Palette.border;
+        background: root.recording ? Palette.error-text : transparent;
+
+        layout := HorizontalLayout {
+            padding-left: 14px;
+            padding-right: 14px;
+            padding-top: 7px;
+            padding-bottom: 7px;
+
+            Text {
+                text: root.recording ? "■ Stop" : "● Rec";
+                color: root.recording ? white : Palette.error-text;
+                font-family: "JetBrains Mono";
+                font-size: 12px;
+                font-weight: 600;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        TouchArea {
+            clicked => { root.clicked(); }
+        }
+    }
+}
+
 /// The right-hand sentence panel's top card: "Sentence N / M" (uppercase,
 /// mono, muted) left / "Secondary subtitle" label + toggle switch right,
 /// above the current cue's original-language text, a divider, and (while
@@ -1865,21 +1905,36 @@ export component AppWindow inherits Window {
     // sentence currently shown in the current-sentence card. Set from Rust
     // by crates/app/src/word_analysis.rs's wire_word_analysis_popup.
     callback show-word-analysis();
-    // Ctrl+Space (TODO.md Vaihe 26): starts/stops system-audio capture in
-    // the Audio source — gated to that source in nav-focus's key-pressed
-    // handler below, since capture has no meaning while a video is loaded.
-    // Set from Rust by crates/app/src/system_audio_capture.rs. Only a
-    // start/stop signal for now; no rec/stop control or filename display
-    // yet (TODO.md Vaihe 29) — but a failure (e.g. missing pactl/ffmpeg)
-    // is surfaced via audio-capture-error-message below, rather than only
-    // logged, so a broken setup doesn't look like Ctrl+Space silently did
-    // nothing.
+    // Ctrl+Space (TODO.md Vaihe 26) and the Audio panel's RecordButton
+    // (Vaihe 27): starts/stops system-audio capture in the Audio source —
+    // gated to that source in nav-focus's key-pressed handler below, since
+    // capture has no meaning while a video is loaded. Set from Rust by
+    // crates/app/src/system_audio_capture.rs. A failure (e.g. missing
+    // pactl/ffmpeg) is surfaced via audio-capture-error-message below,
+    // rather than only logged, so a broken setup doesn't look like
+    // Ctrl+Space/the button silently did nothing.
     callback toggle-audio-capture();
     // Mirrors the most recent start/stop attempt's outcome: "" on success,
-    // an explanatory message on failure (e.g. "pactl not found...").
-    // Cleared again on the next successful attempt. Shown in the Audio
-    // source's placeholder below.
+    // an explanatory message on failure (e.g. "pactl not found..." or a
+    // failed rename). Cleared again on the next successful attempt. Shown
+    // in the Audio source's placeholder below.
     in property <string> audio-capture-error-message: "";
+    // Whether a system-audio capture is currently in progress (TODO.md
+    // Vaihe 27) — drives RecordButton's Rec/Stop state and locks the
+    // filename field below against edits while true. Set from Rust by
+    // crates/app/src/system_audio_capture.rs alongside every successful
+    // start/stop.
+    in property <bool> is-audio-recording: false;
+    // The current (or, once stopped, most recently finished) recording's
+    // filename, e.g. "2026-07-17_18-42-05.wav" — "" before any recording
+    // has been made this session. Set from Rust on every successful
+    // start/rename; editable via the filename LineEdit below once
+    // is-audio-recording is false.
+    in property <string> audio-recording-filename: "";
+    // Fired (Enter key) when the filename field is edited after a
+    // recording has stopped; renames the file on disk to match. Ignored by
+    // Rust while is-audio-recording is true.
+    callback rename-audio-recording-file(string);
     callback close-word-analysis-popup();
     in property <bool> is-word-analysis-popup-open: false;
     in property <WordAnalysisStatus> word-analysis-status: WordAnalysisStatus.Idle;
@@ -2118,11 +2173,11 @@ export component AppWindow inherits Window {
                         background: root.video-loaded ? transparent : Palette.window-bg;
 
                         if root.media-source == MediaSourceUi.Audio : VerticalLayout {
-                            // Placeholder for TODO.md Vaihe 25 — a rec/stop
-                            // control, filename, and live transcript land
-                            // here in Vaihe 27-29.
+                            // Rec/stop control, filename display/rename
+                            // (TODO.md Vaihe 27); playback of a finished or
+                            // opened recording lands in Vaihe 28.
                             alignment: center;
-                            spacing: 8px;
+                            spacing: 10px;
 
                             Text {
                                 text: "Audio source — no video loaded";
@@ -2130,6 +2185,25 @@ export component AppWindow inherits Window {
                                 font-family: "Inter";
                                 font-size: 13px;
                                 horizontal-alignment: center;
+                            }
+
+                            HorizontalLayout {
+                                alignment: center;
+                                spacing: 8px;
+
+                                RecordButton {
+                                    recording: root.is-audio-recording;
+                                    clicked => { root.toggle-audio-capture(); }
+                                }
+
+                                if root.audio-recording-filename != "" : LineEdit {
+                                    width: 220px;
+                                    text: root.audio-recording-filename;
+                                    enabled: !root.is-audio-recording;
+                                    font-size: 12px;
+                                    horizontal-alignment: center;
+                                    accepted(text) => { root.rename-audio-recording-file(text); }
+                                }
                             }
 
                             if root.audio-capture-error-message != "" : Text {

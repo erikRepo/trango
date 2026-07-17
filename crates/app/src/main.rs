@@ -1964,15 +1964,27 @@ mod tests {
         //        a capture, writing to the path AudioCapture::start was
         //        given; the second call stops it, and the file the fake
         //        ffmpeg wrote is left on disk, proving the whole
-        //        start/stop -> WAV-file pipeline (TODO.md Vaihe 26) end to
-        //        end
+        //        start/stop -> WAV-file pipeline (TODO.md Vaihe 26/27) end
+        //        to end, including the visible filename and its rename
+        //        after stopping
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
 
+            // The toggle handler persists `audio_recording_folder` to the
+            // real config file on every successful start (TODO.md Vaihe
+            // 27) — saved/restored around this block so running the test
+            // suite doesn't leave the developer's real config pointing at
+            // a temp test directory.
+            let original_config = config::load();
+
             let audio_capture_dir = std::env::temp_dir().join("trango-test-audio-capture-toggle");
             let _ = std::fs::remove_dir_all(&audio_capture_dir);
             std::fs::create_dir_all(&audio_capture_dir).expect("failed to create temp test dir");
+            config::save(&config::TrangoConfig {
+                audio_recording_folder: Some(audio_capture_dir.clone()),
+                ..original_config.clone()
+            });
 
             let fake_pactl_path = audio_capture_dir.join("fake-pactl.sh");
             std::fs::write(&fake_pactl_path, "#!/bin/sh\necho 'fake-sink'\n")
@@ -2006,37 +2018,40 @@ mod tests {
             window.invoke_toggle_audio_capture();
             assert!(audio_capture_state.borrow().is_recording());
             assert_eq!(window.get_audio_capture_error_message(), "");
+            assert!(window.get_is_audio_recording());
+            let recorded_filename = window.get_audio_recording_filename().to_string();
+            assert!(recorded_filename.ends_with(".wav"), "{recorded_filename}");
+            let recorded_path = audio_capture_dir.join(&recorded_filename);
+            assert!(recorded_path.is_file(), "{recorded_path:?}");
 
             window.invoke_toggle_audio_capture();
             assert!(!audio_capture_state.borrow().is_recording());
             assert_eq!(window.get_audio_capture_error_message(), "");
+            assert!(!window.get_is_audio_recording());
 
             // The recording this capture wrote should still be on disk
             // (TODO.md Vaihe 26 records to a single file, not a temp
-            // buffer that gets cleaned up). Scoped to this process's own
-            // pid prefix (temp_recording_path's naming scheme) so
-            // unrelated debris from other runs can't be mistaken for it.
-            let pid_prefix = format!("trango-recording-{}-", std::process::id());
-            let recording_files: Vec<PathBuf> = std::fs::read_dir(std::env::temp_dir())
-                .unwrap()
-                .filter_map(|entry| entry.ok())
-                .map(|entry| entry.path())
-                .filter(|path| {
-                    path.file_name()
-                        .and_then(|name| name.to_str())
-                        .is_some_and(|name| name.starts_with(&pid_prefix))
-                })
-                .collect();
-            assert_eq!(recording_files.len(), 1, "{recording_files:?}");
+            // buffer that gets cleaned up), under the timestamped default
+            // filename shown while recording.
             assert_eq!(
-                std::fs::read_to_string(&recording_files[0]).unwrap(),
+                std::fs::read_to_string(&recorded_path).unwrap(),
                 "fake wav content"
             );
-            for path in &recording_files {
-                std::fs::remove_file(path).expect("failed to clean up recording file");
-            }
+
+            // When:  the filename field is edited (Enter) after the
+            //        recording has stopped
+            // Then:  the file on disk is renamed to match, and the
+            //        displayed filename reflects the new name
+            window.invoke_rename_audio_recording_file("der_anruf.wav".into());
+            assert_eq!(window.get_audio_recording_filename(), "der_anruf.wav");
+            assert!(!recorded_path.exists());
+            assert_eq!(
+                std::fs::read_to_string(audio_capture_dir.join("der_anruf.wav")).unwrap(),
+                "fake wav content"
+            );
 
             std::fs::remove_dir_all(&audio_capture_dir).expect("failed to clean up temp test dir");
+            config::save(&original_config);
 
             // When:  toggle-audio-capture is wired to an AudioCapture whose
             //        ffmpeg_path names a binary that doesn't exist (fake
