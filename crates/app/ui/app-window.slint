@@ -1,16 +1,16 @@
 // TrangoPlayer main window shell.
 //
 // Top bar in its full visual form per STYLE.md's design tokens (wordmark,
-// segmented controls, ghost buttons) — pixel reference is
-// sketch/design_reference.dc.html#1c, extended with a second segmented
-// control for the Video/Audio source (TODO.md Vaihe 25, not in the mock).
-// The two segmented controls are independent: `select-mode` (handled in
-// Rust, crates/app/src/main.rs) drives playback-state::PlayerState::set_mode()
-// and mirrors the result back into `playback-mode`, which also drives the
-// bottom `HintBar`'s mode-specific content; `select-media-source` drives
-// PlayerState::set_media_source() and mirrors into `media-source`, which
-// switches the video area between the mpv frame and the Audio source's
-// placeholder panel.
+// segmented control, toggle, ghost buttons) — pixel reference is
+// sketch/design_reference.dc.html#1c, extended with a segmented control for
+// the Video/Audio source and a "Sentence by sentence" toggle (TODO.md Vaihe
+// 25, not in the mock). The two controls are independent: `select-mode`
+// (handled in Rust, crates/app/src/main.rs) drives
+// playback-state::PlayerState::set_mode() and mirrors the result back into
+// `playback-mode`, which also drives the bottom `HintBar`'s mode-specific
+// content; `select-media-source` drives PlayerState::set_media_source() and
+// mirrors into `media-source`, which switches the video area between the
+// mpv frame and the Audio source's placeholder panel.
 
 import { LineEdit, ListView, ScrollView } from "std-widgets.slint";
 
@@ -52,11 +52,11 @@ export enum WordAnalysisBatchStatus {
     Error,
 }
 
-/// Mirrors `playback_state::PlaybackMode` (`TODO.md` Vaihe 25) for the top
-/// bar's Normal/Sentence-by-sentence segmented control. Named `PlaybackModeUi`
-/// rather than `PlaybackMode` to avoid colliding with the Rust type of the
-/// same name that `crates/app/src/main.rs` imports alongside this generated
-/// module.
+/// Mirrors `playback_state::PlaybackMode` for the top bar's "Sentence by
+/// sentence" toggle (on = `SentenceBySentence`, off = `Normal` — "Normal" is
+/// never shown in the UI). Named `PlaybackModeUi` rather than `PlaybackMode`
+/// to avoid colliding with the Rust type of the same name that
+/// `crates/app/src/main.rs` imports alongside this generated module.
 export enum PlaybackModeUi {
     Normal,
     SentenceBySentence,
@@ -72,8 +72,8 @@ export enum MediaSourceUi {
     Audio,
 }
 
-/// One pill in the top bar's Normal / Sentence-by-sentence segmented
-/// control; filled with the accent color while `active`, muted otherwise.
+/// One pill in the top bar's Video / Audio source segmented control; filled
+/// with the accent color while `active`, muted otherwise.
 component SegmentButton {
     in property <string> label;
     in property <bool> active;
@@ -1710,8 +1710,9 @@ export component AppWindow inherits Window {
     // crates/app/src/sentence_list.rs — see SentenceListCard above.
     in property <[SentenceListRow]> sentence-list-rows: [];
     in property <int> sentence-list-current-index: -1;
-    // Invoked by the top bar's segmented control with the clicked segment's
-    // target mode — wired in main.rs to playback_state::PlayerState::set_mode().
+    // Invoked by the top bar's "Sentence by sentence" toggle with the
+    // resulting target mode — wired in main.rs to
+    // playback_state::PlayerState::set_mode().
     callback select-mode(PlaybackModeUi);
     // Invoked by the current-sentence card's Translation toggle switch —
     // wired in main.rs's wire_player_state to
@@ -2022,12 +2023,15 @@ export component AppWindow inherits Window {
                     }
 
                     HorizontalLayout {
-                        spacing: 8px;
+                        // Wider than the 8px used for buttons within a
+                        // group — visually separates the Video/Audio
+                        // segmented control from the unrelated Sentence-by-
+                        // sentence toggle next to it.
+                        spacing: 24px;
 
-                        // Video/Audio source, independent of the Normal/
-                        // Sentence-by-sentence toggle below it (TODO.md
-                        // Vaihe 25) — separate segmented-control group since
-                        // the two choices are orthogonal.
+                        // Video/Audio source, independent of the Sentence-
+                        // by-sentence toggle next to it — separate control
+                        // group since the two choices are orthogonal.
                         Rectangle {
                             background: Palette.segmented-bg;
                             border-radius: 7px;
@@ -2050,24 +2054,25 @@ export component AppWindow inherits Window {
                             }
                         }
 
-                        Rectangle {
-                            background: Palette.segmented-bg;
-                            border-radius: 7px;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            cross-axis-alignment: center;
 
-                            HorizontalLayout {
-                                padding: 3px;
-                                spacing: 2px;
+                            Text {
+                                text: "Sentence by sentence";
+                                color: Palette.muted-text;
+                                font-family: "Inter";
+                                font-size: 13px;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                            }
 
-                                SegmentButton {
-                                    label: "Normal";
-                                    active: root.playback-mode == PlaybackModeUi.Normal;
-                                    clicked => { root.select-mode(PlaybackModeUi.Normal); }
-                                }
-
-                                SegmentButton {
-                                    label: "Sentence by sentence";
-                                    active: root.playback-mode == PlaybackModeUi.SentenceBySentence;
-                                    clicked => { root.select-mode(PlaybackModeUi.SentenceBySentence); }
+                            ToggleSwitch {
+                                on: root.sentence-mode-active;
+                                toggled => {
+                                    root.select-mode(root.sentence-mode-active
+                                        ? PlaybackModeUi.Normal
+                                        : PlaybackModeUi.SentenceBySentence);
                                 }
                             }
                         }
