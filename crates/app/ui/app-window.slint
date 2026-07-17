@@ -184,6 +184,11 @@ component GhostButton {
 /// Vaihe 27): filled red with a "Stop" label while `recording`, bordered
 /// with a "Rec" label otherwise. Wired to the same `toggle-audio-capture`
 /// callback as Ctrl+Space, so either one starts/stops the same capture.
+/// Plain text labels only, deliberately no "●"/"■" glyph prefix — mixing a
+/// non-ASCII glyph into "JetBrains Mono" text measured for an
+/// auto-sized (`layout.min-width`) button clipped the label's last
+/// character, since the glyph's actual rendered (fallback-font) width
+/// didn't match what was measured for layout.
 component RecordButton {
     in property <bool> recording;
     callback clicked;
@@ -204,7 +209,7 @@ component RecordButton {
             padding-bottom: 7px;
 
             Text {
-                text: root.recording ? "■ Stop" : "● Rec";
+                text: root.recording ? "Stop" : "Rec";
                 color: root.recording ? white : Palette.error-text;
                 font-family: "JetBrains Mono";
                 font-size: 12px;
