@@ -12,6 +12,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Changed
 ### Fixed
 - Switching the top bar's Video/Audio source no longer leaves whatever was playing in the panel being hidden running silently behind the other one: clicking either segment now pauses mpv first. The visible panel's ScrubBar/SpeedSlider/mpv picture also only show once the actually-loaded file matches that panel (`AppWindow::media-ready`) — previously a loaded video's scrub bar and picture could bleed into the Audio panel just because *some* file was loaded, since both sources always shared one mpv instance
+- Switching to the Audio source now also blanks the current-sentence card and sentence list until a matching file is loaded there, instead of leaving the Video source's sentence stuck on screen — Ctrl+A reports "No sentence is currently in focus" rather than analyzing that stale sentence. Cue navigation itself still never depends on which source is visible; only what's shown/analyzed as "current" does now
 ### Removed
 
 ## [0.1.52] - 2026-07-17

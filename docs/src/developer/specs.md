@@ -369,6 +369,29 @@ rejected as unnecessarily large for the actual complaint — the one shared
 mpv instance never caused problems the previous UI just failed to gate
 against.
 
+## Sentence card/list and Ctrl+A also gated by panel_content_ready
+
+Once playback controls were gated by `media-ready` above, the same
+complaint showed up one layer up: switching to a not-yet-loaded Audio
+panel left the Video source's current-sentence card and sentence list
+sitting on screen untouched, and Ctrl+A would still analyze that stale
+sentence — the "Validated: cue-based features never depended on video"
+decision above had made this a deliberate, tested guarantee (switching
+source never touches cues), which now reads as the bug rather than the
+fix. Revised: `main.rs`'s `panel_content_ready` (same `media-source !=
+Audio || media-ready` condition as the Slint gate) decides what the
+sentence card/list *display*, blanking it to an empty `PlayerState`'s
+placeholder in `on_select_media_source` when the newly-selected panel
+isn't ready, and restoring the real one when switching back to a source
+that is. The Ctrl+A handler checks the same condition before reading
+`current_cue_index`, so it reports "No sentence is currently in focus"
+rather than reusing the other source's cache entry. `PlayerState.cues`
+itself is never touched — only what's displayed/analyzed — so cue
+navigation's source-independence (the `e2e_sentence_navigation.rs`
+guarantee) still holds unchanged; only the two Slint-facing consumers
+that read the *current* cue for on-screen display now also check which
+panel is showing it.
+
 ## CI: PR checks and .deb release automation
 
 Pull requests against `master` run `.github/workflows/ci.yml`: fmt +

@@ -149,6 +149,19 @@ fn wire_player_state(window: &AppWindow) -> Rc<RefCell<PlayerState>> {
         tracing::debug!(?source, "media source selected");
         if let Some(window) = source_window_weak.upgrade() {
             window.set_media_source(to_ui_source(source));
+            // Re-derives the sentence card/list display for the panel just
+            // switched to: blanked (an empty PlayerState, the same
+            // placeholder shown before anything's ever loaded) if it's the
+            // Audio source and nothing loaded there yet matches, otherwise
+            // the real state — restoring it when switching back to a
+            // source that's ready. See panel_content_ready's doc comment.
+            let display_state = if panel_content_ready(&window) {
+                source_state.borrow().clone()
+            } else {
+                PlayerState::new()
+            };
+            sentence_card::update_sentence_card(&window, &display_state);
+            sentence_list::update_sentence_list(&window, &display_state);
         }
     });
 
@@ -445,6 +458,19 @@ fn media_kind_for_source(source: MediaSource) -> open_media_dialog::MediaKind {
         MediaSource::Video => open_media_dialog::MediaKind::Video,
         MediaSource::Audio => open_media_dialog::MediaKind::Audio,
     }
+}
+
+/// Whether the visible panel's own sentence content should be shown —
+/// mirrors `app-window.slint`'s `ScrubBar`/`SpeedSlider` gating (`media-
+/// source != Audio || media-ready`): the Video source's is always ready,
+/// the Audio source's only once its loaded file's kind actually matches.
+/// Used by `wire_player_state`'s `on_select_media_source` handler to blank
+/// the current-sentence card/sentence list when switching to a not-yet-
+/// loaded Audio panel, rather than leaving the previous source's sentence
+/// stuck on screen, and by `wire_word_analysis_popup` so Ctrl+A doesn't
+/// analyze a sentence that isn't actually being shown.
+fn panel_content_ready(window: &AppWindow) -> bool {
+    window.get_media_source() != MediaSourceUi::Audio || window.get_media_ready()
 }
 
 /// The `MediaSourceUi` panel that shows a file of `kind` once loaded —
@@ -1345,11 +1371,19 @@ fn wire_word_analysis_popup(
             window.set_is_word_analysis_popup_open(true);
             return;
         };
-        let cue = {
+        // panel_content_ready guards against analyzing a sentence that
+        // isn't actually being shown — e.g. Ctrl+A pressed right after
+        // switching to an Audio panel with nothing loaded there yet, where
+        // the current-sentence card was just blanked by
+        // wire_player_state's on_select_media_source but PlayerState's
+        // cues/cursor are still whatever the previous source left behind.
+        let cue = if panel_content_ready(&window) {
             let state = request_state.borrow();
             state
                 .current_cue_index
                 .and_then(|index| state.cues.get(index).cloned())
+        } else {
+            None
         };
         let Some(cue) = cue else {
             tracing::warn!("word analysis requested with no sentence in focus");
@@ -1940,12 +1974,9 @@ mod tests {
 
         // When:  wiring the Ctrl+A word-analysis popup (`TODO.md` Vaihe 24)
         //        with a model selected and a cache file already holding an
-        //        analysis for the current cue, then requesting it — once
-        //        in the (default) Video source and again after switching
-        //        to Audio (`TODO.md` Vaihe 30)
-        // Then:  both requests open the popup with the identical cached
-        //        analysis, proving wire_word_analysis_popup never reads
-        //        media_source at all, exactly as reading its source shows
+        //        analysis for the current cue, then requesting it on the
+        //        (default) Video source
+        // Then:  the popup opens with the cached analysis
         let word_analysis_cache_path = ::word_analysis::cache_path_for(&subtitle_path);
         let mut word_analysis_cache = ::word_analysis::AnalysisCache {
             model: "llama3.1:8b".to_string(),
@@ -1991,10 +2022,38 @@ mod tests {
         window.invoke_close_word_analysis_popup();
         assert!(!window.get_is_word_analysis_popup_open());
 
-        // When:  switching to the Audio source
-        // Then:  the sentence list is untouched (on-select-media-source only
-        //        ever sets media_source — see wire_player_state), so it
-        //        still holds the same 5 rows with the same cue current
+        // When:  switching to the Audio source with nothing loaded there
+        //        yet (loaded-media-source still Video, forced explicitly
+        //        here as a clean baseline regardless of what the earlier
+        //        media-ready assertions above left it at)
+        // Then:  the sentence card/list blank out — panel_content_ready is
+        //        false, so on-select-media-source re-derives the display
+        //        from an empty PlayerState instead of leaving the Video
+        //        source's sentence stuck on screen — and Ctrl+A reports no
+        //        sentence in focus rather than reusing the Video source's
+        //        cached analysis
+        window.set_loaded_media_source(MediaSourceUi::Video);
+        window.invoke_select_media_source(MediaSourceUi::Audio);
+        assert_eq!(window.get_sentence_list_rows().row_count(), 0);
+        assert_eq!(window.get_sentence_list_current_index(), -1);
+        assert_eq!(window.get_sentence_label(), "Sentence – / –");
+        assert!(!window.get_has_current_sentence());
+
+        window.invoke_show_word_analysis();
+        assert_eq!(window.get_word_analysis_status(), WordAnalysisStatus::Error);
+        assert_eq!(
+            window.get_word_analysis_error_message(),
+            "No sentence is currently in focus."
+        );
+        window.invoke_close_word_analysis_popup();
+
+        // When:  a matching file loads for the Audio source (mirroring
+        //        loaded-media-source the way open_selected_media does) and
+        //        the source is re-selected
+        // Then:  the real sentence list/card and Ctrl+A's cached analysis
+        //        are both back — PlayerState.cues was never touched by any
+        //        of the above, only the display
+        window.set_loaded_media_source(MediaSourceUi::Audio);
         window.invoke_select_media_source(MediaSourceUi::Audio);
         assert_eq!(window.get_sentence_list_rows().row_count(), 5);
         assert_eq!(window.get_sentence_list_current_index(), 0);
