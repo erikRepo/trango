@@ -11,6 +11,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 
 ### Changed
 ### Fixed
+- Pressing Space to replay a file that had already played to its end (Normal mode's/Audio's unbounded `VideoPlayer::toggle_playback`) looked like a no-op — mpv's `keep-open=yes` pauses at EOF rather than unloading, but unpausing there without seeking just re-hits the same EOF. `toggle_playback` now checks mpv's `eof-reached` property and seeks back to `0` first, so Space restarts playback from the beginning instead
 ### Removed
 
 ## [0.1.56] - 2026-07-17

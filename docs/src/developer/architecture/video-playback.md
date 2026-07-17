@@ -115,6 +115,13 @@ source; the subtitle-generation reload workaround (see [Design
 decisions](../specs.md)) predates this fix and is now a bonus (re-arming
 the start-of-playback seek) rather than the only recovery path.
 
+Staying loaded-but-paused at EOF still means unpausing without seeking
+does nothing (`time-pos` immediately re-hits the same EOF). `Normal`
+mode's/Audio's unbounded `VideoPlayer::toggle_playback` checks mpv's
+`eof-reached` property and seeks back to `0` first when set, so Space
+replays from the start instead of looking like a no-op once a file has
+played through.
+
 ## `attach` always runs at startup
 
 `attach` is called exactly once, unconditionally, right after `AppWindow`

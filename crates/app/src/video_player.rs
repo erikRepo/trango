@@ -279,13 +279,22 @@ impl VideoPlayer {
         inner.pause_at = Some(command.end);
     }
 
-    /// Plain play/pause toggle, unbounded — no seek, no `pause_at` armed to
+    /// Plain play/pause toggle, unbounded — no `pause_at` armed to
     /// auto-stop at any particular point. Used for Space when there's no
     /// current cue to bound playback to: `Normal` mode (no per-sentence
     /// span makes sense there), or `SentenceBySentence` mode before any
     /// subtitle is linked. Called from `main.rs`'s `repeat-cue` callback
     /// handler alongside [`toggle_play_span`](Self::toggle_play_span) — see
     /// its doc comment for which of the two a given Space press uses.
+    ///
+    /// If mpv's `eof-reached` is set (playback ran to the end and
+    /// `keep-open=yes` — see `attach`'s doc comment — paused it there
+    /// instead of unloading the file), seeks back to the start before
+    /// resuming: otherwise unpausing at `time-pos == duration` immediately
+    /// re-hits EOF and re-pauses, so Space looked like it did nothing
+    /// instead of replaying the file (reported for a finished Audio-source
+    /// recording, but the same unbounded toggle is also Video's Normal
+    /// mode, so this fixes both).
     pub fn toggle_playback(&self) {
         let mut inner = self.inner.borrow_mut();
         let mpv = inner.mpv;
@@ -293,6 +302,11 @@ impl VideoPlayer {
             .get_property::<bool>("pause")
             .map(|paused| !paused)
             .unwrap_or(false);
+        if !is_playing && mpv.get_property::<bool>("eof-reached").unwrap_or(false) {
+            if let Err(err) = mpv.command("seek", &["0", "absolute"]) {
+                tracing::error!(%err, "failed to seek mpv back to start after EOF");
+            }
+        }
         if let Err(err) = mpv.set_property("pause", is_playing) {
             tracing::error!(%err, "failed to toggle mpv playback");
         }
