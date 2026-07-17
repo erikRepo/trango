@@ -13,6 +13,7 @@
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::thread;
+use std::time::Duration;
 
 use slint::VecModel;
 use subtitle::Cue;
@@ -20,17 +21,55 @@ use word_analysis::{OllamaClient, OllamaError, WordAnalysis};
 
 use crate::{AppWindow, WordAnalysisBatchStatus, WordAnalysisRow, WordAnalysisStatus};
 
+/// Number of times `spawn_batch_analyze` calls `analyze_sentence` for a
+/// single cue before giving up on it — covers a single transient Ollama
+/// hiccup (e.g. a model occasionally dropping a field from its JSON reply)
+/// without one flaky sentence needing a rerun of an otherwise long batch.
+const MAX_ANALYZE_ATTEMPTS: u32 = 3;
+
+/// Pause between retry attempts within `MAX_ANALYZE_ATTEMPTS` — long enough
+/// to let a momentary hiccup pass, short enough not to noticeably slow a
+/// batch run that's mostly succeeding.
+const RETRY_DELAY: Duration = Duration::from_millis(500);
+
+/// Calls `client.analyze_sentence` for `sentence`, retrying up to
+/// `MAX_ANALYZE_ATTEMPTS` times (with `RETRY_DELAY` between attempts) as
+/// long as it keeps failing. Returns the last attempt's result, whichever
+/// way it went.
+fn analyze_with_retries<C: OllamaClient>(
+    client: &C,
+    model: &str,
+    sentence: &str,
+    target_language: &str,
+) -> Result<WordAnalysis, OllamaError> {
+    let mut attempt = 1;
+    let mut result = client.analyze_sentence(model, sentence, target_language);
+    while let Err(err) = &result {
+        if attempt >= MAX_ANALYZE_ATTEMPTS {
+            break;
+        }
+        tracing::warn!(attempt, %err, "retrying failed word analysis");
+        thread::sleep(RETRY_DELAY);
+        result = client.analyze_sentence(model, sentence, target_language);
+        attempt += 1;
+    }
+    result
+}
+
 /// Runs word-by-word analysis for every cue in `cues` not already present
 /// in the cache file at `cache_path`, calling `on_progress(done, total)`
 /// after each cue (whether newly analyzed, skipped as already cached, or
 /// failed) and `on_done` once the whole run finishes. Returns immediately
 /// without blocking the calling thread.
 ///
-/// A cue that fails to analyze is logged and skipped rather than aborting
-/// the run — one bad response (e.g. a transient Ollama hiccup) shouldn't
-/// stop the rest of the subtitle from being analyzed; `on_done` reports
-/// the *last* error seen, if any, so the caller can surface that a run
-/// finished with some cues still missing.
+/// A cue that still fails after `MAX_ANALYZE_ATTEMPTS` retries gets an
+/// empty `WordAnalysis` saved in its place rather than aborting the run —
+/// one bad sentence (e.g. a persistent Ollama JSON-shape mismatch)
+/// shouldn't stop the rest of the subtitle from being analyzed, and
+/// leaving the cue's cache entry blank (rather than absent) means it's
+/// not retried again on every future run; `on_done` reports the *last*
+/// error seen, if any, so the caller can surface that a run finished with
+/// some cues left blank.
 pub fn spawn_batch_analyze<C>(
     client: C,
     model: String,
@@ -51,16 +90,21 @@ pub fn spawn_batch_analyze<C>(
         for (done, cue) in cues.iter().enumerate() {
             if let std::collections::hash_map::Entry::Vacant(entry) = cache.entries.entry(cue.index)
             {
-                match client.analyze_sentence(&model, &cue.text, &target_language) {
+                match analyze_with_retries(&client, &model, &cue.text, &target_language) {
                     Ok(analysis) => {
                         entry.insert(analysis);
-                        word_analysis::save_cache(&cache_path, &cache);
                     }
                     Err(err) => {
-                        tracing::warn!(cue_index = cue.index, %err, "word analysis failed for cue");
+                        tracing::warn!(
+                            cue_index = cue.index,
+                            %err,
+                            "word analysis failed for cue after {MAX_ANALYZE_ATTEMPTS} attempts, leaving it blank"
+                        );
+                        entry.insert(WordAnalysis { words: Vec::new() });
                         last_error = Some(err);
                     }
                 }
+                word_analysis::save_cache(&cache_path, &cache);
             }
             on_progress(done + 1, total);
         }
@@ -180,12 +224,23 @@ mod tests {
 
     /// An `OllamaClient` test double whose `analyze_sentence` returns a
     /// fixed result per call count, and records every sentence it was
-    /// asked to analyze — enough to check both "already-cached cues are
-    /// skipped" and "failures don't abort the run" without any real
-    /// network I/O.
+    /// asked to analyze — enough to check "already-cached cues are
+    /// skipped", "failures don't abort the run", and "a sentence that
+    /// fails a few times before succeeding is retried rather than given
+    /// up on immediately" without any real network I/O.
+    #[derive(Default)]
     struct RecordingClient {
-        calls: std::sync::Mutex<Vec<String>>,
+        /// `Arc`-wrapped so a test can hold on to a clone and inspect the
+        /// call count after the client itself has been moved into
+        /// `spawn_batch_analyze`.
+        calls: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+        /// Sentences that fail every single call, however many times
+        /// they're retried.
         fail_sentences: Vec<String>,
+        /// Sentences that fail their first N calls and then succeed —
+        /// keyed by sentence text, value is the remaining failure count
+        /// (decremented on each call).
+        flaky_sentences: std::sync::Mutex<std::collections::HashMap<String, u32>>,
     }
 
     impl OllamaClient for RecordingClient {
@@ -204,6 +259,14 @@ mod tests {
                 return Err(OllamaError::ConnectionFailed(
                     "fixed test failure".to_string(),
                 ));
+            }
+            if let Some(remaining) = self.flaky_sentences.lock().unwrap().get_mut(sentence) {
+                if *remaining > 0 {
+                    *remaining -= 1;
+                    return Err(OllamaError::ConnectionFailed(
+                        "transient test failure".to_string(),
+                    ));
+                }
             }
             Ok(WordAnalysis {
                 words: vec![WordEntry {
@@ -245,8 +308,9 @@ mod tests {
         let cache_path = temp_cache_path("analyzes-every-cue");
         let _ = std::fs::remove_file(&cache_path);
         let client = RecordingClient {
-            calls: std::sync::Mutex::new(Vec::new()),
+            calls: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             fail_sentences: Vec::new(),
+            ..Default::default()
         };
         let cues = vec![cue(0, "hola"), cue(1, "mundo")];
         let (progress_tx, progress_rx) = mpsc::channel();
@@ -301,8 +365,9 @@ mod tests {
         );
         word_analysis::save_cache(&cache_path, &existing);
         let client = RecordingClient {
-            calls: std::sync::Mutex::new(Vec::new()),
+            calls: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             fail_sentences: Vec::new(),
+            ..Default::default()
         };
         let cues = vec![cue(0, "hola"), cue(1, "mundo")];
         let (done_tx, done_rx) = mpsc::channel();
@@ -328,15 +393,19 @@ mod tests {
 
     #[test]
     fn test_spawn_batch_analyze_continues_past_a_failed_cue_and_reports_the_error() {
-        // Given: one cue that fails and one that succeeds
+        // Given: one cue that always fails and one that succeeds
         // When:  running the batch analysis
-        // Then:  the successful cue is still saved, and on_done reports
-        //        the failure rather than silently succeeding
+        // Then:  the successful cue is saved normally, the failing cue is
+        //        retried (not just given up on after one failure) and
+        //        ends up saved with an empty analysis rather than being
+        //        left out of the cache entirely, and on_done reports the
+        //        failure rather than silently succeeding
         let cache_path = temp_cache_path("continues-past-failure");
         let _ = std::fs::remove_file(&cache_path);
         let client = RecordingClient {
-            calls: std::sync::Mutex::new(Vec::new()),
+            calls: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             fail_sentences: vec!["hola".to_string()],
+            ..Default::default()
         };
         let cues = vec![cue(0, "hola"), cue(1, "mundo")];
         let (done_tx, done_rx) = mpsc::channel();
@@ -355,8 +424,83 @@ mod tests {
 
         assert!(recv_with_timeout(&done_rx).is_err());
         let cache = word_analysis::load_cache(&cache_path);
-        assert_eq!(cache.entries.len(), 1);
-        assert!(cache.entries.contains_key(&1));
+        assert_eq!(cache.entries.len(), 2);
+        assert!(cache.entries[&0].words.is_empty());
+        assert_eq!(cache.entries[&1].words[0].word, "mundo");
+
+        let _ = std::fs::remove_file(&cache_path);
+    }
+
+    #[test]
+    fn test_spawn_batch_analyze_retries_a_cue_that_fails_a_couple_of_times_then_succeeds() {
+        // Given: a cue whose first two calls fail but the third succeeds
+        //        (e.g. a transient Ollama hiccup), well within
+        //        MAX_ANALYZE_ATTEMPTS
+        // When:  running the batch analysis
+        // Then:  the cue ends up saved with the successful analysis, not
+        //        left blank, and on_done reports success
+        let cache_path = temp_cache_path("retries-then-succeeds");
+        let _ = std::fs::remove_file(&cache_path);
+        let mut flaky = std::collections::HashMap::new();
+        flaky.insert("hola".to_string(), 2);
+        let client = RecordingClient {
+            calls: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            flaky_sentences: std::sync::Mutex::new(flaky),
+            ..Default::default()
+        };
+        let cues = vec![cue(0, "hola")];
+        let (done_tx, done_rx) = mpsc::channel();
+
+        spawn_batch_analyze(
+            client,
+            "llama3.1:8b".to_string(),
+            "English".to_string(),
+            cues,
+            cache_path.clone(),
+            |_, _| {},
+            move |result| {
+                let _ = done_tx.send(result);
+            },
+        );
+
+        recv_with_timeout(&done_rx).expect("batch run should succeed after retrying");
+        let cache = word_analysis::load_cache(&cache_path);
+        assert_eq!(cache.entries[&0].words[0].word, "hola");
+
+        let _ = std::fs::remove_file(&cache_path);
+    }
+
+    #[test]
+    fn test_spawn_batch_analyze_gives_up_after_max_attempts() {
+        // Given: a cue that always fails
+        // When:  running the batch analysis
+        // Then:  the client is called exactly MAX_ANALYZE_ATTEMPTS times
+        //        for that cue, not once and not indefinitely
+        let cache_path = temp_cache_path("gives-up-after-max-attempts");
+        let _ = std::fs::remove_file(&cache_path);
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let client = RecordingClient {
+            calls: calls.clone(),
+            fail_sentences: vec!["hola".to_string()],
+            ..Default::default()
+        };
+        let cues = vec![cue(0, "hola")];
+        let (done_tx, done_rx) = mpsc::channel();
+
+        spawn_batch_analyze(
+            client,
+            "llama3.1:8b".to_string(),
+            "English".to_string(),
+            cues,
+            cache_path.clone(),
+            |_, _| {},
+            move |result| {
+                let _ = done_tx.send(result);
+            },
+        );
+
+        recv_with_timeout(&done_rx).expect_err("batch run should report the failure");
+        assert_eq!(calls.lock().unwrap().len(), MAX_ANALYZE_ATTEMPTS as usize);
 
         let _ = std::fs::remove_file(&cache_path);
     }
@@ -368,8 +512,9 @@ mod tests {
         // Then:  on_done fires on a different thread than the caller's,
         //        carrying the client's analysis
         let client = RecordingClient {
-            calls: std::sync::Mutex::new(Vec::new()),
+            calls: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             fail_sentences: Vec::new(),
+            ..Default::default()
         };
         let caller_thread_id = thread::current().id();
         let (tx, rx) = mpsc::channel();
@@ -395,8 +540,9 @@ mod tests {
         // When:  spawning it
         // Then:  on_done receives the same error
         let client = RecordingClient {
-            calls: std::sync::Mutex::new(Vec::new()),
+            calls: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             fail_sentences: vec!["hola".to_string()],
+            ..Default::default()
         };
         let (tx, rx) = mpsc::channel();
 
