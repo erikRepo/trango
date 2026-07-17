@@ -29,7 +29,7 @@ pub trait SubtitleGenerator {
 /// spanning the first five seconds of the video, rather than running real
 /// speech-to-text. Always writes to `video_path` with its extension
 /// replaced by `.srt`, the same same-stem convention
-/// `open_video_dialog::matching_subtitle_path` looks for — so a generated
+/// `open_media_dialog::matching_subtitle_path` looks for — so a generated
 /// file is picked up as the video's linked original subtitle the next time
 /// the Open Subtitles dialog opens.
 pub struct StubSubtitleGenerator;
@@ -70,7 +70,7 @@ impl SubtitleGenerator for StubSubtitleGenerator {
 /// `video_path` via its `-of`/`-osrt` flags (`-of` takes the output path
 /// *without* an extension — `whisper-cli` appends `.srt` itself when
 /// `-osrt` is set), matching [`StubSubtitleGenerator`]'s convention and
-/// the one `open_video_dialog::matching_subtitle_path` looks for, so no
+/// the one `open_media_dialog::matching_subtitle_path` looks for, so no
 /// raw-text parsing is needed here.
 pub struct WhisperCliGenerator {
     /// Path or bare name of the `whisper-cli` binary to run.

@@ -31,7 +31,7 @@ pub struct ModelFileEntry {
 
 /// One row in the model picker's listing: either something that navigates
 /// the dialog to a different folder (`Up`/`Folder`), or a model file that
-/// can be selected. Mirrors `open_video_dialog::FolderEntry`.
+/// can be selected. Mirrors `open_media_dialog::FolderEntry`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FolderEntry {
     /// The listed folder's parent — shown first, only when a parent exists.

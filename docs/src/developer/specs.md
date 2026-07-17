@@ -8,7 +8,7 @@ either left open there, or found through real usage/testing.
 Opens on a default folder (CLI video's parent, else `config.toml`'s
 remembered `video_folder`, else cwd) but isn't limited to it — an "‥ Up"
 row and subfolder clicks navigate in place
-(`open_video_dialog::list_folder_entries`). Chosen over a native OS
+(`open_media_dialog::list_folder_entries`). Chosen over a native OS
 picker to stay consistent with SPEC.md's "no OS-native file picker"
 direction.
 

@@ -10,14 +10,15 @@ Stored in a small config file (`$XDG_CONFIG_HOME/trango/config.toml`,
 falling back to `$HOME/.config/trango/config.toml`), written whenever
 you change one of these:
 
-- The folder the last video you opened was in — so "Open video…" starts
-  there next time.
+- The folder the last video you opened was in — so "Open" starts there
+  next time you're in the Video source.
 - The whisper model you last picked (see
   [Generating subtitles automatically](generating-subtitles.md)).
 - The Ollama model and target language you last picked (see
   [Word-by-word analysis](word-analysis.md)).
-- The folder your last Audio-source recording was saved to — new
-  recordings default there too (see [Playback modes](playback-modes.md)).
+- The folder your last Audio-source recording was opened from or saved
+  to — new recordings, and "Open" in the Audio source, both default
+  there too (see [Playback modes](playback-modes.md)).
 
 An `audio_monitor_source` setting isn't picked from the UI — add it to
 `config.toml` by hand if needed. The Audio source's Ctrl+Space recording

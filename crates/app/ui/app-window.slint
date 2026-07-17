@@ -142,10 +142,10 @@ component ToggleSwitch {
     }
 }
 
-/// A bordered, no-fill "Open video…" / "Subtitles…" top bar button.
-/// "Open video…" is wired to the Open Video dialog (Vaihe 18); "Subtitles…"
-/// to the Open Subtitles dialog (Vaihe 19) — both are `FileListDialog`
-/// instances, see below.
+/// A bordered, no-fill "Open" / "Subtitles…" top bar button.
+/// "Open" is wired to the Open dialog (Vaihe 18, generalized to audio in
+/// Vaihe 28); "Subtitles…" to the Open Subtitles dialog (Vaihe 19) — both
+/// are `FileListDialog` instances, see below.
 component GhostButton {
     in property <string> label;
     callback clicked;
@@ -437,7 +437,7 @@ component SentenceListCard inherits Rectangle {
 /// `is-selected`; clicking it navigates the dialog to a different folder)
 /// or a selectable file (`is-selected` driving the accent-tinted
 /// background/chip color). Set from Rust in
-/// `crates/app/src/open_video_dialog.rs` (video files, with folder
+/// `crates/app/src/open_media_dialog.rs` (video or audio files, with folder
 /// navigation) and `crates/app/src/open_subtitles_dialog.rs` (translation
 /// `.srt` files, flat — see `FileListDialog`'s doc comment on why the same
 /// row shape covers both).
@@ -450,13 +450,14 @@ struct FileListRow {
 
 /// A generic file-picker modal: header (`title` + "✕"), a scrollable list
 /// of `rows` under `folder-label`, and a footer with "Cancel" + a filled
-/// `confirm-label` button. Used for both the Open Video dialog (`TODO.md`
-/// Vaihe 18 — pixel reference `sketch/design_reference.dc.html#2a`, left
-/// mock, extended here with in-dialog folder navigation not shown in that
-/// static mock) and the Open Subtitles dialog's translation-link picker
-/// (Vaihe 19, see `OpenSubtitlesDialog` below) — both are "browse a
-/// folder's files and pick one", just scoped to different extensions and
-/// (for the video dialog only) with subfolder navigation.
+/// `confirm-label` button. Used for the Open dialog (`TODO.md` Vaihe 18 —
+/// pixel reference `sketch/design_reference.dc.html#2a`, left mock,
+/// extended here with in-dialog folder navigation not shown in that static
+/// mock; generalized to list audio recordings too in Vaihe 28) and the Open
+/// Subtitles dialog's translation-link picker (Vaihe 19, see
+/// `OpenSubtitlesDialog` below) — both are "browse a folder's files and
+/// pick one", just scoped to different extensions and (for the Open
+/// dialog only) with subfolder navigation.
 /// `folder-label`/`rows`/`selected-index` are set from Rust when the
 /// dialog opens and again whenever a navigable row changes the listed
 /// folder. Clicking a row emits `row-clicked` with its index — the Rust
@@ -1779,23 +1780,28 @@ export component AppWindow inherits Window {
     // video_player::VideoPlayer::seek_to_fraction. Unlike jump-to-cue above,
     // this only relocates the playhead; it never changes play/pause state.
     callback seek-requested(float);
-    // Open Video dialog state (TODO.md Vaihe 18), set from Rust by
-    // crates/app/src/open_video_dialog.rs — see FileListDialog above.
-    in property <bool> is-open-video-dialog-open: false;
-    in property <string> open-video-folder-label: "";
-    in property <[FileListRow]> open-video-rows: [];
-    in property <int> open-video-selected-index: -1;
-    // Invoked by the top bar's "Open video…" GhostButton; wired in main.rs's
-    // wire_open_video_dialog to list the default folder's video files and
-    // open the dialog.
-    callback open-video-dialog-requested();
+    // Open dialog state (TODO.md Vaihe 18, generalized to audio in Vaihe
+    // 28), set from Rust by crates/app/src/open_media_dialog.rs — see
+    // FileListDialog above. Shared by the Video and Audio sources' "Open…"
+    // button: open-media-dialog-title and the listed rows depend on
+    // whichever source is active when the button is clicked
+    // (main.rs's wire_open_media_dialog).
+    in property <bool> is-open-media-dialog-open: false;
+    in property <string> open-media-dialog-title: "Open video file";
+    in property <string> open-media-folder-label: "";
+    in property <[FileListRow]> open-media-rows: [];
+    in property <int> open-media-selected-index: -1;
+    // Invoked by the top bar's "Open…" GhostButton; wired in main.rs's
+    // wire_open_media_dialog to list the default folder's video or audio
+    // files (depending on media-source) and open the dialog.
+    callback open-media-dialog-requested();
     // Invoked by the dialog's backdrop click / "✕" / "Cancel" — closes it.
-    callback cancel-open-video-dialog();
+    callback cancel-open-media-dialog();
     // Invoked by a dialog row click, with that row's index — marks it
     // selected.
-    callback select-open-video-row(int);
+    callback select-open-media-row(int);
     // Invoked by the dialog's "Open" button — loads the selected file.
-    callback confirm-open-video();
+    callback confirm-open-media();
     // Open Subtitles dialog state (TODO.md Vaihe 19), set from Rust by
     // crates/app/src/open_subtitles_dialog.rs — see OpenSubtitlesDialog
     // below.
@@ -1866,7 +1872,7 @@ export component AppWindow inherits Window {
     in property <string> whisper-model-name: "";
     // Invoked by the Open Subtitles dialog's model row. Opens the model
     // picker (a FileListDialog scoped to .bin/.gguf files, same chrome as
-    // the Open Video dialog), starting from an autodiscovered or
+    // the Open dialog), starting from an autodiscovered or
     // previously-picked folder (model_picker::default_start_folder).
     callback select-whisper-model-requested();
     in property <bool> is-model-picker-dialog-open: false;
@@ -2142,8 +2148,8 @@ export component AppWindow inherits Window {
                         spacing: 8px;
 
                         GhostButton {
-                            label: "Open video…";
-                            clicked => { root.open-video-dialog-requested(); }
+                            label: "Open";
+                            clicked => { root.open-media-dialog-requested(); }
                         }
 
                         GhostButton {
@@ -2179,13 +2185,18 @@ export component AppWindow inherits Window {
 
                         if root.media-source == MediaSourceUi.Audio : VerticalLayout {
                             // Rec/stop control, filename display/rename
-                            // (TODO.md Vaihe 27); playback of a finished or
-                            // opened recording lands in Vaihe 28.
+                            // (TODO.md Vaihe 27), always available so a new
+                            // recording can start at any time. Once a
+                            // recording or opened audio file is loaded
+                            // (video-loaded), the placeholder text below
+                            // gives way to the ScrubBar/SpeedSlider below
+                            // this Rectangle, which play it back the same
+                            // way they do a video (TODO.md Vaihe 28).
                             alignment: center;
                             spacing: 10px;
 
-                            Text {
-                                text: "Audio source — no video loaded";
+                            if !root.video-loaded : Text {
+                                text: "Audio source — no recording loaded";
                                 color: Palette.muted-text;
                                 font-family: "Inter";
                                 font-size: 13px;
@@ -2222,14 +2233,19 @@ export component AppWindow inherits Window {
                         }
                     }
 
-                    if root.media-source != MediaSourceUi.Audio : ScrubBar {
+                    // Shown in the Video source unconditionally (even
+                    // before anything's loaded, as an idle 0:00 state), and
+                    // in the Audio source once a recording or opened audio
+                    // file is loaded (TODO.md Vaihe 28) — there's nothing
+                    // to scrub/speed-control before that.
+                    if root.media-source != MediaSourceUi.Audio || root.video-loaded : ScrubBar {
                         current-time-label: root.current-time-label;
                         duration-label: root.duration-label;
                         progress: root.scrub-progress;
                         seek-requested(fraction) => { root.seek-requested(fraction); }
                     }
 
-                    if root.media-source != MediaSourceUi.Audio : SpeedSlider {
+                    if root.media-source != MediaSourceUi.Audio || root.video-loaded : SpeedSlider {
                         current-speed: root.current-playback-speed;
                         current-speed-label: root.current-playback-speed-label;
                         speed-requested(fraction) => { root.speed-requested(fraction); }
@@ -2264,17 +2280,17 @@ export component AppWindow inherits Window {
             }
         }
 
-        if root.is-open-video-dialog-open : FileListDialog {
+        if root.is-open-media-dialog-open : FileListDialog {
             width: parent.width;
             height: parent.height;
-            title: "Open video file";
+            title: root.open-media-dialog-title;
             confirm-label: "Open";
-            folder-label: root.open-video-folder-label;
-            rows: root.open-video-rows;
-            selected-index: root.open-video-selected-index;
-            row-clicked(index) => { root.select-open-video-row(index); }
-            cancel => { root.cancel-open-video-dialog(); }
-            confirm => { root.confirm-open-video(); }
+            folder-label: root.open-media-folder-label;
+            rows: root.open-media-rows;
+            selected-index: root.open-media-selected-index;
+            row-clicked(index) => { root.select-open-media-row(index); }
+            cancel => { root.cancel-open-media-dialog(); }
+            confirm => { root.confirm-open-media(); }
         }
 
         if root.is-open-subtitles-dialog-open : OpenSubtitlesDialog {

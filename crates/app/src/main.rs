@@ -7,8 +7,8 @@
 mod config;
 mod model_picker;
 mod ollama_model_picker;
+mod open_media_dialog;
 mod open_subtitles_dialog;
-mod open_video_dialog;
 mod sentence_card;
 mod sentence_list;
 mod subtitle_generation;
@@ -307,8 +307,8 @@ fn apply_navigation_result(
 /// Reads the video path to play (if any) from CLI arguments, as used by
 /// `main`. `args` is expected to include the program name at index 0 (i.e.
 /// `std::env::args()`), matching Vaihe 11's `trango <path/to/video>` usage.
-/// A video can also be picked in-app via the top bar's "Open video…" button
-/// (see `wire_open_video_dialog`) instead of a CLI argument.
+/// A video can also be picked in-app via the top bar's "Open…" button
+/// (see `wire_open_media_dialog`) instead of a CLI argument.
 fn video_path_from_args(args: &[String]) -> Option<PathBuf> {
     args.get(1).map(PathBuf::from)
 }
@@ -357,7 +357,7 @@ fn parse_subtitle_file(path: &Path) -> Option<Vec<subtitle::Cue>> {
 /// subtitle path shouldn't prevent the video from playing — callers use
 /// the return value to decide whether to record `subtitle_path` as the
 /// video's linked original subtitle (see `main`'s and
-/// `open_selected_video`'s `CurrentMedia` tracking). A `translation_path`
+/// `open_selected_media`'s `CurrentMedia` tracking). A `translation_path`
 /// that can't be read or parsed is logged and simply skipped — the
 /// original cues still load, just without translations, and `true` is
 /// still returned since the original subtitle itself loaded fine.
@@ -382,30 +382,33 @@ fn load_subtitles(
     true
 }
 
-/// Tracks the paths behind the currently open video/subtitle/translation.
+/// Tracks the paths behind the currently open media/subtitle/translation.
 /// Nothing here drives playback directly (that's `PlayerState`/
 /// `video_player::VideoPlayer`) — it exists so the Open Subtitles dialog
-/// (Vaihe 19) knows what video it's scoped to and what's already linked,
+/// (Vaihe 19) knows what media it's scoped to and what's already linked,
 /// without re-deriving it from disk on every open. That matters because a
 /// CLI-loaded subtitle (`trango video.mp4 custom-name.srt`) may not share
-/// the video's filename stem, unlike an auto-matched one
-/// (`open_video_dialog::matching_subtitle_path`) — so "what's linked" isn't
-/// always re-derivable by searching disk alone.
+/// the media's filename stem, unlike an auto-matched one
+/// (`open_media_dialog::matching_subtitle_path`) — so "what's linked" isn't
+/// always re-derivable by searching disk alone. `media_path` holds a video
+/// path in the Video source, or an opened/recorded `.wav` path in the Audio
+/// source (`TODO.md` Vaihe 28) — both load through the same
+/// `video_player::VideoPlayer::load_video`.
 #[derive(Debug, Clone, Default)]
 struct CurrentMedia {
-    /// The currently open video's path, if any.
-    video_path: Option<PathBuf>,
+    /// The currently open video or audio file's path, if any.
+    media_path: Option<PathBuf>,
     /// The currently linked original-language subtitle's path, if any.
     subtitle_path: Option<PathBuf>,
     /// The currently linked translation subtitle's path, if any.
     translation_path: Option<PathBuf>,
 }
 
-/// Resolves the folder the Open Video dialog lists by default: the CLI
-/// video path's parent directory if one was given (Vaihe 11's
+/// Resolves the folder the Open dialog lists by default in `MediaKind::Video`:
+/// the CLI video path's parent directory if one was given (Vaihe 11's
 /// `trango <path/to/video>` usage — likely where the user keeps other
 /// videos too), otherwise `config`'s last-opened video folder
-/// (`TrangoConfig::video_folder`, kept up to date by `open_selected_video`),
+/// (`TrangoConfig::video_folder`, kept up to date by `open_selected_media`),
 /// otherwise the current working directory. An in-dialog folder switcher is
 /// out of scope for Vaihe 18 — see `docs/src/developer/specs.md`.
 fn default_video_folder(args: &[String], config: &config::TrangoConfig) -> PathBuf {
@@ -421,133 +424,182 @@ fn default_video_folder(args: &[String], config: &config::TrangoConfig) -> PathB
         })
 }
 
-/// Wires the Open Video dialog (Vaihe 18): the top bar's
-/// `open-video-dialog-requested` callback lists `default_folder`'s entries
-/// and opens the modal (`open_video_dialog::open_dialog`);
-/// `select-open-video-row` either navigates to a different folder (an
-/// `Up`/`Folder` row — re-listing and re-populating the dialog in place) or
-/// marks a video row selected (`open_video_dialog::mark_selected`);
-/// `confirm-open-video` loads the selected video (see
-/// `open_selected_video`); `cancel-open-video-dialog` (backdrop/✕/Cancel)
-/// just closes it.
-fn wire_open_video_dialog(
+/// The `MediaKind` the Open dialog should list for `source` — `Video` for
+/// the Video source's "Open…" button, `Audio` for the Audio source's
+/// (`TODO.md` Vaihe 28: the two sources share one button and one dialog,
+/// distinguished by whichever source is currently active).
+fn media_kind_for_source(source: MediaSource) -> open_media_dialog::MediaKind {
+    match source {
+        MediaSource::Video => open_media_dialog::MediaKind::Video,
+        MediaSource::Audio => open_media_dialog::MediaKind::Audio,
+    }
+}
+
+/// The Open dialog's title for `kind`, shown in `FileListDialog`'s header.
+fn open_media_dialog_title(kind: open_media_dialog::MediaKind) -> &'static str {
+    match kind {
+        open_media_dialog::MediaKind::Video => "Open video file",
+        open_media_dialog::MediaKind::Audio => "Open audio file",
+    }
+}
+
+/// Wires the top bar's single "Open…" button (Vaihe 18, generalized to
+/// audio in Vaihe 28): `open-media-dialog-requested` reads `state`'s current
+/// `MediaSource` to decide which kind of file to list
+/// (`media_kind_for_source`) — `Video` lists `video_default_folder`,
+/// `Audio` lists `system_audio_capture::default_recording_folder` off a
+/// freshly loaded config (the last folder a recording was opened from or
+/// written to) — and opens the modal (`open_media_dialog::open_dialog`).
+/// `select-open-media-row` either navigates to a different folder (an
+/// `Up`/`Folder` row — re-listing in place, keeping the same `MediaKind`) or
+/// marks a file row selected (`open_media_dialog::mark_selected`);
+/// `confirm-open-media` loads the selected file (see `open_selected_media`);
+/// `cancel-open-media-dialog` (backdrop/✕/Cancel) just closes it.
+fn wire_open_media_dialog(
     window: &AppWindow,
     state: &Rc<RefCell<PlayerState>>,
     video_player: Rc<video_player::VideoPlayer>,
-    default_folder: PathBuf,
+    video_default_folder: PathBuf,
     current_media: Rc<RefCell<CurrentMedia>>,
 ) {
-    let entries: Rc<RefCell<Vec<open_video_dialog::FolderEntry>>> =
+    let entries: Rc<RefCell<Vec<open_media_dialog::FolderEntry>>> =
         Rc::new(RefCell::new(Vec::new()));
+    let kind: Rc<RefCell<open_media_dialog::MediaKind>> =
+        Rc::new(RefCell::new(open_media_dialog::MediaKind::Video));
 
     let request_window_weak = window.as_weak();
     let request_entries = Rc::clone(&entries);
-    window.on_open_video_dialog_requested(move || {
+    let request_kind = Rc::clone(&kind);
+    let request_state = Rc::clone(state);
+    window.on_open_media_dialog_requested(move || {
         let Some(window) = request_window_weak.upgrade() else {
             return;
         };
-        let files = open_video_dialog::list_folder_entries(&default_folder);
-        open_video_dialog::open_dialog(&window, &default_folder, &files);
+        let media_kind = media_kind_for_source(request_state.borrow().media_source);
+        let folder = match media_kind {
+            open_media_dialog::MediaKind::Video => video_default_folder.clone(),
+            open_media_dialog::MediaKind::Audio => {
+                system_audio_capture::default_recording_folder(&config::load())
+            }
+        };
+        window.set_open_media_dialog_title(open_media_dialog_title(media_kind).into());
+        let files = open_media_dialog::list_folder_entries(&folder, media_kind);
+        open_media_dialog::open_dialog(&window, &folder, &files);
         *request_entries.borrow_mut() = files;
+        *request_kind.borrow_mut() = media_kind;
     });
 
     let cancel_window_weak = window.as_weak();
-    window.on_cancel_open_video_dialog(move || {
+    window.on_cancel_open_media_dialog(move || {
         if let Some(window) = cancel_window_weak.upgrade() {
-            window.set_is_open_video_dialog_open(false);
+            window.set_is_open_media_dialog_open(false);
         }
     });
 
     let select_window_weak = window.as_weak();
     let select_entries = Rc::clone(&entries);
-    window.on_select_open_video_row(move |index| {
+    let select_kind = Rc::clone(&kind);
+    window.on_select_open_media_row(move |index| {
         let Some(window) = select_window_weak.upgrade() else {
             return;
         };
         let target_folder = usize::try_from(index).ok().and_then(|index| {
             match select_entries.borrow().get(index)? {
-                open_video_dialog::FolderEntry::Up(path)
-                | open_video_dialog::FolderEntry::Folder { path, .. } => Some(path.clone()),
-                open_video_dialog::FolderEntry::Video(_) => None,
+                open_media_dialog::FolderEntry::Up(path)
+                | open_media_dialog::FolderEntry::Folder { path, .. } => Some(path.clone()),
+                open_media_dialog::FolderEntry::File(_) => None,
             }
         });
         if let Some(target_folder) = target_folder {
-            let files = open_video_dialog::list_folder_entries(&target_folder);
-            open_video_dialog::open_dialog(&window, &target_folder, &files);
+            let files =
+                open_media_dialog::list_folder_entries(&target_folder, *select_kind.borrow());
+            open_media_dialog::open_dialog(&window, &target_folder, &files);
             *select_entries.borrow_mut() = files;
             return;
         }
-        window.set_open_video_selected_index(index);
-        open_video_dialog::mark_selected(&window, &select_entries.borrow(), index);
+        window.set_open_media_selected_index(index);
+        open_media_dialog::mark_selected(&window, &select_entries.borrow(), index);
     });
 
     let confirm_window_weak = window.as_weak();
     let confirm_entries = Rc::clone(&entries);
+    let confirm_kind = Rc::clone(&kind);
     let confirm_state = Rc::clone(state);
     let confirm_media = Rc::clone(&current_media);
-    window.on_confirm_open_video(move || {
+    window.on_confirm_open_media(move || {
         let Some(window) = confirm_window_weak.upgrade() else {
             return;
         };
-        let video_path = usize::try_from(window.get_open_video_selected_index())
+        let media_path = usize::try_from(window.get_open_media_selected_index())
             .ok()
             .and_then(|index| confirm_entries.borrow().get(index).cloned())
             .and_then(|entry| match entry {
-                open_video_dialog::FolderEntry::Video(video) => Some(video.path),
+                open_media_dialog::FolderEntry::File(file) => Some(file.path),
                 _ => None,
             });
-        let Some(video_path) = video_path else {
+        let Some(media_path) = media_path else {
             return;
         };
-        window.set_is_open_video_dialog_open(false);
-        open_selected_video(
+        window.set_is_open_media_dialog_open(false);
+        open_selected_media(
             &window,
             &confirm_state,
             &video_player,
-            &video_path,
+            *confirm_kind.borrow(),
+            &media_path,
             &confirm_media,
         );
     });
 }
 
-/// Loads `video_path` into `video_player` — always the same already-attached
+/// Loads `media_path` into `video_player` — always the same already-attached
 /// `VideoPlayer` (see `video_player::VideoPlayer::attach`'s doc comment for
 /// why it's attached once, unconditionally, at startup rather than lazily
-/// here). Resolves a same-stem `.srt` first
-/// (`open_video_dialog::matching_subtitle_path`) and loads it via
+/// here); mpv plays a `.wav` file the same way it plays a video, just with
+/// no picture (`TODO.md` Vaihe 28). Resolves a same-stem `.srt` first
+/// (`open_media_dialog::matching_subtitle_path`) and loads it via
 /// `load_subtitles` if found, clearing any previously loaded cues
 /// otherwise — done before `load_video` so that, in `SentenceBySentence`
-/// mode, the start-of-playback pause lands on the new video's first cue
-/// rather than a stale one from a previously opened video. Called by
-/// `wire_open_video_dialog`'s `confirm-open-video` handler. Also resets
-/// `current_media` to the new video (clearing any translation link from a
-/// previously opened video), so the Open Subtitles dialog (Vaihe 19)
-/// reflects the newly opened video the next time it's shown. Persists
-/// `video_path`'s parent folder to `config::TrangoConfig::video_folder`
-/// (`config::save`), so the Open Video dialog defaults to wherever the user
-/// last opened a video from, on the next run.
-fn open_selected_video(
+/// mode, the start-of-playback pause lands on the new file's first cue
+/// rather than a stale one from whatever was open before. Called by
+/// `wire_open_media_dialog`'s `confirm-open-media` handler, and by
+/// `system_audio_capture`'s stop handler once a fresh recording finishes
+/// writing, so it lands in the player the same way an explicitly opened
+/// file does. Also resets `current_media` to the new file (clearing any
+/// translation link from whatever was open before), so the Open Subtitles
+/// dialog (Vaihe 19) reflects it the next time it's shown. Persists
+/// `media_path`'s parent folder to `config::TrangoConfig::video_folder` or
+/// `audio_recording_folder` depending on `kind` (`config::save`), so the
+/// Open dialog defaults to wherever the user last opened a file of that
+/// kind from, on the next run.
+fn open_selected_media(
     window: &AppWindow,
     state: &Rc<RefCell<PlayerState>>,
     video_player: &video_player::VideoPlayer,
-    video_path: &Path,
+    kind: open_media_dialog::MediaKind,
+    media_path: &Path,
     current_media: &Rc<RefCell<CurrentMedia>>,
 ) {
-    if let Some(folder) = video_path
+    if let Some(folder) = media_path
         .parent()
         .filter(|folder| !folder.as_os_str().is_empty())
     {
         let mut config = config::load();
-        config.video_folder = Some(folder.to_path_buf());
+        match kind {
+            open_media_dialog::MediaKind::Video => config.video_folder = Some(folder.to_path_buf()),
+            open_media_dialog::MediaKind::Audio => {
+                config.audio_recording_folder = Some(folder.to_path_buf())
+            }
+        }
         config::save(&config);
     }
 
-    let subtitle_path = open_video_dialog::matching_subtitle_path(video_path);
+    let subtitle_path = open_media_dialog::matching_subtitle_path(media_path);
     let mut subtitle_loaded = false;
     if let Some(subtitle_path) = &subtitle_path {
         tracing::info!(
             ?subtitle_path,
-            "auto-matched subtitle file for opened video"
+            "auto-matched subtitle file for opened media"
         );
         subtitle_loaded = load_subtitles(window, state, subtitle_path, None);
     }
@@ -558,18 +610,18 @@ fn open_selected_video(
     }
 
     *current_media.borrow_mut() = CurrentMedia {
-        video_path: Some(video_path.to_path_buf()),
+        media_path: Some(media_path.to_path_buf()),
         subtitle_path: subtitle_loaded.then_some(subtitle_path).flatten(),
         translation_path: None,
     };
 
-    video_player.load_video(window, video_path, &state.borrow());
+    video_player.load_video(window, media_path, &state.borrow());
 }
 
 /// Wires the Open Subtitles dialog (Vaihe 19): the top bar's
 /// `open-subtitles-dialog-requested` callback resolves the current video's
 /// original-language subtitle — `current_media`'s tracked path, falling
-/// back to a same-stem `.srt` search (`open_video_dialog::matching_subtitle_path`)
+/// back to a same-stem `.srt` search (`open_media_dialog::matching_subtitle_path`)
 /// for the case a CLI-loaded subtitle didn't get tracked with a matching
 /// name — and opens the modal (`open_subtitles_dialog::open_dialog`).
 /// `cancel`/`confirm-open-subtitles-dialog` (backdrop/✕/Cancel/Done) just
@@ -681,14 +733,14 @@ fn wire_open_subtitles_dialog(
             return;
         };
         let media = request_media.borrow();
-        let Some(video_path) = media.video_path.clone() else {
+        let Some(video_path) = media.media_path.clone() else {
             tracing::warn!("Open subtitles requested with no video open");
             return;
         };
         let original_path = media
             .subtitle_path
             .clone()
-            .or_else(|| open_video_dialog::matching_subtitle_path(&video_path));
+            .or_else(|| open_media_dialog::matching_subtitle_path(&video_path));
         open_subtitles_dialog::open_dialog(
             &window,
             &video_path,
@@ -732,7 +784,7 @@ fn wire_open_subtitles_dialog(
             // sentence-by-sentence start-of-playback seek onto the
             // newly-loaded first cue and leaves mpv in a normal, seekable
             // state again.
-            if let Some(video_path) = generated_media.borrow().video_path.clone() {
+            if let Some(video_path) = generated_media.borrow().media_path.clone() {
                 reload_video(&window, &video_path, &generated_state.borrow());
             }
         }
@@ -745,7 +797,7 @@ fn wire_open_subtitles_dialog(
         let Some(window) = generate_window_weak.upgrade() else {
             return;
         };
-        let Some(video_path) = generate_media.borrow().video_path.clone() else {
+        let Some(video_path) = generate_media.borrow().media_path.clone() else {
             tracing::warn!("subtitle generation requested with no video open");
             return;
         };
@@ -802,7 +854,7 @@ fn wire_open_subtitles_dialog(
         let Some(window) = link_window_weak.upgrade() else {
             return;
         };
-        let Some(video_path) = link_media.borrow().video_path.clone() else {
+        let Some(video_path) = link_media.borrow().media_path.clone() else {
             return;
         };
         let Some(folder) = video_path.parent().map(Path::to_path_buf) else {
@@ -873,7 +925,7 @@ fn wire_open_subtitles_dialog(
 /// (best-effort autodiscovery, falling back to the config's last-browsed
 /// folder or the current working directory) — reusing the same in-app
 /// folder-browsing chrome as the Open Video dialog and the translation-link
-/// picker (see `open_video_dialog`'s and `open_subtitles_dialog`'s module
+/// picker (see `open_media_dialog`'s and `open_subtitles_dialog`'s module
 /// docs for why there's no OS-native file picker here either).
 ///
 /// The model is deliberately *not* configured through an environment
@@ -1279,10 +1331,10 @@ fn main() -> anyhow::Result<()> {
     let video_path = video_path_from_args(&args);
     if video_path.is_none() {
         tracing::info!(
-            "no video path given; use the \"Open video…\" button or run as `trango <path/to/video>`"
+            "no video path given; use the \"Open…\" button or run as `trango <path/to/video>`"
         );
     }
-    current_media.borrow_mut().video_path = video_path.clone();
+    current_media.borrow_mut().media_path = video_path.clone();
     let video_player = Rc::new(video_player::VideoPlayer::attach(
         &window,
         video_path.as_deref(),
@@ -1294,7 +1346,7 @@ fn main() -> anyhow::Result<()> {
 
     let startup_config = config::load();
 
-    wire_open_video_dialog(
+    wire_open_media_dialog(
         &window,
         &player_state,
         Rc::clone(&video_player),
@@ -1346,7 +1398,23 @@ fn main() -> anyhow::Result<()> {
 
     let mut startup_audio_capture = audio_capture::AudioCapture::default();
     startup_audio_capture.ffmpeg_path = ffmpeg_path_from_env();
-    system_audio_capture::wire_audio_capture(&window, startup_audio_capture);
+    let recording_video_player = Rc::clone(&video_player);
+    let recording_state = Rc::clone(&player_state);
+    let recording_media = Rc::clone(&current_media);
+    system_audio_capture::wire_audio_capture(
+        &window,
+        startup_audio_capture,
+        move |window, recording_path| {
+            open_selected_media(
+                window,
+                &recording_state,
+                &recording_video_player,
+                open_media_dialog::MediaKind::Audio,
+                recording_path,
+                &recording_media,
+            );
+        },
+    );
 
     let reload_video_player = Rc::clone(&video_player);
     wire_open_subtitles_dialog(
@@ -1508,7 +1576,7 @@ mod tests {
             ..Default::default()
         };
 
-        // When:  resolving the default Open Video dialog folder
+        // When:  resolving the Open dialog's default Video-mode folder
         // Then:  the CLI video's parent directory wins over the saved folder
         assert_eq!(
             default_video_folder(&args, &config),
@@ -1526,7 +1594,7 @@ mod tests {
             ..Default::default()
         };
 
-        // When:  resolving the default Open Video dialog folder
+        // When:  resolving the Open dialog's default Video-mode folder
         // Then:  it's the saved folder
         assert_eq!(
             default_video_folder(&args, &config),
@@ -1539,7 +1607,7 @@ mod tests {
         // Given: argv with no video path, and no saved video folder either
         let args = vec!["trango".to_string()];
 
-        // When:  resolving the default Open Video dialog folder
+        // When:  resolving the Open dialog's default Video-mode folder
         // Then:  it falls back to the current working directory
         assert_eq!(
             default_video_folder(&args, &config::TrangoConfig::default()),
@@ -1553,12 +1621,42 @@ mod tests {
         //        component (a bare filename), and no saved video folder
         let args = vec!["trango".to_string(), "video.mp4".to_string()];
 
-        // When:  resolving the default Open Video dialog folder
+        // When:  resolving the Open dialog's default Video-mode folder
         // Then:  it falls back to the current working directory, since
         //        "video.mp4"'s parent is the empty path, not a real folder
         assert_eq!(
             default_video_folder(&args, &config::TrangoConfig::default()),
             std::env::current_dir().expect("failed to read current directory")
+        );
+    }
+
+    #[test]
+    fn test_media_kind_for_source_matches_source() {
+        // Given/When/Then: each MediaSource maps to the same-named
+        //                   MediaKind, since the two sources share one
+        //                   Open dialog distinguished only by which kind
+        //                   of file it lists
+        assert_eq!(
+            media_kind_for_source(MediaSource::Video),
+            open_media_dialog::MediaKind::Video
+        );
+        assert_eq!(
+            media_kind_for_source(MediaSource::Audio),
+            open_media_dialog::MediaKind::Audio
+        );
+    }
+
+    #[test]
+    fn test_open_media_dialog_title_names_the_kind() {
+        // Given/When/Then: the dialog's title names whichever kind of file
+        //                   it's currently listing
+        assert_eq!(
+            open_media_dialog_title(open_media_dialog::MediaKind::Video),
+            "Open video file"
+        );
+        assert_eq!(
+            open_media_dialog_title(open_media_dialog::MediaKind::Audio),
+            "Open audio file"
         );
     }
 
@@ -1685,33 +1783,33 @@ mod tests {
         assert!(!player_state.borrow().show_translation);
         assert!(!window.get_show_translation());
 
-        // When:  opening the Open Video dialog with an Up row, a subfolder,
-        //        and two video entries
+        // When:  opening the Open dialog with an Up row, a subfolder, and
+        //        two video entries
         // Then:  it opens with the folder label mirrored, one row per
         //        entry, and the first *video* row pre-selected (not row 0,
         //        which is the non-selectable Up row)
         let entries = vec![
-            open_video_dialog::FolderEntry::Up(PathBuf::from("/")),
-            open_video_dialog::FolderEntry::Folder {
+            open_media_dialog::FolderEntry::Up(PathBuf::from("/")),
+            open_media_dialog::FolderEntry::Folder {
                 path: PathBuf::from("/videos/clips"),
                 name: "clips".to_string(),
             },
-            open_video_dialog::FolderEntry::Video(open_video_dialog::VideoFileEntry {
+            open_media_dialog::FolderEntry::File(open_media_dialog::MediaFileEntry {
                 path: PathBuf::from("/videos/a.mp4"),
                 name: "a.mp4".to_string(),
                 size_label: "10 MB".to_string(),
             }),
-            open_video_dialog::FolderEntry::Video(open_video_dialog::VideoFileEntry {
+            open_media_dialog::FolderEntry::File(open_media_dialog::MediaFileEntry {
                 path: PathBuf::from("/videos/b.mkv"),
                 name: "b.mkv".to_string(),
                 size_label: "20 MB".to_string(),
             }),
         ];
-        open_video_dialog::open_dialog(&window, Path::new("/videos"), &entries);
-        assert!(window.get_is_open_video_dialog_open());
-        assert_eq!(window.get_open_video_folder_label(), "/videos");
-        assert_eq!(window.get_open_video_selected_index(), 2);
-        let dialog_rows = window.get_open_video_rows();
+        open_media_dialog::open_dialog(&window, Path::new("/videos"), &entries);
+        assert!(window.get_is_open_media_dialog_open());
+        assert_eq!(window.get_open_media_folder_label(), "/videos");
+        assert_eq!(window.get_open_media_selected_index(), 2);
+        let dialog_rows = window.get_open_media_rows();
         assert_eq!(dialog_rows.row_count(), 4);
         assert!(dialog_rows.row_data(0).expect("row 0 exists").is_navigable);
         assert!(dialog_rows.row_data(1).expect("row 1 exists").is_navigable);
@@ -1720,15 +1818,15 @@ mod tests {
 
         // When:  selecting the second video row, as a row click does
         // Then:  the row model reflects the new selection
-        open_video_dialog::mark_selected(&window, &entries, 3);
-        let dialog_rows = window.get_open_video_rows();
+        open_media_dialog::mark_selected(&window, &entries, 3);
+        let dialog_rows = window.get_open_media_rows();
         assert!(!dialog_rows.row_data(2).expect("row 2 exists").is_selected);
         assert!(dialog_rows.row_data(3).expect("row 3 exists").is_selected);
 
         // When:  cancelling, as the backdrop/✕/Cancel button does
         // Then:  the dialog closes
-        window.set_is_open_video_dialog_open(false);
-        assert!(!window.get_is_open_video_dialog_open());
+        window.set_is_open_media_dialog_open(false);
+        assert!(!window.get_is_open_media_dialog_open());
 
         // When:  wiring the Open Subtitles dialog (Vaihe 19) for a video
         //        whose original subtitle is already tracked as linked, and
@@ -1738,7 +1836,7 @@ mod tests {
         //        (no translation tracked yet)
         let sample_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../test-media/sample");
         let current_media = Rc::new(RefCell::new(CurrentMedia {
-            video_path: Some(sample_dir.join("sample.mp4")),
+            media_path: Some(sample_dir.join("sample.mp4")),
             subtitle_path: Some(subtitle_path.clone()),
             translation_path: None,
         }));
@@ -1831,7 +1929,7 @@ mod tests {
         std::fs::write(&generate_video_path, b"").expect("failed to write fixture video file");
 
         *current_media.borrow_mut() = CurrentMedia {
-            video_path: Some(generate_video_path.clone()),
+            media_path: Some(generate_video_path.clone()),
             subtitle_path: None,
             translation_path: None,
         };
@@ -1923,7 +2021,7 @@ mod tests {
         let fake_model_path = async_dir.join("ggml-fake-model.bin");
         std::fs::write(&fake_model_path, b"").expect("failed to write fixture model file");
         *current_media.borrow_mut() = CurrentMedia {
-            video_path: Some(async_video_path),
+            media_path: Some(async_video_path),
             subtitle_path: None,
             translation_path: None,
         };
@@ -2012,8 +2110,23 @@ mod tests {
             fake_audio_capture.ffmpeg_path = fake_ffmpeg_path;
             fake_audio_capture.pactl_path = fake_pactl_path;
             fake_audio_capture.graceful_stop_timeout = std::time::Duration::from_millis(500);
-            let audio_capture_state =
-                system_audio_capture::wire_audio_capture(&window, fake_audio_capture);
+            // wire_audio_capture can't be given a real
+            // video_player::VideoPlayer here, for the same reason
+            // wire_open_subtitles_dialog above can't — stopped_calls
+            // instead records each call's recording path, standing in for
+            // a real open_selected_media just well enough to verify a
+            // finished recording is handed off (TODO.md Vaihe 28).
+            let stopped_calls: Rc<RefCell<Vec<PathBuf>>> = Rc::new(RefCell::new(Vec::new()));
+            let stopped_calls_for_closure = Rc::clone(&stopped_calls);
+            let audio_capture_state = system_audio_capture::wire_audio_capture(
+                &window,
+                fake_audio_capture,
+                move |_window, recording_path| {
+                    stopped_calls_for_closure
+                        .borrow_mut()
+                        .push(recording_path.to_path_buf());
+                },
+            );
 
             window.invoke_toggle_audio_capture();
             assert!(audio_capture_state.borrow().is_recording());
@@ -2026,6 +2139,7 @@ mod tests {
 
             window.invoke_toggle_audio_capture();
             assert!(!audio_capture_state.borrow().is_recording());
+            assert_eq!(*stopped_calls.borrow(), vec![recorded_path.clone()]);
             assert_eq!(window.get_audio_capture_error_message(), "");
             assert!(!window.get_is_audio_recording());
 
@@ -2071,8 +2185,11 @@ mod tests {
             let mut broken_audio_capture = audio_capture::AudioCapture::default();
             broken_audio_capture.ffmpeg_path = broken_dir.join("no-such-ffmpeg-binary");
             broken_audio_capture.pactl_path = fake_pactl_path;
-            let broken_audio_capture_state =
-                system_audio_capture::wire_audio_capture(&window, broken_audio_capture);
+            let broken_audio_capture_state = system_audio_capture::wire_audio_capture(
+                &window,
+                broken_audio_capture,
+                |_window, _recording_path| {},
+            );
 
             window.invoke_toggle_audio_capture();
             assert!(!broken_audio_capture_state.borrow().is_recording());

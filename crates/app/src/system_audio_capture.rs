@@ -3,7 +3,9 @@
 //! `audio_capture::AudioCapture`'s start/stop (`TODO.md` Vaihe 26/27) — a
 //! plain recorder toggle, writing the system's audio output straight to a
 //! WAV file whose name and folder are shown and managed in the Audio
-//! panel.
+//! panel. Once a recording stops, the finished file is handed to a
+//! caller-supplied callback (`TODO.md` Vaihe 28), which loads it into the
+//! player the same way an explicitly opened audio file does.
 
 use std::cell::RefCell;
 use std::io;
@@ -36,7 +38,19 @@ use crate::{config, AppWindow};
 /// panel's rec/stop button and filename field; the filename is locked
 /// (`enabled: !is-audio-recording` in Slint) for the duration of a
 /// recording and renamable afterwards via `rename-audio-recording-file`.
-pub fn wire_audio_capture(window: &AppWindow, capture: AudioCapture) -> Rc<RefCell<AudioCapture>> {
+///
+/// On every successful stop, `on_recording_stopped` is called with the
+/// finished recording's path (`TODO.md` Vaihe 28), so it lands in the
+/// player the same way an explicitly opened audio file does. Taking a
+/// plain closure here rather than a `Rc<video_player::VideoPlayer>`
+/// directly keeps this function testable without a real mpv render context
+/// (see `main.rs`'s `wire_open_subtitles_dialog`'s `reload_video` parameter
+/// for the same pattern).
+pub fn wire_audio_capture(
+    window: &AppWindow,
+    capture: AudioCapture,
+    on_recording_stopped: impl Fn(&AppWindow, &Path) + 'static,
+) -> Rc<RefCell<AudioCapture>> {
     let capture = Rc::new(RefCell::new(capture));
     let recording_path: Rc<RefCell<Option<PathBuf>>> = Rc::new(RefCell::new(None));
 
@@ -54,6 +68,9 @@ pub fn wire_audio_capture(window: &AppWindow, capture: AudioCapture) -> Rc<RefCe
                     tracing::info!("system audio capture stopped");
                     window.set_audio_capture_error_message("".into());
                     window.set_is_audio_recording(false);
+                    if let Some(path) = recording_path_for_toggle.borrow().clone() {
+                        on_recording_stopped(&window, &path);
+                    }
                 }
                 Err(err) => {
                     tracing::warn!(%err, "failed to stop system audio capture");
@@ -138,8 +155,11 @@ pub fn wire_audio_capture(window: &AppWindow, capture: AudioCapture) -> Rc<RefCe
 /// from `config` (`TrangoConfig::audio_recording_folder`), or the current
 /// working directory on first use — mirrors `main.rs`'s
 /// `default_video_folder` fallback chain, minus the CLI-arg case (there's
-/// no CLI-provided path for a fresh recording).
-fn default_recording_folder(config: &config::TrangoConfig) -> PathBuf {
+/// no CLI-provided path for a fresh recording). Also used by `main.rs`'s
+/// `wire_open_media_dialog` as the Open dialog's default folder in the
+/// Audio source (`TODO.md` Vaihe 28), so opening a recording and starting a
+/// new one browse/write to the same place.
+pub(crate) fn default_recording_folder(config: &config::TrangoConfig) -> PathBuf {
     config.audio_recording_folder.clone().unwrap_or_else(|| {
         std::env::current_dir().unwrap_or_else(|err| {
             tracing::warn!(%err, "failed to read current directory; falling back to \".\"");

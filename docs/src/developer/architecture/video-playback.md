@@ -128,9 +128,9 @@ render context — and its `loadfile` — never got created, permanently
 idling the core.
 
 `load_file` (used by both `attach`'s own startup load and the public
-`VideoPlayer::load_video`, called from `open_selected_video` when a video
+`VideoPlayer::load_video`, called from `open_selected_media` when a video
 is picked later) handles the `loadfile` call, `video-loaded`, and the
-sentence-by-sentence start-seek arming either way. `open_selected_video`
+sentence-by-sentence start-seek arming either way. `open_selected_media`
 always resolves subtitles *before* calling `load_video`, since the
 start-pause needs `player_state.cues` to already reflect the new video,
 not the previous one.

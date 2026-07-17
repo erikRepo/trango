@@ -39,11 +39,17 @@ any point.
 ## Video / Audio source
 
 **Video** plays a loaded video file through the scrub bar and speed
-slider, same as always. **Audio** replaces the video area with an empty
-placeholder — there's no video loaded or playing, and the scrub bar/speed
-slider are hidden since there's no playhead. The sentence list and Ctrl+A
-word analysis still work on whatever subtitle is linked, regardless of
-which source is selected.
+slider, same as always. **Audio** shows a Rec/Stop panel instead of a
+picture, but plays a loaded `.wav` file through that same scrub bar and
+speed slider once one is loaded — there's just no picture to go with it.
+The sentence list and Ctrl+A word analysis still work on whatever
+subtitle is linked, regardless of which source is selected.
+
+The top bar's **Open** button opens the same in-app file browser in both
+sources: in Video it lists video files, in Audio it lists `.wav`
+recordings, from whichever folder you last opened one of that kind from.
+Either way, a same-name `.srt` next to the picked file is linked
+automatically, same as opening a video always has.
 
 **Ctrl+Space**, in the Audio source — or the Audio panel's Rec/Stop
 button — starts capturing your system's own audio output (whatever is
@@ -51,12 +57,13 @@ currently playing on your PC, e.g. a browser video) to a single WAV file;
 pressing it again stops the recording. The panel shows the recording
 state and a default `<date>_<time>.wav` filename while it runs; once
 stopped, you can rename the file by editing that field and pressing
-Enter. A failed start/stop (e.g. `pactl`/`ffmpeg` aren't installed) shows
-an explanatory message instead of silently doing nothing. See
-[Settings](settings.md) for where the monitor source and recording folder
-come from and how to override them, and note this only works on Linux
-with PulseAudio/PipeWire (see the developer docs' architecture section
-for why).
+Enter, and the finished recording loads straight into the scrub bar for
+playback, just like opening it with "Open" would. A failed start/stop
+(e.g. `pactl`/`ffmpeg` aren't installed) shows an explanatory message
+instead of silently doing nothing. See [Settings](settings.md) for where
+the monitor source and recording folder come from and how to override
+them, and note recording only works on Linux with PulseAudio/PipeWire
+(see the developer docs' architecture section for why).
 
 ## Playback speed
 

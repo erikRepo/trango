@@ -82,9 +82,10 @@ video path — because Slint's `RenderingSetup` notification only ever
 fires once per window (see [Video playback](video-playback.md) for why
 this can't be deferred). A CLI video argument starts loading immediately;
 otherwise the video area stays a placeholder until one is picked via the
-top bar's "Open video…" (`open_video_dialog.rs`: lists a folder's
-subfolders/videos as rows, auto-matches a same-stem `.srt`, only `Video`
-rows are selectable) or a second/third CLI argument (`subs.srt`, and a
+top bar's "Open" button (`open_media_dialog.rs`: lists a folder's
+subfolders/video-or-audio files as rows depending on the active source,
+auto-matches a same-stem `.srt`, only file rows are selectable) or a
+second/third CLI argument (`subs.srt`, and a
 translation `subs.en.srt` merged via `subtitle::merge_translation`). A
 subtitle or translation file that can't be read/parsed is logged and
 skipped rather than blocking video playback.
