@@ -5,54 +5,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ## [Unreleased]
 
 ### Added
-- Audio source's placeholder panel now shows a Rec/Stop button (same `toggle-audio-capture` command as Ctrl+Space) and the current recording's filename (`TODO.md` Vaihe 27): a default `<date>_<time>.wav` name locked for the duration of the recording, editable afterwards (Enter commits a rename on disk)
-- `config.rs`: `audio_recording_folder` remembers the last folder a recording was written to, defaulting new recordings there (falls back to the current working directory on first use, same principle as `video_folder`)
-- Audio source can now open and play back an existing `.wav` file (`TODO.md` Vaihe 28): the top bar's Video-source "Open video…" button is now a single "Open" button shared by both sources, listing video files in the Video source and `.wav` recordings in the Audio source. A picked audio file loads through the same `video_player::VideoPlayer` path as a video, so the scrub bar/speed slider/play-pause all work identically once one is loaded, and a same-stem `.srt` next to it auto-links the same way. A finished Ctrl+Space/Rec-button recording now loads into the player the same way as soon as it stops
-- "Generate subtitles" now works for the Audio source's recorded/opened `.wav` files too (`TODO.md` Vaihe 29), via the same "Subtitles…" button/dialog and `WhisperCliGenerator` the Video source uses — no separate button or dialog. `WhisperCliGenerator::generate` skips its `ffmpeg` audio-extraction step for `.wav` input, since it's already audio
-- Validated (`TODO.md` Vaihe 30, no behavior changed) that sentence list, Ctrl+A word analysis, and the translation toggle work identically in the Audio source as in the Video source — new tests in `e2e_sentence_navigation.rs` and `main.rs`'s `test_app_window_properties` switch to the Audio source mid-run and repeat the same navigation/Ctrl+A/sentence-list assertions
-
 ### Changed
 ### Fixed
+### Removed
+
+## [0.1.52] - 2026-07-17
+
+### Added
+- Independent Video/Audio source toggle in the top bar (`playback_state::MediaSource`), alongside the existing Normal/Sentence-by-sentence toggle — any combination of source and mode now works
+- Audio source: Ctrl+Space starts/stops capturing the system's own audio output (e.g. a video playing in the browser) to a single WAV file via an `ffmpeg -f pulse -i <monitor-source>` subprocess. The PulseAudio/PipeWire monitor source is autodetected via `pactl get-default-sink`, overridable through `config.toml`'s `audio_monitor_source`. Linux/PulseAudio-PipeWire only. A failed start/stop (e.g. missing `pactl`/`ffmpeg`) surfaces an explanatory message in the Audio source's placeholder panel instead of only logging it
+- Audio source's placeholder panel shows a Rec/Stop button (same command as Ctrl+Space) and the current recording's filename: a default `<date>_<time>.wav` name locked for the duration of the recording, editable afterwards (Enter commits a rename on disk). `config.rs`'s `audio_recording_folder` remembers the last folder a recording was written to, same principle as `video_folder`
+- Audio source can open and play back an existing `.wav` file: the top bar's "Open…" button is now shared by both sources, listing video files in the Video source and `.wav` recordings in the Audio source. A picked or freshly recorded audio file loads through the same `video_player::VideoPlayer` path as a video, so the scrub bar/speed slider/play-pause and same-stem `.srt` auto-linking all work identically once one is loaded
+- "Generate subtitles" now also works for the Audio source's recorded/opened `.wav` files, via the same "Subtitles…" button/dialog and `WhisperCliGenerator` the Video source uses — `WhisperCliGenerator::generate` skips its `ffmpeg` audio-extraction step for `.wav` input, since it's already audio
+- Validated that sentence list, Ctrl+A word analysis, and the translation toggle work identically in the Audio source as in the Video source, since they never depended on a video being loaded — locked in with new tests that switch to the Audio source mid-run
+
+### Fixed
 - Pressing Space to replay a file that had already played to its end (Normal mode's/Audio's unbounded `VideoPlayer::toggle_playback`) looked like a no-op — mpv's `keep-open=yes` pauses at EOF rather than unloading, but unpausing there without seeking just re-hits the same EOF. `toggle_playback` now checks mpv's `eof-reached` property and seeks back to `0` first, so Space restarts playback from the beginning instead
-### Removed
-
-## [0.1.56] - 2026-07-17
-
-### Changed
-- `audio_capture::AudioCapture::start`/`stop` now record straight to a single WAV file on disk (`ffmpeg -f pulse -i <monitor-source> -ar 16000 -ac 1 <output-path>`) instead of streaming raw PCM to `ffmpeg`'s stdout for live segmentation — Ctrl+Space is back to a plain recorder toggle, like a normal recorder, with no live transcription while capturing
-
-### Removed
-- Live per-segment transcription while recording: `crates/audio-capture/src/vad.rs` (`VadSegmenter`) and the `webrtc-vad` dependency, and `crates/app/src/live_transcription.rs`. `system_audio_capture.rs` no longer requires a whisper model to be selected before Ctrl+Space starts a recording — transcribing the finished file is deferred to a later step (`TODO.md` Vaihe 29)
-
-## [0.1.55] - 2026-07-17
-
-### Changed
-- Top bar's three-way segmented control (Normal / Sentence by sentence / No video) split into two independent segmented controls: Video/Audio for the source, and Normal/Sentence by sentence for navigation — any combination now works, whereas the old third "No video" mode couldn't be combined with sentence-by-sentence navigation. `playback_state::PlaybackMode` is back to its original two variants; a new `MediaSource` enum (`Video`/`Audio`) holds the source choice independently on `PlayerState`
-- Ctrl+Space (system audio capture) and the video-area placeholder/scrub-bar/speed-slider visibility now key off the Audio source rather than a `NoVideo` playback mode
-
-## [0.1.54] - 2026-07-16
-
-### Added
-- Per-segment `whisper-cli` transcription wired into "No video" mode's live capture (`TODO.md` Vaihe 28): each speech segment `audio_capture::VadSegmenter` detects is transcribed on its own background thread and appended to the sentence list as it finishes, so speaking (or playing audio) while Ctrl+Space recording is active grows the sentence list live, a few seconds behind. Each segment's temporary WAV/`.srt` is deleted right after parsing — nothing but cues in memory (and the app's own log) survives a segment's transcription. Requires a whisper model to already be selected; starting without one now shows "Select a whisper model first." instead of silently doing nothing
-- `playback_state::PlayerState::push_cues` appends newly transcribed cues to the end of the loaded track, re-indexing them and moving the cursor onto the newest one
-- `subtitle::WhisperCliGenerator::transcribe_segment` transcribes a raw PCM segment directly (no `ffmpeg` extraction needed) and offsets the resulting cues' timestamps by the segment's position in the recording
-
-### Changed
-- `audio_capture::AudioCapture::start`/`stop` no longer write a continuous WAV file to disk — `ffmpeg` now streams raw PCM straight to its stdout, decoded and fed through a `VadSegmenter` on a background thread, with completed speech segments delivered via callback instead. This is what makes live transcription (above) possible; no audio ever touches disk in `audio-capture` anymore
-
-## [0.1.53] - 2026-07-16
-
-### Added
-- `audio_capture::VadSegmenter` (`TODO.md` Vaihe 27): chops a continuous stream of captured 16kHz mono PCM samples into speech segments at pauses, using the `webrtc-vad` crate frame-by-frame. Each completed segment carries its start/end timestamps relative to the recording's start plus its raw PCM samples — the input Vaihe 28's per-segment `whisper-cli` transcription will consume. Not wired into the app yet, no UI-visible change (see `docs/src/developer/technology/webrtc-vad.md` for why `webrtc-vad` was chosen over whisper.cpp's own `--vad` support or a hand-rolled energy-threshold detector)
-
-## [0.1.52] - 2026-07-16
-
-### Added
-- Third playback mode, "No video", for subtitle-only operation without a loaded video — selected via a third segment in the top bar's segmented control. The video area is replaced by an empty placeholder panel, and the scrub bar/speed slider are hidden; the sentence list and Ctrl+A word analysis keep working on whatever subtitle is linked. This is the first step toward live subtitle recording from system audio (`TODO.md` Vaihe 26+) — no recording happens yet
-- System audio capture in "No video" mode (`TODO.md` Vaihe 26): Ctrl+Space starts/stops recording the system's own audio output to a WAV file via an `ffmpeg -f pulse` subprocess, mirroring the `whisper-cli`/`ffmpeg` external-process pattern used for subtitle generation (no new Cargo dependency). The PulseAudio/PipeWire monitor source is autodetected via `pactl get-default-sink`, overridable through a new `audio_monitor_source` setting in `config.toml`. Linux/PulseAudio-PipeWire only for now — no Windows/macOS support yet (see `docs/src/developer/architecture/system-audio-capture.md`). A failed start/stop (e.g. missing `pactl`/`ffmpeg`) shows an explanatory message in the "No video" placeholder instead of only logging it; no rec/stop control or filename display yet (`TODO.md` Vaihe 29)
-
-### Changed
-- `playback_state::PlayerState::toggle_mode()` replaced with `set_mode(mode)`, since a two-state toggle can't express choosing among three modes; the segmented control's three segments each select their own target mode directly instead of toggling relative to the current one
 
 ## [0.1.51] - 2026-07-16
 
