@@ -10,7 +10,8 @@ use std::time::Duration;
 use crate::error::SubtitleError;
 use crate::Cue;
 
-/// Generates an original-language `.srt` file for a video.
+/// Generates an original-language `.srt` file for a video or, for the Audio
+/// source (`TODO.md` Vaihe 29), an already-audio-only recording.
 ///
 /// Implementations write the subtitle file to disk and return its path.
 /// [`StubSubtitleGenerator`] is a placeholder used to build and test the
@@ -19,7 +20,8 @@ use crate::Cue;
 /// [`WhisperCliGenerator`] (`TODO.md` Vaihe 21.5) is the real
 /// implementation, driving the external `whisper-cli` binary.
 pub trait SubtitleGenerator {
-    /// Generates a subtitle file for `video_path`, returning the path it
+    /// Generates a subtitle file for `video_path` (a video, or — see this
+    /// trait's doc comment — an Audio-source `.wav`), returning the path it
     /// was written to. Returns `SubtitleError::IoError` if `video_path`
     /// doesn't exist or the subtitle file can't be written.
     fn generate(&self, video_path: &Path) -> Result<PathBuf, SubtitleError>;
@@ -64,7 +66,9 @@ impl SubtitleGenerator for StubSubtitleGenerator {
 /// read an unsupported file), so `generate` first extracts the video's
 /// audio to a temporary 16kHz mono WAV file via `ffmpeg` (also an external
 /// process, also not a Cargo dependency) before handing that to
-/// `whisper-cli`.
+/// `whisper-cli` — unless the input is already a `.wav` (an Audio-source
+/// recording/open, `TODO.md` Vaihe 29), in which case that step is skipped
+/// and `whisper-cli` reads it directly (see [`is_wav`]).
 ///
 /// `whisper-cli` is asked to write straight to a same-stem `.srt` next to
 /// `video_path` via its `-of`/`-osrt` flags (`-of` takes the output path
@@ -301,14 +305,33 @@ impl SubtitleGenerator for WhisperCliGenerator {
 
         let output_stem = video_path.with_extension("");
         let output_path = video_path.with_extension("srt");
-        let audio_path = temp_audio_path(video_path);
 
+        // Audio source recordings/opens are always already a WAV
+        // (`open_media_dialog`'s AUDIO_EXTENSIONS, `main.rs`'s CurrentMedia
+        // doc comment) — TODO.md Vaihe 29 runs "Generate subtitles" on that
+        // file directly, so extract_audio's ffmpeg step (needed only to
+        // pull audio out of a video container) is skipped for it.
+        if is_wav(video_path) {
+            return self.run_whisper_cli(video_path, &output_stem, &output_path);
+        }
+
+        let audio_path = temp_audio_path(video_path);
         let result = self
             .extract_audio(video_path, &audio_path)
             .and_then(|()| self.run_whisper_cli(&audio_path, &output_stem, &output_path));
         let _ = std::fs::remove_file(&audio_path);
         result
     }
+}
+
+/// Whether `path` has a (case-insensitive) `.wav` extension — the format
+/// both `audio_capture::AudioCapture` recordings and the Audio source's
+/// "Open…" dialog are restricted to, so it doubles as "this is already
+/// audio, not a video container" for [`WhisperCliGenerator::generate`].
+fn is_wav(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("wav"))
 }
 
 /// A process-unique temporary WAV path for `video_path`'s extracted audio,
@@ -376,6 +399,18 @@ mod tests {
         let video_path = dir.join("some_video.mp4");
         std::fs::write(&video_path, b"").expect("failed to write fixture video file");
         video_path
+    }
+
+    /// A fresh temp dir with a fake (empty) `some_recording.wav` inside it —
+    /// stands in for an Audio-source recording/open (`TODO.md` Vaihe 29),
+    /// where `generate` is expected to skip `extract_audio` entirely.
+    fn audio_fixture(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("trango-test-generate-{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("failed to create temp test dir");
+        let audio_path = dir.join("some_recording.wav");
+        std::fs::write(&audio_path, b"").expect("failed to write fixture audio file");
+        audio_path
     }
 
     #[test]
@@ -842,6 +877,34 @@ printf '1\n00:00:00,000 --> 00:00:05,000\n[fake whisper-cli output]\n' > "${of}.
         let output_path = generator.generate(&video_path).unwrap();
 
         assert_eq!(output_path, video_path.with_extension("srt"));
+        let cues = crate::parse_srt(&std::fs::read_to_string(&output_path).unwrap()).unwrap();
+        assert_eq!(cues.len(), 1);
+
+        std::fs::remove_dir_all(dir).expect("failed to clean up temp test dir");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_generate_skips_ffmpeg_extraction_for_wav_input() {
+        // Given: a WAV fixture (already audio, as Audio-source recordings/
+        //        opens always are, TODO.md Vaihe 29) and an ffmpeg_path
+        //        naming a binary that doesn't exist
+        // When:  generating a subtitle for it (the real, public
+        //        SubtitleGenerator::generate entry point)
+        // Then:  it still succeeds — proving generate() fed the WAV
+        //        straight to whisper-cli without ever invoking ffmpeg
+        let audio_path = audio_fixture("skips-ffmpeg-for-wav");
+        let dir = audio_path.parent().unwrap();
+        let binary_path = write_fake_binary(dir, "fake-whisper-cli.sh", FAKE_WHISPER_CLI_SCRIPT);
+        let generator = WhisperCliGenerator {
+            binary_path,
+            ffmpeg_path: dir.join("no-such-ffmpeg-binary"),
+            ..WhisperCliGenerator::default()
+        };
+
+        let output_path = generator.generate(&audio_path).unwrap();
+
+        assert_eq!(output_path, audio_path.with_extension("srt"));
         let cues = crate::parse_srt(&std::fs::read_to_string(&output_path).unwrap()).unwrap();
         assert_eq!(cues.len(), 1);
 

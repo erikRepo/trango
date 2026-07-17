@@ -44,6 +44,13 @@ then runs `whisper-cli` against that. `extract_audio` and
 `run_command` retries briefly on `ETXTBSY` (freshly written test binaries
 occasionally racing `exec`).
 
+`TODO.md` Vaihe 29 reuses this same `generate` for the Audio source's
+"Generate subtitles" (same button/dialog as the Video source — no new call
+site was needed, since Vaihe 28 already generalized `CurrentMedia` to hold
+either a video or a recorded/opened `.wav` path). `generate` skips
+`extract_audio` when its input is already a `.wav` — the only extension the
+Audio source ever loads — and hands it to `whisper-cli` directly.
+
 **Background thread, not the UI thread.** Real transcription can take
 minutes; `spawn_generate` runs it on `std::thread::spawn`, reporting back
 via `slint::invoke_from_event_loop` (state behind `Rc`/`RefCell` isn't
