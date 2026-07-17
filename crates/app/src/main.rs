@@ -2423,6 +2423,17 @@ mod tests {
             let recorded_filename = window.get_audio_recording_filename().to_string();
             assert!(recorded_filename.ends_with(".wav"), "{recorded_filename}");
             let recorded_path = audio_capture_dir.join(&recorded_filename);
+            // AudioCapture::start only spawns the ffmpeg (here: fake
+            // ffmpeg script) child process and returns immediately, same
+            // as it would for a real ffmpeg — the file only appears once
+            // that child actually gets scheduled and runs its first
+            // write, which under CI load can trail invoke_toggle_audio_capture's
+            // return by more than a single poll. Retries briefly instead
+            // of asserting immediately to avoid flaking on that race.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            while !recorded_path.is_file() && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
             assert!(recorded_path.is_file(), "{recorded_path:?}");
 
             window.invoke_toggle_audio_capture();
