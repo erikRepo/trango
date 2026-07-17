@@ -180,6 +180,39 @@ component GhostButton {
     }
 }
 
+/// Small square icon-only button — used for the top bar's Settings gear.
+/// Fixed-size box rather than GhostButton's auto-sized `layout.min-width`,
+/// since that width is measured from its "JetBrains Mono" label glyph
+/// metrics — a glyph rendered from a different (fallback) font, as "⚙"
+/// would be, mismeasures and clips (see RecordButton's doc comment below
+/// for the same issue hit there).
+component IconButton {
+    in property <string> glyph;
+    callback clicked;
+
+    width: 32px;
+    height: 32px;
+
+    Rectangle {
+        border-width: 1px;
+        border-radius: 6px;
+        border-color: Palette.border;
+
+        Text {
+            text: root.glyph;
+            color: Palette.ghost-text;
+            font-family: "Inter";
+            font-size: 15px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        TouchArea {
+            clicked => { root.clicked(); }
+        }
+    }
+}
+
 /// Rec/stop control for the Audio source's placeholder panel (`TODO.md`
 /// Vaihe 27): filled red with a "Stop" label while `recording`, bordered
 /// with a "Rec" label otherwise. Wired to the same `toggle-audio-capture`
@@ -848,6 +881,293 @@ component WordAnalysisPopup {
                                 }
                             }
                         }
+                    }
+                }
+
+                Rectangle {
+                    height: 60px;
+                    border-width: 1px;
+                    border-color: Palette.border;
+
+                    HorizontalLayout {
+                        padding-left: 20px;
+                        padding-right: 20px;
+                        alignment: end;
+                        cross-axis-alignment: center;
+
+                        Rectangle {
+                            border-width: 1px;
+                            border-radius: 6px;
+                            border-color: Palette.border;
+
+                            HorizontalLayout {
+                                padding-left: 16px;
+                                padding-right: 16px;
+                                padding-top: 8px;
+                                padding-bottom: 8px;
+
+                                Text {
+                                    text: "Close";
+                                    color: Palette.ghost-text;
+                                    font-family: "Inter";
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            TouchArea {
+                                clicked => { root.close(); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// One editable "label / value" row in `SettingsDialog` below — a small-
+/// caps mono label above a `LineEdit`, matching the section-header style
+/// used elsewhere in the dialogs (e.g. OpenSubtitlesDialog's "Original
+/// subtitle").
+component SettingsEditRow {
+    in property <string> label;
+    in property <string> value;
+    in property <string> placeholder;
+    callback edited(string);
+
+    VerticalLayout {
+        spacing: 4px;
+
+        Text {
+            text: root.label;
+            color: Palette.muted-text;
+            font-family: "JetBrains Mono";
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 0.8px;
+        }
+
+        LineEdit {
+            text: root.value;
+            placeholder-text: root.placeholder;
+            font-size: 13px;
+            edited(text) => { root.edited(text); }
+        }
+    }
+}
+
+/// Settings screen (`TODO.md`-adjacent — not in the original list, added
+/// on request): shows and edits every `config::TrangoConfig` field
+/// (docs/src/usage/settings.md) in one place. Whisper/Ollama model
+/// selection reopens the same picker dialogs reached from the Open
+/// Subtitles dialog (`select-whisper-model`/`select-ollama-model`, wired
+/// to the same top-level `select-whisper-model-requested`/
+/// `select-ollama-model-requested` callbacks) rather than duplicating
+/// folder-browsing/Ollama-listing UI here; every other field is a plain
+/// `LineEdit` that saves immediately on Enter/focus-out, same as the Open
+/// Subtitles dialog's target-language field — no separate "Save" action.
+component SettingsDialog {
+    in property <string> config-path;
+    in property <string> video-folder;
+    in property <bool> whisper-model-selected: false;
+    in property <string> whisper-model-name;
+    in property <bool> ollama-model-selected: false;
+    in property <string> ollama-model-name;
+    in property <string> ollama-target-language;
+    in property <string> audio-monitor-source;
+    in property <string> audio-recording-folder;
+    in property <bool> audio-recording-folder-exists: true;
+    callback set-video-folder(string);
+    callback select-whisper-model();
+    callback select-ollama-model();
+    callback set-ollama-target-language(string);
+    callback set-audio-monitor-source(string);
+    callback set-audio-recording-folder(string);
+    callback close();
+
+    Rectangle {
+        background: rgba(0, 0, 0, 0.55);
+
+        TouchArea {
+            clicked => { root.close(); }
+        }
+
+        Rectangle {
+            width: 560px;
+            height: 560px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: Palette.modal-bg;
+            border-width: 1px;
+            border-radius: 12px;
+            border-color: Palette.border;
+            drop-shadow-color: rgba(0, 0, 0, 0.6);
+            drop-shadow-blur: 40px;
+            drop-shadow-offset-y: 16px;
+            clip: true;
+
+            TouchArea {
+                // Swallows clicks inside the card so they don't fall
+                // through to the backdrop's close handler above.
+            }
+
+            VerticalLayout {
+                Rectangle {
+                    height: 52px;
+                    border-width: 1px;
+                    border-color: Palette.border;
+
+                    HorizontalLayout {
+                        padding-left: 20px;
+                        padding-right: 20px;
+                        alignment: space-between;
+                        cross-axis-alignment: center;
+
+                        Text {
+                            text: "Settings";
+                            color: Palette.primary-text;
+                            font-family: "Inter";
+                            font-size: 15px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+
+                        TouchArea {
+                            width: 20px;
+                            height: 20px;
+                            clicked => { root.close(); }
+
+                            Text {
+                                text: "✕";
+                                color: Palette.muted-text;
+                                font-family: "Inter";
+                                font-size: 16px;
+                                font-weight: 600;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    vertical-stretch: 1;
+                    padding: 20px;
+                    spacing: 14px;
+
+                    SettingsEditRow {
+                        label: "VIDEO FOLDER";
+                        value: root.video-folder;
+                        placeholder: "not set yet — picked from the last video you opened";
+                        edited(text) => { root.set-video-folder(text); }
+                    }
+
+                    VerticalLayout {
+                        spacing: 4px;
+
+                        Text {
+                            text: "WHISPER MODEL";
+                            color: Palette.muted-text;
+                            font-family: "JetBrains Mono";
+                            font-size: 10px;
+                            font-weight: 600;
+                            letter-spacing: 0.8px;
+                        }
+
+                        Rectangle {
+                            HorizontalLayout {
+                                Text {
+                                    text: root.whisper-model-selected
+                                        ? root.whisper-model-name + " (change)"
+                                        : "select a whisper model…";
+                                    color: Palette.accent;
+                                    font-family: "Inter";
+                                    font-size: 13px;
+                                    font-weight: 500;
+                                    wrap: word-wrap;
+                                }
+                            }
+
+                            TouchArea {
+                                clicked => { root.select-whisper-model(); }
+                            }
+                        }
+                    }
+
+                    VerticalLayout {
+                        spacing: 4px;
+
+                        Text {
+                            text: "OLLAMA MODEL";
+                            color: Palette.muted-text;
+                            font-family: "JetBrains Mono";
+                            font-size: 10px;
+                            font-weight: 600;
+                            letter-spacing: 0.8px;
+                        }
+
+                        Rectangle {
+                            HorizontalLayout {
+                                Text {
+                                    text: root.ollama-model-selected
+                                        ? root.ollama-model-name + " (change)"
+                                        : "select an Ollama model…";
+                                    color: Palette.accent;
+                                    font-family: "Inter";
+                                    font-size: 13px;
+                                    font-weight: 500;
+                                    wrap: word-wrap;
+                                }
+                            }
+
+                            TouchArea {
+                                clicked => { root.select-ollama-model(); }
+                            }
+                        }
+                    }
+
+                    SettingsEditRow {
+                        label: "WORD ANALYSIS TARGET LANGUAGE";
+                        value: root.ollama-target-language;
+                        placeholder: "e.g. English";
+                        edited(text) => { root.set-ollama-target-language(text); }
+                    }
+
+                    SettingsEditRow {
+                        label: "AUDIO MONITOR SOURCE (OVERRIDE)";
+                        value: root.audio-monitor-source;
+                        placeholder: "auto-detected via pactl";
+                        edited(text) => { root.set-audio-monitor-source(text); }
+                    }
+
+                    SettingsEditRow {
+                        label: "AUDIO RECORDING FOLDER";
+                        value: root.audio-recording-folder;
+                        placeholder: "current working directory";
+                        edited(text) => { root.set-audio-recording-folder(text); }
+                    }
+
+                    if !root.audio-recording-folder-exists : Text {
+                        text: "This folder doesn't exist yet — recording will fail until it does.";
+                        color: Palette.error-text;
+                        font-family: "Inter";
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+
+                    Rectangle {
+                        height: 1px;
+                        background: Palette.border;
+                    }
+
+                    Text {
+                        text: "Config file: " + root.config-path;
+                        color: Palette.muted-text;
+                        font-family: "JetBrains Mono";
+                        font-size: 11px;
+                        wrap: word-wrap;
                     }
                 }
 
@@ -1946,6 +2266,13 @@ export component AppWindow inherits Window {
     // recording has stopped; renames the file on disk to match. Ignored by
     // Rust while is-audio-recording is true.
     callback rename-audio-recording-file(string);
+    // The folder a new Audio-source recording will be written to
+    // (`system_audio_capture::default_recording_folder`), shown in the
+    // Audio panel so it's clear where Ctrl+Space/the Rec button will save
+    // before a recording is even started, and kept in sync if it's
+    // changed via the Settings dialog below. Set from Rust by
+    // crates/app/src/system_audio_capture.rs.
+    in property <string> audio-recording-folder-label: "";
     callback close-word-analysis-popup();
     in property <bool> is-word-analysis-popup-open: false;
     in property <WordAnalysisStatus> word-analysis-status: WordAnalysisStatus.Idle;
@@ -1959,6 +2286,30 @@ export component AppWindow inherits Window {
     in property <int> word-analysis-batch-progress-current: 0;
     in property <int> word-analysis-batch-progress-total: 0;
     in property <string> word-analysis-batch-error-message: "";
+
+    // Settings screen (top bar's gear icon): shows most of
+    // config::TrangoConfig's remembered settings (docs/src/usage/settings.md)
+    // in one place — set from Rust by crates/app/src/settings_dialog.rs.
+    // Most fields mirror properties already kept in sync elsewhere
+    // (whisper-model-name etc.) rather than duplicating that state; only
+    // fields with no other UI get their own settings-* property below.
+    callback settings-dialog-requested();
+    in property <bool> is-settings-dialog-open: false;
+    in property <string> settings-config-path: "";
+    in property <string> settings-video-folder: "";
+    // audio-monitor-source previously had *no* UI at all (config.toml had
+    // to be hand-edited — see settings.md); audio-recording-folder mirrors
+    // the same config field the Audio panel's audio-recording-folder-label
+    // above is derived from. Both save immediately on edit, the same way
+    // the Open Subtitles dialog's target-language field does
+    // (set-ollama-target-language), rather than needing a separate "Save".
+    in property <string> settings-audio-monitor-source: "";
+    in property <string> settings-audio-recording-folder: "";
+    in property <bool> settings-audio-recording-folder-exists: true;
+    callback set-settings-video-folder(string);
+    callback set-settings-audio-monitor-source(string);
+    callback set-settings-audio-recording-folder(string);
+    callback close-settings-dialog();
 
     title: "TrangoPlayer v" + version;
     // `preferred-width`/`-height`, not `width`/`height`: per Slint's
@@ -2156,6 +2507,11 @@ export component AppWindow inherits Window {
                             label: "Subtitles…";
                             clicked => { root.open-subtitles-dialog-requested(); }
                         }
+
+                        IconButton {
+                            glyph: "⚙";
+                            clicked => { root.settings-dialog-requested(); }
+                        }
                     }
                 }
             }
@@ -2201,6 +2557,15 @@ export component AppWindow inherits Window {
                                 font-family: "Inter";
                                 font-size: 13px;
                                 horizontal-alignment: center;
+                            }
+
+                            if root.audio-recording-folder-label != "" : Text {
+                                text: "Saving to: " + root.audio-recording-folder-label;
+                                color: Palette.muted-text;
+                                font-family: "JetBrains Mono";
+                                font-size: 11px;
+                                horizontal-alignment: center;
+                                wrap: word-wrap;
                             }
 
                             HorizontalLayout {
@@ -2320,6 +2685,33 @@ export component AppWindow inherits Window {
             link-translation => { root.link-translation-requested(); }
             cancel => { root.cancel-open-subtitles-dialog(); }
             confirm => { root.confirm-open-subtitles-dialog(); }
+        }
+
+        // Rendered before the model pickers below so that opening one of
+        // them from inside the Settings dialog (select-whisper-model/
+        // select-ollama-model) layers the picker on top rather than
+        // underneath — same document-order convention as
+        // OpenSubtitlesDialog above and the pickers it also reaches.
+        if root.is-settings-dialog-open : SettingsDialog {
+            width: parent.width;
+            height: parent.height;
+            config-path: root.settings-config-path;
+            video-folder: root.settings-video-folder;
+            whisper-model-selected: root.whisper-model-selected;
+            whisper-model-name: root.whisper-model-name;
+            ollama-model-selected: root.ollama-model-selected;
+            ollama-model-name: root.ollama-model-name;
+            ollama-target-language: root.ollama-target-language;
+            audio-monitor-source: root.settings-audio-monitor-source;
+            audio-recording-folder: root.settings-audio-recording-folder;
+            audio-recording-folder-exists: root.settings-audio-recording-folder-exists;
+            set-video-folder(text) => { root.set-settings-video-folder(text); }
+            select-whisper-model => { root.select-whisper-model-requested(); }
+            select-ollama-model => { root.select-ollama-model-requested(); }
+            set-ollama-target-language(text) => { root.set-ollama-target-language(text); }
+            set-audio-monitor-source(text) => { root.set-settings-audio-monitor-source(text); }
+            set-audio-recording-folder(text) => { root.set-settings-audio-recording-folder(text); }
+            close => { root.close-settings-dialog(); }
         }
 
         // Rendered after OpenSubtitlesDialog so it layers on top when both

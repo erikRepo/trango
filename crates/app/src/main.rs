@@ -11,6 +11,7 @@ mod open_media_dialog;
 mod open_subtitles_dialog;
 mod sentence_card;
 mod sentence_list;
+mod settings_dialog;
 mod subtitle_generation;
 mod system_audio_capture;
 mod video_player;
@@ -1128,6 +1129,82 @@ fn wire_ollama_target_language(window: &AppWindow, target_language: Rc<RefCell<S
     });
 }
 
+/// Wires the top bar's Settings gear (`settings-dialog-requested`) and the
+/// resulting dialog's callbacks. Opening loads the current config.toml
+/// into the dialog's display properties (`settings_dialog::open_dialog`);
+/// editing video-folder/audio-monitor-source/audio-recording-folder
+/// persists immediately, the same way `wire_ollama_target_language` above
+/// does, and (for the recording folder) refreshes the Audio panel's
+/// "Saving to:" label (`system_audio_capture::refresh_recording_folder_label`)
+/// so a folder change is visible there without restarting the app.
+/// Whisper/Ollama model selection and the target-language field aren't
+/// wired here at all — the dialog's `select-whisper-model`/
+/// `select-ollama-model`/`set-ollama-target-language` forward straight to
+/// `select-whisper-model-requested`/`select-ollama-model-requested`/
+/// `set-ollama-target-language` (`app-window.slint`'s SettingsDialog
+/// instantiation), already handled by `wire_model_picker`/
+/// `wire_ollama_model_picker`/`wire_ollama_target_language`.
+fn wire_settings_dialog(window: &AppWindow) {
+    let open_window_weak = window.as_weak();
+    window.on_settings_dialog_requested(move || {
+        let Some(window) = open_window_weak.upgrade() else {
+            return;
+        };
+        settings_dialog::open_dialog(&window, &config::load());
+    });
+
+    let close_window_weak = window.as_weak();
+    window.on_close_settings_dialog(move || {
+        if let Some(window) = close_window_weak.upgrade() {
+            window.set_is_settings_dialog_open(false);
+        }
+    });
+
+    let video_folder_window_weak = window.as_weak();
+    window.on_set_settings_video_folder(move |folder| {
+        let Some(window) = video_folder_window_weak.upgrade() else {
+            return;
+        };
+        let folder = folder.to_string();
+        let trimmed = folder.trim();
+        let mut config = config::load();
+        config.video_folder = (!trimmed.is_empty()).then(|| PathBuf::from(trimmed));
+        config::save(&config);
+        window.set_settings_video_folder(folder.into());
+    });
+
+    let monitor_window_weak = window.as_weak();
+    window.on_set_settings_audio_monitor_source(move |source| {
+        let Some(window) = monitor_window_weak.upgrade() else {
+            return;
+        };
+        let source = source.to_string();
+        let mut config = config::load();
+        config.audio_monitor_source =
+            (!source.trim().is_empty()).then(|| source.trim().to_string());
+        config::save(&config);
+        window.set_settings_audio_monitor_source(source.into());
+    });
+
+    let folder_window_weak = window.as_weak();
+    window.on_set_settings_audio_recording_folder(move |folder| {
+        let Some(window) = folder_window_weak.upgrade() else {
+            return;
+        };
+        let folder = folder.to_string();
+        let trimmed = folder.trim();
+        let mut config = config::load();
+        config.audio_recording_folder = (!trimmed.is_empty()).then(|| PathBuf::from(trimmed));
+        config::save(&config);
+
+        window.set_settings_audio_recording_folder(folder.into());
+        window.set_settings_audio_recording_folder_exists(
+            system_audio_capture::default_recording_folder(&config).is_dir(),
+        );
+        system_audio_capture::refresh_recording_folder_label(&window, &config);
+    });
+}
+
 /// Wires the Open Subtitles dialog's "Analyze all sentences" button
 /// (`TODO.md` Vaihe 24, part 4/6): `analyze-all-requested` runs
 /// `word_analysis::spawn_batch_analyze` over every cue in the currently
@@ -1380,6 +1457,7 @@ fn main() -> anyhow::Result<()> {
     ));
     window.set_ollama_target_language(target_language.borrow().clone().into());
     wire_ollama_target_language(&window, Rc::clone(&target_language));
+    wire_settings_dialog(&window);
 
     wire_word_analysis_batch(
         &window,
@@ -1435,6 +1513,26 @@ mod tests {
     use subtitle::SubtitleGenerator;
 
     use super::*;
+
+    /// Restores `.0` to the real config.toml (`config::save`) when
+    /// dropped — including when a test panics partway through, unlike a
+    /// bare `config::save(&original_config)` at the end of a test block,
+    /// which never runs if an assertion in between it and the start of
+    /// the block panics. That gap is exactly how a stale
+    /// `audio_recording_folder` pointing at an already-deleted temp test
+    /// directory once ended up persisted to a real developer's
+    /// config.toml — only noticed because the Settings screen's new
+    /// audio-recording-folder-exists check started surfacing it visibly.
+    /// Tests that temporarily overwrite config.toml should bind one of
+    /// these right after capturing `config::load()`, so the restore
+    /// happens no matter how the rest of the test exits.
+    struct ConfigRestoreGuard(config::TrangoConfig);
+
+    impl Drop for ConfigRestoreGuard {
+        fn drop(&mut self) {
+            config::save(&self.0);
+        }
+    }
 
     #[test]
     fn test_version_is_set() {
@@ -2144,10 +2242,11 @@ mod tests {
 
             // The toggle handler persists `audio_recording_folder` to the
             // real config file on every successful start (TODO.md Vaihe
-            // 27) — saved/restored around this block so running the test
+            // 27) — restored via ConfigRestoreGuard so running the test
             // suite doesn't leave the developer's real config pointing at
-            // a temp test directory.
+            // a temp test directory, even if an assertion below panics.
             let original_config = config::load();
+            let _config_restore_guard = ConfigRestoreGuard(original_config.clone());
 
             let audio_capture_dir = std::env::temp_dir().join("trango-test-audio-capture-toggle");
             let _ = std::fs::remove_dir_all(&audio_capture_dir);
@@ -2238,7 +2337,6 @@ mod tests {
             );
 
             std::fs::remove_dir_all(&audio_capture_dir).expect("failed to clean up temp test dir");
-            config::save(&original_config);
 
             // When:  toggle-audio-capture is wired to an AudioCapture whose
             //        ffmpeg_path names a binary that doesn't exist (fake
@@ -2250,6 +2348,14 @@ mod tests {
             let broken_dir = std::env::temp_dir().join("trango-test-audio-capture-error");
             let _ = std::fs::remove_dir_all(&broken_dir);
             std::fs::create_dir_all(&broken_dir).expect("failed to create temp test dir");
+            // Points audio_recording_folder at broken_dir (which exists),
+            // so this test's "ffmpeg not found" assertion below can't be
+            // preempted by the folder-doesn't-exist check added ahead of
+            // it in wire_audio_capture's toggle handler.
+            config::save(&config::TrangoConfig {
+                audio_recording_folder: Some(broken_dir.clone()),
+                ..original_config.clone()
+            });
             let fake_pactl_path = broken_dir.join("fake-pactl.sh");
             std::fs::write(&fake_pactl_path, "#!/bin/sh\necho 'fake-sink'\n")
                 .expect("failed to write fake pactl script");
@@ -2271,6 +2377,127 @@ mod tests {
                 .contains("ffmpeg not found"));
 
             std::fs::remove_dir_all(&broken_dir).expect("failed to clean up temp test dir");
+
+            // When:  toggle-audio-capture is invoked with
+            //        audio_recording_folder pointing at a folder that
+            //        doesn't exist
+            // Then:  audio-capture-error-message explains the folder is
+            //        missing, rather than silently doing nothing —
+            //        ffmpeg's own stderr is discarded
+            //        (AudioCapture::start's Stdio::null()), so without this
+            //        check the failure wouldn't surface anywhere the user
+            //        could see it
+            let missing_recording_folder =
+                std::env::temp_dir().join("trango-test-audio-capture-missing-folder");
+            let _ = std::fs::remove_dir_all(&missing_recording_folder);
+            config::save(&config::TrangoConfig {
+                audio_recording_folder: Some(missing_recording_folder.clone()),
+                ..original_config.clone()
+            });
+
+            let missing_folder_dir =
+                std::env::temp_dir().join("trango-test-audio-capture-missing-folder-setup");
+            let _ = std::fs::remove_dir_all(&missing_folder_dir);
+            std::fs::create_dir_all(&missing_folder_dir).expect("failed to create temp test dir");
+            let fake_pactl_path = missing_folder_dir.join("fake-pactl.sh");
+            std::fs::write(&fake_pactl_path, "#!/bin/sh\necho 'fake-sink'\n")
+                .expect("failed to write fake pactl script");
+            std::fs::set_permissions(&fake_pactl_path, std::fs::Permissions::from_mode(0o755))
+                .expect("failed to make fake pactl executable");
+            let mut missing_folder_capture = audio_capture::AudioCapture::default();
+            missing_folder_capture.pactl_path = fake_pactl_path;
+            let missing_folder_state = system_audio_capture::wire_audio_capture(
+                &window,
+                missing_folder_capture,
+                |_window, _recording_path| {},
+            );
+
+            assert_eq!(
+                window.get_audio_recording_folder_label(),
+                missing_recording_folder.display().to_string()
+            );
+
+            window.invoke_toggle_audio_capture();
+            assert!(!missing_folder_state.borrow().is_recording());
+            assert!(!window.get_is_audio_recording());
+            assert!(window
+                .get_audio_capture_error_message()
+                .contains("Recording folder does not exist"));
+
+            std::fs::remove_dir_all(&missing_folder_dir).expect("failed to clean up temp test dir");
+        }
+
+        // When:  the Settings dialog (top bar's gear icon) is opened with a
+        //        known config.toml
+        // Then:  its display properties mirror that config, and editing the
+        //        audio-monitor-source/audio-recording-folder fields
+        //        persists immediately (same as wire_ollama_target_language)
+        //        and updates the Audio panel's "Saving to:" label
+        {
+            let original_config = config::load();
+            let _config_restore_guard = ConfigRestoreGuard(original_config.clone());
+
+            let settings_dir = std::env::temp_dir().join("trango-test-settings-dialog");
+            let _ = std::fs::remove_dir_all(&settings_dir);
+            std::fs::create_dir_all(&settings_dir).expect("failed to create temp test dir");
+            config::save(&config::TrangoConfig {
+                video_folder: Some(settings_dir.join("videos")),
+                audio_monitor_source: Some("alsa_output.analog-stereo.monitor".to_string()),
+                audio_recording_folder: Some(settings_dir.clone()),
+                ..config::TrangoConfig::default()
+            });
+
+            wire_settings_dialog(&window);
+
+            window.invoke_settings_dialog_requested();
+            assert!(window.get_is_settings_dialog_open());
+            assert!(window.get_settings_config_path().contains("config.toml"));
+            assert_eq!(
+                window.get_settings_video_folder(),
+                settings_dir.join("videos").display().to_string()
+            );
+            assert_eq!(
+                window.get_settings_audio_monitor_source(),
+                "alsa_output.analog-stereo.monitor"
+            );
+            assert_eq!(
+                window.get_settings_audio_recording_folder(),
+                settings_dir.display().to_string()
+            );
+            assert!(window.get_settings_audio_recording_folder_exists());
+
+            window.invoke_close_settings_dialog();
+            assert!(!window.get_is_settings_dialog_open());
+
+            let new_video_folder = settings_dir.join("other-videos");
+            window.invoke_set_settings_video_folder(new_video_folder.display().to_string().into());
+            assert_eq!(config::load().video_folder, Some(new_video_folder.clone()));
+            assert_eq!(
+                window.get_settings_video_folder(),
+                new_video_folder.display().to_string()
+            );
+
+            window.invoke_set_settings_audio_monitor_source("custom.monitor".into());
+            assert_eq!(
+                config::load().audio_monitor_source,
+                Some("custom.monitor".to_string())
+            );
+
+            let missing_folder = settings_dir.join("does-not-exist-yet");
+            window.invoke_set_settings_audio_recording_folder(
+                missing_folder.display().to_string().into(),
+            );
+            assert_eq!(
+                config::load().audio_recording_folder,
+                Some(missing_folder.clone())
+            );
+            assert!(!window.get_settings_audio_recording_folder_exists());
+            assert_eq!(
+                window.get_audio_recording_folder_label(),
+                missing_folder.display().to_string()
+            );
+
+            std::fs::remove_dir_all(&settings_dir).expect("failed to clean up temp test dir");
         }
     }
 }

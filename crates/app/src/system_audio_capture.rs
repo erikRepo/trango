@@ -51,6 +51,8 @@ pub fn wire_audio_capture(
     capture: AudioCapture,
     on_recording_stopped: impl Fn(&AppWindow, &Path) + 'static,
 ) -> Rc<RefCell<AudioCapture>> {
+    refresh_recording_folder_label(window, &config::load());
+
     let capture = Rc::new(RefCell::new(capture));
     let recording_path: Rc<RefCell<Option<PathBuf>>> = Rc::new(RefCell::new(None));
 
@@ -94,6 +96,21 @@ pub fn wire_audio_capture(
         };
 
         let folder = default_recording_folder(&config);
+        if !folder.is_dir() {
+            // `ffmpeg`'s own failure to open a missing output folder
+            // wouldn't otherwise surface here at all: its stderr is
+            // discarded (`AudioCapture::start`'s `Stdio::null()`) and
+            // `Command::spawn` itself succeeds regardless of whether the
+            // destination folder exists — only the write inside `ffmpeg`
+            // would fail, silently, leaving Ctrl+Space looking like it
+            // just did nothing. Checked here instead, before ever
+            // spawning `ffmpeg`.
+            tracing::warn!(?folder, "audio recording folder does not exist");
+            window.set_audio_capture_error_message(
+                format!("Recording folder does not exist: {}", folder.display()).into(),
+            );
+            return;
+        }
         let filename = default_recording_filename(Local::now());
         let output_path = folder.join(&filename);
 
@@ -166,6 +183,17 @@ pub(crate) fn default_recording_folder(config: &config::TrangoConfig) -> PathBuf
             PathBuf::from(".")
         })
     })
+}
+
+/// Recomputes [`default_recording_folder`] from `config` and mirrors it
+/// into `window`'s `audio-recording-folder-label`, so the Audio panel's
+/// "Saving to: …" text stays correct after `settings_dialog`'s
+/// audio-recording-folder field changes it, without needing to reopen the
+/// Audio source or restart the app. Also called once by `wire_audio_capture`
+/// itself, so the label is already correct on the very first frame.
+pub(crate) fn refresh_recording_folder_label(window: &AppWindow, config: &config::TrangoConfig) {
+    let folder = default_recording_folder(config);
+    window.set_audio_recording_folder_label(folder.display().to_string().into());
 }
 
 /// The default filename for a new recording: `now` formatted as
