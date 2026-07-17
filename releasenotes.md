@@ -11,6 +11,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 
 ### Changed
 ### Fixed
+- Switching the top bar's Video/Audio source no longer leaves whatever was playing in the panel being hidden running silently behind the other one: clicking either segment now pauses mpv first. The visible panel's ScrubBar/SpeedSlider/mpv picture also only show once the actually-loaded file matches that panel (`AppWindow::media-ready`) — previously a loaded video's scrub bar and picture could bleed into the Audio panel just because *some* file was loaded, since both sources always shared one mpv instance
 ### Removed
 
 ## [0.1.52] - 2026-07-17

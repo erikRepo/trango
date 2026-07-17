@@ -308,9 +308,7 @@ control (not in the mock, `sketch/design_reference.dc.html#1c`, which only
 showed the mode pair). The video area's `Rectangle` stays unconditionally
 instantiated in the Audio source too (so `video-frame-x/-y/-width/-height`,
 read every frame by `video_player.rs`, keep resolving) — the Audio
-placeholder is an overlay child inside it, not a swapped-out sibling. Scrub
-bar and speed slider are hidden in the Audio source since there's no mpv
-position to show.
+placeholder is an overlay child inside it, not a swapped-out sibling.
 
 ## System audio capture reverted to a single WAV file, not live segmentation
 
@@ -349,6 +347,27 @@ changed; `crates/app/tests/e2e_sentence_navigation.rs` and
 `main.rs`'s `test_app_window_properties` gained tests that switch to the
 Audio source mid-run and repeat the same navigation/Ctrl+A/sentence-list
 assertions, locking the guarantee in against regressions.
+
+## Source switch pauses playback and gates controls by the loaded file's kind
+
+Video and Audio share one `video_player::VideoPlayer`/mpv instance — the
+top bar's source buttons only ever swapped which panel was visible, never
+touched playback. That meant switching sources left whatever was playing
+running audibly behind the hidden panel, and a loaded video's ScrubBar
+could appear in the Audio panel (or its picture show through) just because
+*some* file happened to be loaded, regardless of kind. Fixed two ways: the
+Video/Audio segment buttons now call a new `pause-playback` callback
+(`video_player::VideoPlayer::pause()`) before `select-media-source`, and
+`AppWindow::media-ready` (`video-loaded && loaded-media-source ==
+media-source`) gates the mpv underlay/ScrubBar/SpeedSlider/Audio
+placeholder so they only activate once the actually-loaded file's kind
+matches the visible panel. `loaded-media-source` is set in
+`open_selected_media`, the single choke point both the Open dialog and the
+post-recording auto-load go through. Two independent player "slots" (each
+source remembering its own loaded file/position) was considered and
+rejected as unnecessarily large for the actual complaint — the one shared
+mpv instance never caused problems the previous UI just failed to gate
+against.
 
 ## CI: PR checks and .deb release automation
 

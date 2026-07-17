@@ -10,7 +10,10 @@
 // `playback-mode`, which also drives the bottom `HintBar`'s mode-specific
 // content; `select-media-source` drives PlayerState::set_media_source() and
 // mirrors into `media-source`, which switches the video area between the
-// mpv frame and the Audio source's placeholder panel.
+// mpv frame and the Audio source's placeholder panel. Both source buttons
+// also call `pause-playback` first (video_player::VideoPlayer::pause()),
+// since there's one shared mpv instance/loaded file underneath both
+// panels — see `media-ready`'s doc comment.
 
 import { LineEdit, ListView, ScrollView } from "std-widgets.slint";
 
@@ -2031,6 +2034,22 @@ export component AppWindow inherits Window {
     // clicked segment's target source — wired in main.rs to
     // playback_state::PlayerState::set_media_source().
     callback select-media-source(MediaSourceUi);
+    // Invoked alongside select-media-source, before it, by the same
+    // segmented control clicks — wired in main.rs to
+    // video_player::VideoPlayer::pause(). A source switch only changes
+    // which panel is visible (there's still one shared mpv instance/loaded
+    // file underneath, see loaded-media-source below), so without this,
+    // whatever was playing in the panel being hidden would keep running
+    // silently behind the other one.
+    callback pause-playback();
+    // Which source (Video or Audio) the currently loaded file in mpv
+    // actually is — set in main.rs's open_selected_media alongside
+    // video-loaded, independently of media-source above (the visible
+    // panel). Used below to only show playback controls/the video
+    // underlay in the panel matching what's actually loaded, rather than,
+    // e.g., a loaded video's ScrubBar bleeding into the Audio panel just
+    // because *some* file happens to be loaded.
+    in property <MediaSourceUi> loaded-media-source: MediaSourceUi.Video;
     // Whether crates/app/src/video_player.rs has an mpv OpenGL render
     // context underlay active. While true, the video area below is left
     // fully transparent so that underlay (drawn straight into the window's
@@ -2038,6 +2057,13 @@ export component AppWindow inherits Window {
     // visible through it; opaque window-bg is only needed as a placeholder
     // when no video is loaded yet.
     in property <bool> video-loaded: false;
+    // Whether the currently loaded file (video-loaded) actually is the kind
+    // of media the visible panel (media-source) shows — false, e.g., right
+    // after switching from Video to Audio with a video still loaded from
+    // before. Gates the mpv underlay/ScrubBar/SpeedSlider/Audio placeholder
+    // below so a stale load from the other source doesn't bleed into this
+    // one.
+    out property <bool> media-ready: root.video-loaded && root.loaded-media-source == root.media-source;
     // The video frame Rectangle's resolved on-screen geometry, relative to
     // this window — read by `video_player.rs`'s `render_frame` each frame so
     // the mpv underlay it draws can be confined to exactly this box (via an
@@ -2460,13 +2486,19 @@ export component AppWindow inherits Window {
                                 SegmentButton {
                                     label: "Video";
                                     active: root.media-source == MediaSourceUi.Video;
-                                    clicked => { root.select-media-source(MediaSourceUi.Video); }
+                                    clicked => {
+                                        root.pause-playback();
+                                        root.select-media-source(MediaSourceUi.Video);
+                                    }
                                 }
 
                                 SegmentButton {
                                     label: "Audio";
                                     active: root.media-source == MediaSourceUi.Audio;
-                                    clicked => { root.select-media-source(MediaSourceUi.Audio); }
+                                    clicked => {
+                                        root.pause-playback();
+                                        root.select-media-source(MediaSourceUi.Audio);
+                                    }
                                 }
                             }
                         }
@@ -2525,10 +2557,13 @@ export component AppWindow inherits Window {
 
                     video-frame := Rectangle {
                         // Video frame area, filling the remaining column height.
-                        // Transparent while a video is loaded so the mpv underlay
-                        // shows through (see `video-loaded` above); otherwise
-                        // filled with the window background color as a
-                        // placeholder. Its resolved on-screen geometry is
+                        // Transparent while a video is loaded and matches the
+                        // visible panel so the mpv underlay shows through (see
+                        // `media-ready` above); otherwise filled with the
+                        // window background color as a placeholder — also
+                        // covering a loaded video's picture while the Audio
+                        // panel is showing, since that overlay is itself
+                        // transparent. Its resolved on-screen geometry is
                         // exposed below (`video-frame-x`/-y/-width/-height) so
                         // `video_player.rs` can confine the mpv underlay to
                         // exactly this box instead of the whole window — see
@@ -2537,21 +2572,21 @@ export component AppWindow inherits Window {
                         // in the Audio source, so those geometry accessors
                         // keep resolving; the Audio placeholder below is just
                         // an overlay child instead.
-                        background: root.video-loaded ? transparent : Palette.window-bg;
+                        background: root.media-ready ? transparent : Palette.window-bg;
 
                         if root.media-source == MediaSourceUi.Audio : VerticalLayout {
                             // Rec/stop control, filename display/rename
                             // (TODO.md Vaihe 27), always available so a new
                             // recording can start at any time. Once a
                             // recording or opened audio file is loaded
-                            // (video-loaded), the placeholder text below
+                            // (media-ready), the placeholder text below
                             // gives way to the ScrubBar/SpeedSlider below
                             // this Rectangle, which play it back the same
                             // way they do a video (TODO.md Vaihe 28).
                             alignment: center;
                             spacing: 10px;
 
-                            if !root.video-loaded : Text {
+                            if !root.media-ready : Text {
                                 text: "Audio source — no recording loaded";
                                 color: Palette.muted-text;
                                 font-family: "Inter";
@@ -2600,17 +2635,19 @@ export component AppWindow inherits Window {
 
                     // Shown in the Video source unconditionally (even
                     // before anything's loaded, as an idle 0:00 state), and
-                    // in the Audio source once a recording or opened audio
-                    // file is loaded (TODO.md Vaihe 28) — there's nothing
-                    // to scrub/speed-control before that.
-                    if root.media-source != MediaSourceUi.Audio || root.video-loaded : ScrubBar {
+                    // in the Audio source once a matching recording or
+                    // opened audio file is loaded (media-ready, TODO.md
+                    // Vaihe 28) — there's nothing to scrub/speed-control
+                    // before that, and a video loaded from before a source
+                    // switch shouldn't show its scrub bar here either.
+                    if root.media-source != MediaSourceUi.Audio || root.media-ready : ScrubBar {
                         current-time-label: root.current-time-label;
                         duration-label: root.duration-label;
                         progress: root.scrub-progress;
                         seek-requested(fraction) => { root.seek-requested(fraction); }
                     }
 
-                    if root.media-source != MediaSourceUi.Audio || root.video-loaded : SpeedSlider {
+                    if root.media-source != MediaSourceUi.Audio || root.media-ready : SpeedSlider {
                         current-speed: root.current-playback-speed;
                         current-speed-label: root.current-playback-speed-label;
                         speed-requested(fraction) => { root.speed-requested(fraction); }

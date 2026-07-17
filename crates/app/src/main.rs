@@ -239,6 +239,17 @@ fn wire_scrub_bar(window: &AppWindow, video_player: Rc<video_player::VideoPlayer
     window.on_seek_requested(move |fraction| video_player.seek_to_fraction(fraction));
 }
 
+/// Wires the window's `pause-playback` callback — invoked by the top bar's
+/// Video/Audio segmented control (`app-window.slint`) right before
+/// `select-media-source` on every click — to
+/// `video_player::VideoPlayer::pause()`. Both sources share the same mpv
+/// instance/loaded file (see `AppWindow::loaded-media-source`'s doc
+/// comment), so without this, switching away from whichever panel is
+/// currently playing would leave it running audibly behind the other one.
+fn wire_pause_playback(window: &AppWindow, video_player: Rc<video_player::VideoPlayer>) {
+    window.on_pause_playback(move || video_player.pause());
+}
+
 /// Wires the window's `speed-requested` callback — invoked by the always-
 /// visible playback-speed slider (`app-window.slint`'s `SpeedSlider`) on
 /// click/drag with the pointer's fraction across the track. Maps that
@@ -436,6 +447,18 @@ fn media_kind_for_source(source: MediaSource) -> open_media_dialog::MediaKind {
     }
 }
 
+/// The `MediaSourceUi` panel that shows a file of `kind` once loaded —
+/// mirrors `media_kind_for_source`'s mapping. `open_selected_media` sets
+/// `AppWindow::loaded-media-source` to this right after loading, so
+/// `app-window.slint`'s `media-ready` can tell a video loaded from before a
+/// source switch apart from a matching file for the panel currently shown.
+fn ui_source_for_media_kind(kind: open_media_dialog::MediaKind) -> MediaSourceUi {
+    match kind {
+        open_media_dialog::MediaKind::Video => MediaSourceUi::Video,
+        open_media_dialog::MediaKind::Audio => MediaSourceUi::Audio,
+    }
+}
+
 /// The Open dialog's title for `kind`, shown in `FileListDialog`'s header.
 fn open_media_dialog_title(kind: open_media_dialog::MediaKind) -> &'static str {
     match kind {
@@ -572,7 +595,10 @@ fn wire_open_media_dialog(
 /// `media_path`'s parent folder to `config::TrangoConfig::video_folder` or
 /// `audio_recording_folder` depending on `kind` (`config::save`), so the
 /// Open dialog defaults to wherever the user last opened a file of that
-/// kind from, on the next run.
+/// kind from, on the next run. Finally mirrors `kind` into
+/// `AppWindow::loaded-media-source` (`ui_source_for_media_kind`) so
+/// `app-window.slint`'s `media-ready` can gate playback controls to the
+/// panel the loaded file actually matches.
 fn open_selected_media(
     window: &AppWindow,
     state: &Rc<RefCell<PlayerState>>,
@@ -617,6 +643,7 @@ fn open_selected_media(
     };
 
     video_player.load_video(window, media_path, &state.borrow());
+    window.set_loaded_media_source(ui_source_for_media_kind(kind));
 }
 
 /// Wires the Open Subtitles dialog (Vaihe 19): the top bar's
@@ -1420,6 +1447,7 @@ fn main() -> anyhow::Result<()> {
     wire_cue_navigation(&window, &player_state, Rc::clone(&video_player));
     wire_scrub_bar(&window, Rc::clone(&video_player));
     wire_speed_slider(&window, Rc::clone(&video_player));
+    wire_pause_playback(&window, Rc::clone(&video_player));
 
     let startup_config = config::load();
 
@@ -1816,6 +1844,35 @@ mod tests {
         window.invoke_select_media_source(MediaSourceUi::Video);
         assert_eq!(player_state.borrow().media_source, MediaSource::Video);
         assert_eq!(window.get_media_source(), MediaSourceUi::Video);
+
+        // When:  a video is loaded (video-loaded + loaded-media-source both
+        //        default to Video, matching the Video source already
+        //        active)
+        // Then:  media-ready is true — the mpv underlay/ScrubBar/SpeedSlider
+        //        should show
+        window.set_video_loaded(true);
+        assert!(window.get_media_ready());
+
+        // When:  switching to the Audio source without loading anything
+        //        there (as a bare Video/Audio click does — the loaded video
+        //        is still the same mpv instance's file, see media-ready's
+        //        doc comment)
+        // Then:  media-ready is false, so the Audio panel doesn't show the
+        //        stale video's ScrubBar or let its picture bleed through
+        window.invoke_select_media_source(MediaSourceUi::Audio);
+        assert!(!window.get_media_ready());
+
+        // When:  an audio recording is then loaded, mirroring
+        //        loaded-media-source to Audio (as open_selected_media does)
+        // Then:  media-ready is true again, now for the Audio source
+        window.set_loaded_media_source(MediaSourceUi::Audio);
+        assert!(window.get_media_ready());
+
+        // When:  switching back to Video
+        // Then:  media-ready is false again — the loaded file is audio, not
+        //        video
+        window.invoke_select_media_source(MediaSourceUi::Video);
+        assert!(!window.get_media_ready());
 
         // When:  invoking select-mode(SentenceBySentence) again
         // Then:  both flip back to SentenceBySentence

@@ -315,6 +315,21 @@ impl VideoPlayer {
         }
     }
 
+    /// Unconditionally pauses mpv and clears any armed `pause_at` — used
+    /// when the top bar's Video/Audio source switches (`main.rs`'s
+    /// `on_pause_playback`), so whatever was playing in the panel being
+    /// hidden doesn't keep running silently behind the other one. Unlike
+    /// [`toggle_playback`](Self::toggle_playback), this never resumes
+    /// playback, so it's safe to call regardless of the current pause state
+    /// (including when nothing is loaded yet).
+    pub fn pause(&self) {
+        let mut inner = self.inner.borrow_mut();
+        if let Err(err) = inner.mpv.set_property("pause", true) {
+            tracing::error!(%err, "failed to pause mpv on media source switch");
+        }
+        inner.pause_at = None;
+    }
+
     /// Seeks mpv to `fraction` (0.0-1.0) of the current file's `duration` —
     /// driven by the scrub bar's drag/click handler (`app-window.slint`'s
     /// `ScrubBar`, wired to `seek-requested` in `main.rs`). Unlike
