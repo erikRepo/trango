@@ -68,13 +68,24 @@ error if either is missing.
 For Hebrew sentences specifically, the pronunciation guide isn't guessed
 by Ollama — small local models transliterate Hebrew unreliably even when
 they translate it correctly. Instead TrangoPlayer runs a separate niqud
-diacritization tool ([Phonikud](https://github.com/thewh1teagle/phonikud)
-via a small CLI wrapper, see `tools/niqud-cli/README.md` for installing
-it) and derives the pronunciation deterministically from its output. This
-happens automatically — Hebrew sentences are detected from their script,
-no setting to configure. If the niqud CLI isn't installed (or fails),
-Ctrl+A/"Analyze all sentences" still work exactly as before, just with
-Ollama's own (less accurate) pronunciation guess for Hebrew lines.
+(vowel-point) diacritization model
+([Phonikud](https://github.com/thewh1teagle/phonikud)) directly and
+derives the pronunciation deterministically from its output. Hebrew
+sentences are detected automatically from their script — nothing to
+configure there.
+
+The model itself needs a one-time setup: download
+[`phonikud-1.0.int8.onnx`](https://huggingface.co/thewh1teagle/phonikud-onnx)
+and [`tokenizer.json`](https://huggingface.co/dicta-il/dictabert-large-char-menaked)
+into the same folder, then point **Settings → "HEBREW NIQUD MODEL
+(.ONNX)"** at the `.onnx` file. If no model is configured, or loading it
+fails, Ctrl+A/"Analyze all sentences" still work exactly as before, just
+with Ollama's own (less accurate) pronunciation guess for Hebrew lines.
+
+Also needs ONNX Runtime itself reachable at runtime (e.g. Ubuntu/Debian's
+`libonnxruntime1.23` package, or set `ORT_DYLIB_PATH` to a manually
+downloaded copy) — see [ort](../developer/technology/ort.md) for why this
+is a separate runtime dependency rather than bundled.
 
 ## If a model returns bad or empty analyses
 

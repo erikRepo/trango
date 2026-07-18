@@ -40,6 +40,11 @@ no separate "Save" button:
   record from a non-default one — to the exact source name (check
   `pactl list sources short`) to skip autodetection entirely. Empty
   means "keep autodetecting".
+- **Hebrew niqud model (.onnx)** — path to a downloaded niqud
+  diacritization model file, used to correct Hebrew pronunciation
+  guides in [word analysis](word-analysis.md#hebrew-pronunciation).
+  Empty means Hebrew falls back to Ollama's own (less accurate) guess.
+  Takes effect on the next restart, not live.
 
 If this file is missing or unreadable, TrangoPlayer just starts with
 nothing remembered rather than failing to open — losing a remembered

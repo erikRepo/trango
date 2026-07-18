@@ -408,43 +408,64 @@ than the version field). Packaging uses `cargo-deb`, configured via
 are left at the default `$auto` so `dpkg-shlibdeps` derives them from the
 built binary's actual shared-library links instead of being hand-maintained.
 
-## Hebrew pronunciation: niqud CLI subprocess, not part of the Ollama prompt
+## Hebrew pronunciation: native `ort` inference, not the Ollama prompt
 
 Ollama's own `pronunciation` field is unreliable for Hebrew even with a
 Hebrew-capable model — small LLMs mistransliterate niqud/dagesh
 distinctions (e.g. שכב → "shkach" instead of "sha-khav"), and re-feeding
 niqud text through the LLM wouldn't fix this: BPE tokenization splits
 Hebrew combining diacritics unpredictably, so the same unreliability just
-moves one step later. Instead `crates/niqud`'s `PhonikudCliClient` shells
-out to a small Python wrapper (`tools/niqud-cli/`, since
-[Phonikud](https://github.com/thewh1teagle/phonikud) has no CLI of its
-own) running `phonikud-onnx`'s `add_diacritics`, and a deterministic Rust
+moves one step later. Instead `crates/niqud`'s `OnnxNiqudClient` runs
+[Phonikud](https://github.com/thewh1teagle/phonikud)'s niqud model
+directly via `ort` (ONNX Runtime bindings), and a deterministic Rust
 table (`transliterate.rs`) converts the resulting niqud text to a
 hyphenated Latin guide — no further LLM call. Gated automatically by
 `contains_hebrew` (Unicode block U+0590–U+05FF); other languages are
 untouched. Ollama still handles translation (a real semantic task) and
-its `pronunciation` guess is kept as a fallback if the niqud CLI is
-missing or the word counts don't align (`tracing::warn`, never a hard
-failure).
+its `pronunciation` guess is kept as a fallback if no niqud model is
+configured, loading fails, or the word counts don't align
+(`tracing::warn`, never a hard failure).
 
-**Pitfalls found in the `phonikud-onnx` output that the transliteration
-table depends on:** beyond standard nikud/dagesh/shin-dot marks, the
-model also emits a `|` (U+007C) after prefix letters (ו/ב/כ/ל/מ/ש) marking
-a morpheme boundary, and a meteg (U+05BD) combined with shva
-distinguishes vocal shva ("e", pronounced) from silent shva — both
-undocumented in `add_diacritics`'s own docstring but load-bearing for
-correct syllabification. Use only `phonikud-onnx` (ONNX runtime,
-lightweight); the sibling `phonikud` PyPI package is the
-torch/transformers *training* code and pulls in gigabytes of unrelated
-dependencies.
+**Native Rust, not a Python subprocess.** An earlier version shelled out
+to a Python/`phonikud-onnx` CLI wrapper; it worked but accumulated real
+operational hackiness (a venv whose activation state depends on whatever
+shell happens to launch trango, on top of CPU-pinning/offline-mode
+workarounds). Reimplementing natively turned out tractable because the
+model's I/O contract and the `dicta-il/dictabert-large-char-menaked`
+tokenizer were both fully reverse-engineered during that first
+implementation: despite being stored in HuggingFace's "WordPiece"
+format, the tokenizer is actually **character-level** (its
+`pre_tokenizer` splits into individual characters first, so no subword
+merging ever happens) — a flat char→id vocab parsed straight from
+`tokenizer.json` is enough, no `tokenizers` crate dependency needed.
+`decode.rs` ports `phonikud_onnx`'s Python reconstruction loop
+(argmax over `nikud_logits`/`shin_logits`, threshold over
+`additional_logits`'s stress/vocal-shva/prefix classifiers) directly.
+
+**Pitfalls found in the model's output that both the decode loop and the
+transliteration table depend on:** beyond standard nikud/dagesh/shin-dot
+marks, the model also emits a `|` (U+007C) after prefix letters
+(ו/ב/כ/ל/מ/ש) marking a morpheme boundary, and a meteg (U+05BD) combined
+with shva distinguishes vocal shva ("e", pronounced) from silent shva —
+both undocumented in Phonikud's own API but load-bearing for correct
+syllabification.
+
+**Build vs. runtime linking.** `ort`'s default `download-binaries`
+feature fetches a prebuilt ONNX Runtime binary *at compile time* over the
+network — unacceptable for offline/CI builds. `crates/niqud/Cargo.toml`
+instead uses `load-dynamic` (loads `libonnxruntime.so` at *runtime* via
+`ORT_DYLIB_PATH` or the system loader) plus `api-23`: the crate's
+*default* feature set requests API 24, which hangs indefinitely (not a
+clean error) against Ubuntu's apt-packaged `libonnxruntime1.23` —
+api-23 works correctly against that same package, confirmed by comparing
+its output against Python `onnxruntime`'s for identical input (matching
+to a few significant digits; a newer runtime like pip's onnxruntime
+1.27 matches exactly). Model/tokenizer files are still a manual
+download — see `docs/src/usage/word-analysis.md`.
 
 **GPU checked, CPU kept deliberately.** `onnxruntime`'s CUDA provider
 silently falls back to CPU if system cuDNN is missing (no hard error —
-easy to miss). Measured explicitly on this machine's RTX 5070 Ti:
+easy to miss). Measured explicitly on real hardware (RTX 5070 Ti):
 inference is already ~16ms on plain CPU for this int8 model, so GPU
-wouldn't help — the ~0.7–1s per-invocation cost is Python interpreter +
-tokenizer/ONNX-session startup, not compute. The wrapper pins
-`CPUExecutionProvider` explicitly (not a silent default) and only
-`phonikud-onnx`'s plain CPU `onnxruntime` dependency is needed —
-`HF_HUB_OFFLINE=1` also avoids a network round-trip on every invocation
-once the model is cached locally.
+wouldn't help. `OnnxNiqudClient` requests `CPUExecutionProvider`
+explicitly (not a silent default).

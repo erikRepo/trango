@@ -74,10 +74,15 @@ binaries the same way. No Slint/libmpv dependency.
 Hebrew niqud diacritization and a deterministic Latin pronunciation guide,
 replacing Ollama's unreliable LLM-guessed pronunciation for Hebrew
 sentences only (see [specs.md](../specs.md)'s "Hebrew pronunciation"
-entry). `hebrew_detect::contains_hebrew` gates the whole pipeline per
-sentence (Unicode block U+0590-U+05FF) — sentences in other languages
-never invoke it. No Slint/libmpv dependency, same testability split as
-`word-analysis`.
+entry and [ort](../technology/ort.md)). `hebrew_detect::contains_hebrew`
+gates the whole pipeline per sentence (Unicode block U+0590-U+05FF) —
+sentences in other languages never invoke it. `tokenizer.rs`/`decode.rs`
+are pure functions (tokenizing, and reconstructing the diacritized string
+from a model run's logits) tested against fixtures with no model file
+needed; `onnx_client::OnnxNiqudClient` ties them to a real `ort::Session`
+— `Clone`, so the loaded model is reused for the process's lifetime
+rather than per call. No Slint/libmpv dependency, same testability split
+as `word-analysis`.
 
 ## `crates/app` (binary, package `trango`)
 
