@@ -407,3 +407,44 @@ than the version field). Packaging uses `cargo-deb`, configured via
 `[package.metadata.deb]` in `crates/app/Cargo.toml`; runtime `Depends`
 are left at the default `$auto` so `dpkg-shlibdeps` derives them from the
 built binary's actual shared-library links instead of being hand-maintained.
+
+## Hebrew pronunciation: niqud CLI subprocess, not part of the Ollama prompt
+
+Ollama's own `pronunciation` field is unreliable for Hebrew even with a
+Hebrew-capable model — small LLMs mistransliterate niqud/dagesh
+distinctions (e.g. שכב → "shkach" instead of "sha-khav"), and re-feeding
+niqud text through the LLM wouldn't fix this: BPE tokenization splits
+Hebrew combining diacritics unpredictably, so the same unreliability just
+moves one step later. Instead `crates/niqud`'s `PhonikudCliClient` shells
+out to a small Python wrapper (`tools/niqud-cli/`, since
+[Phonikud](https://github.com/thewh1teagle/phonikud) has no CLI of its
+own) running `phonikud-onnx`'s `add_diacritics`, and a deterministic Rust
+table (`transliterate.rs`) converts the resulting niqud text to a
+hyphenated Latin guide — no further LLM call. Gated automatically by
+`contains_hebrew` (Unicode block U+0590–U+05FF); other languages are
+untouched. Ollama still handles translation (a real semantic task) and
+its `pronunciation` guess is kept as a fallback if the niqud CLI is
+missing or the word counts don't align (`tracing::warn`, never a hard
+failure).
+
+**Pitfalls found in the `phonikud-onnx` output that the transliteration
+table depends on:** beyond standard nikud/dagesh/shin-dot marks, the
+model also emits a `|` (U+007C) after prefix letters (ו/ב/כ/ל/מ/ש) marking
+a morpheme boundary, and a meteg (U+05BD) combined with shva
+distinguishes vocal shva ("e", pronounced) from silent shva — both
+undocumented in `add_diacritics`'s own docstring but load-bearing for
+correct syllabification. Use only `phonikud-onnx` (ONNX runtime,
+lightweight); the sibling `phonikud` PyPI package is the
+torch/transformers *training* code and pulls in gigabytes of unrelated
+dependencies.
+
+**GPU checked, CPU kept deliberately.** `onnxruntime`'s CUDA provider
+silently falls back to CPU if system cuDNN is missing (no hard error —
+easy to miss). Measured explicitly on this machine's RTX 5070 Ti:
+inference is already ~16ms on plain CPU for this int8 model, so GPU
+wouldn't help — the ~0.7–1s per-invocation cost is Python interpreter +
+tokenizer/ONNX-session startup, not compute. The wrapper pins
+`CPUExecutionProvider` explicitly (not a silent default) and only
+`phonikud-onnx`'s plain CPU `onnxruntime` dependency is needed —
+`HF_HUB_OFFLINE=1` also avoids a network round-trip on every invocation
+once the model is cached locally.

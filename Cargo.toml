@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/subtitle", "crates/playback-state", "crates/app", "crates/word-analysis", "crates/audio-capture"]
+members = ["crates/subtitle", "crates/playback-state", "crates/app", "crates/word-analysis", "crates/audio-capture", "crates/niqud"]
 
 [workspace.package]
 version = "0.1.53"

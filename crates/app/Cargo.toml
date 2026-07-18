@@ -14,6 +14,7 @@ anyhow = "1"
 audio-capture = { path = "../audio-capture" }
 chrono = "0.4"
 libmpv2 = { version = "6", features = ["render"] }
+niqud = { path = "../niqud" }
 playback-state = { path = "../playback-state" }
 serde = { version = "1", features = ["derive"] }
 slint = "1.17.1"

@@ -5,6 +5,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ## [Unreleased]
 
 ### Added
+- New `crates/niqud` crate scaffold: `contains_hebrew` detects Hebrew-script sentences (Unicode block U+0590-U+05FF), the first step toward replacing Ollama's unreliable LLM-guessed Hebrew pronunciation with a deterministic niqud-based one
 - Settings screen: a gear icon in the top bar opens a dialog showing and editing every `config.toml` setting in one place — video folder, audio monitor source, and audio recording folder are plain text fields that save immediately; whisper model, Ollama model, and target language reopen the same pickers/field already used elsewhere in the app. `audio_monitor_source` previously had no UI at all and required hand-editing `config.toml`
 - Audio source's placeholder panel now always shows which folder a new recording will be saved to ("Saving to: …"), kept in sync with the Settings screen's audio-recording-folder field
 - Starting a recording (Ctrl+Space/Rec) into a folder that doesn't exist now surfaces "Recording folder does not exist: …" in the Audio panel instead of silently failing — `ffmpeg`'s own error was previously discarded (`Stdio::null()`), so a missing folder looked like the shortcut/button did nothing
