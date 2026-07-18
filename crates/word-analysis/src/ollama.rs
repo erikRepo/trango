@@ -30,12 +30,52 @@ pub trait OllamaClient {
     ) -> Result<WordAnalysis, OllamaError>;
 }
 
+/// Whether `text` contains Hebrew script (Unicode block U+0590-U+05FF).
+/// Mirrors `niqud::contains_hebrew`, duplicated here rather than adding a
+/// crate dependency for one predicate — word-analysis and niqud are
+/// independent sibling crates, both used directly by crates/app, and
+/// this is the same small-duplication tradeoff already made elsewhere
+/// (e.g. `run_command`/`last_stderr_line` between `subtitle` and
+/// `niqud`).
+fn contains_hebrew(text: &str) -> bool {
+    text.chars().any(|c| ('\u{0590}'..='\u{05FF}').contains(&c))
+}
+
+/// Extra guidance appended to the prompt for Hebrew sentences: without
+/// this, Ollama is inconsistent about single-letter prefix particles
+/// (ו/ה/ב/כ/ל/מ/ש, written attached to the following word with no
+/// space) — sometimes splitting them into their own entry, sometimes
+/// not, observed in real use. Pedagogically the split is what a learner
+/// wants (each prefix is its own grammatical word and deserves its own
+/// translation), so this asks for it explicitly and consistently rather
+/// than leaving it to chance.
+///
+/// This also matters for `niqud_pronunciation::apply_niqud_pronunciation`:
+/// consistent splitting is a prerequisite for its word count to reliably
+/// line up with the niqud pipeline's, which is *why* it currently
+/// doesn't for prefixed sentences (see `docs/src/developer/specs.md`).
+const HEBREW_PREFIX_GUIDANCE: &str = "\n\nThis sentence is Hebrew. Hebrew attaches single-letter \
+     prefix particles — ו (\"and\"), ה (\"the\"), ב (\"in\"), כ (\"as/like\"), \
+     ל (\"to\"), מ (\"from\"), ש (\"that\") — directly onto the following word \
+     with no space between them. Always split each such prefix off as its \
+     own separate word entry with its own translation and pronunciation, \
+     even though it's written attached — for example \"לסרטים\" must become \
+     two entries: \"ל\" (\"to\") and \"סרטים\" (\"movies\"), never one \
+     combined entry.";
+
 /// Builds the prompt sent to Ollama for `analyze_sentence`: asks the model
 /// to split `sentence` into words and, for each, give its `translation`
 /// into `target_language` and a `pronunciation` guide, replying with
-/// exactly the JSON shape `WordAnalysis` deserializes from. A pure
-/// function (no I/O) so it's directly testable without a running Ollama.
+/// exactly the JSON shape `WordAnalysis` deserializes from. Hebrew
+/// sentences get extra guidance appended (see
+/// [`HEBREW_PREFIX_GUIDANCE`]). A pure function (no I/O) so it's directly
+/// testable without a running Ollama.
 pub fn build_prompt(sentence: &str, target_language: &str) -> String {
+    let hebrew_guidance = if contains_hebrew(sentence) {
+        HEBREW_PREFIX_GUIDANCE
+    } else {
+        ""
+    };
     format!(
         "You are a language-learning assistant. Break the following sentence \
          into its individual words, in the order they appear. For each word, \
@@ -43,7 +83,7 @@ pub fn build_prompt(sentence: &str, target_language: &str) -> String {
          - \"word\": the word exactly as it appears in the sentence\n\
          - \"translation\": its meaning in {target_language}\n\
          - \"pronunciation\": a simple phonetic pronunciation guide readable \
-         by a {target_language} speaker\n\n\
+         by a {target_language} speaker{hebrew_guidance}\n\n\
          Respond with ONLY valid JSON in exactly this shape, no other text:\n\
          {{\"words\": [{{\"word\": \"...\", \"translation\": \"...\", \"pronunciation\": \"...\"}}]}}\n\n\
          Sentence: \"{sentence}\""
@@ -205,6 +245,27 @@ mod tests {
         assert!(prompt.contains("hola mundo"));
         assert!(prompt.contains("English"));
         assert!(prompt.contains("\"words\""));
+    }
+
+    #[test]
+    fn test_build_prompt_omits_hebrew_guidance_for_other_languages() {
+        // Given/When: building a prompt for a non-Hebrew sentence
+        // Then:  the Hebrew-specific prefix-splitting guidance is absent,
+        //        keeping the prompt short for languages it doesn't apply to
+        let prompt = build_prompt("hola mundo", "English");
+
+        assert!(!prompt.contains("prefix particles"));
+    }
+
+    #[test]
+    fn test_build_prompt_adds_hebrew_prefix_guidance_for_hebrew_sentences() {
+        // Given/When: building a prompt for a Hebrew sentence
+        // Then:  the prefix-splitting guidance is included, naming a
+        //        concrete example the model can generalize from
+        let prompt = build_prompt("איך הספרים הופכים לסרטים", "English");
+
+        assert!(prompt.contains("prefix particles"));
+        assert!(prompt.contains("לסרטים"));
     }
 
     #[test]

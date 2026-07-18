@@ -477,3 +477,27 @@ easy to miss). Measured explicitly on real hardware (RTX 5070 Ti):
 inference is already ~16ms on plain CPU for this int8 model, so GPU
 wouldn't help. `OnnxNiqudClient` requests `CPUExecutionProvider`
 explicitly (not a silent default).
+
+## Hebrew prompt guidance for prefix particles
+
+Real use surfaced `apply_niqud_pronunciation`'s word-count-mismatch
+fallback firing more than expected: Ollama was inconsistent about
+Hebrew's single-letter prefix particles (ו/ה/ב/כ/ל/מ/ש, written attached
+to the following word with no space, e.g. לסרטים = ל + סרטים) —
+sometimes splitting them into their own word entry, sometimes not, for
+near-identical sentences. `ollama.rs`'s `build_prompt` now appends
+explicit guidance (`HEBREW_PREFIX_GUIDANCE`, gated on a `contains_hebrew`
+check duplicated from `niqud` rather than adding a crate dependency for
+one predicate) asking the model to always split these off, with a
+concrete worked example.
+
+This is also the pedagogically correct behavior independent of the
+alignment concern — each prefix is its own grammatical word and a
+learner benefits from seeing its own translation — but it doesn't fully
+close the alignment gap on its own: niqud's own word list still splits
+purely on whitespace, so a sentence with a prefixed word still produces
+more Ollama entries than niqud entries, and the mismatch fallback still
+applies (Ollama's own guess is kept for that sentence). Teaching the
+niqud pipeline to also split at Phonikud's own prefix-boundary
+predictions (already computed, currently only used for hyphenation in
+`transliterate.rs`) would close this properly; not done yet.
