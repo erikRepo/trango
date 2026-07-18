@@ -5,6 +5,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ## [Unreleased]
 
 ### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
+## [0.1.54] - 2026-07-18
+
+### Added
 - Hebrew sentences' word-analysis pronunciation is now derived from a real niqud (vowel-point) diacritization model instead of Ollama's own unreliable guess (e.g. שכב "shkach" -> "sha-khav") — automatic (detected from script, no setting for *which* sentences), with graceful fallback to Ollama's guess if no model is configured, it fails to load, or its word count doesn't line up with Ollama's. New `crates/niqud`: `contains_hebrew` gates the pipeline, `niqud_to_pronunciation` deterministically converts niqud text into a hyphenated Latin guide, `tokenizer.rs`/`decode.rs` reimplement the niqud model's tokenizer and output reconstruction directly (no `tokenizers` crate needed — confirmed to be character-level despite its WordPiece format), and `OnnxNiqudClient` runs the model via `ort` (ONNX Runtime bindings) with no subprocess/Python involved. Configured via Settings' new "Hebrew niqud model (.onnx)" field; see `docs/src/usage/word-analysis.md` for installing the model and `docs/src/developer/technology/ort.md`. The required ONNX Runtime library needs no manual setup either: the `.deb` package now depends on Ubuntu/Debian's `libonnxruntime1.23`, and trango finds it in the usual system library locations on its own — no `ORT_DYLIB_PATH` or other environment variable needed. Model loading also runs with a bounded timeout at startup, so an incompatible/broken ONNX Runtime install can no longer hang the whole app
 - Settings screen: a gear icon in the top bar opens a dialog showing and editing every `config.toml` setting in one place — video folder, audio monitor source, and audio recording folder are plain text fields that save immediately; whisper model, Ollama model, target language, and the Hebrew niqud model reopen the same pickers/field already used elsewhere in the app. `audio_monitor_source` previously had no UI at all and required hand-editing `config.toml`. The Hebrew niqud model row started as a plain text field but was switched to an in-app folder picker (same chrome as the whisper/Ollama model rows) after a relative path silently failed to resolve depending on trango's working directory at launch — the picker always saves an absolute one. Picking a new niqud model shows "Restart TrangoPlayer to use this model", since the pick only takes effect on the next launch, not live
 - Word analysis now breaks Hebrew's single-letter prefix particles (ו/ה/ב/כ/ל/מ/ש, e.g. לסרטים = ל "to" + סרטים "movies", written attached with no space) into a "parts" translation breakdown shown as a small second line in the Ctrl+A popup (e.g. "ל = to · סרטים = movies") — while `word`/`pronunciation` stay as the whole combined form, matching how it's actually pronounced together in speech and restoring reliable alignment with the niqud pipeline's own word count (an earlier version split such words into separate top-level entries, which got both of those wrong)
@@ -17,7 +27,6 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 ### Fixed
 - Switching the top bar's Video/Audio source no longer leaves whatever was playing in the panel being hidden running silently behind the other one: clicking either segment now pauses mpv first. The visible panel's ScrubBar/SpeedSlider/mpv picture also only show once the actually-loaded file matches that panel (`AppWindow::media-ready`) — previously a loaded video's scrub bar and picture could bleed into the Audio panel just because *some* file was loaded, since both sources always shared one mpv instance
 - Switching to the Audio source now also blanks the current-sentence card and sentence list until a matching file is loaded there, instead of leaving the Video source's sentence stuck on screen — Ctrl+A reports "No sentence is currently in focus" rather than analyzing that stale sentence. Cue navigation itself still never depends on which source is visible; only what's shown/analyzed as "current" does now
-### Removed
 
 ## [0.1.52] - 2026-07-17
 
