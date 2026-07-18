@@ -8,6 +8,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 
 ### Changed
 - Word analysis for Hebrew sentences now runs niqud's whitespace-based word split *before* asking Ollama anything, and hands Ollama that fixed word list to fill in translations for, instead of letting Ollama split the sentence itself and reconciling the mismatch afterward. Ollama's own free-text word splitting kept drifting from niqud's boundaries in real use (e.g. a 31-word Ollama split against niqud's 30, logged as a `tracing::warn` every time) even after several rounds of prompt wording fixes — asking a token-based LLM to fill in blanks for a list it's already given is far more reliable than asking it to reproduce an exact word count/order on its own. The niqud-boundary reconciliation added previously (`hebrew_word_merge::merge_by_niqud_boundaries`) still runs as a safety net for the rarer case where Ollama's response doesn't match the given list either
+- "Analyze all sentences" now logs one aggregate `tracing::info!` summary at the end of the run (retried/failed sentence counts, plus how many niqud-routed sentences needed a word-count reconciliation), instead of Ollama's mistakes only being visible as scattered per-sentence `tracing::warn!` lines that are easy to lose track of across a long run
 
 ### Fixed
 

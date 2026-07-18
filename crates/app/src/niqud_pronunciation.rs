@@ -1,6 +1,6 @@
 //! Merges Ollama's response to being given niqud's own word list (see
-//! `word_analysis::analyze_hebrew_sentence`) onto niqud's word boundaries
-//! and pronunciations — see `docs/src/developer/specs.md`'s "Hebrew
+//! `word_analysis::analyze_sentence`) onto niqud's word boundaries and
+//! pronunciations — see `docs/src/developer/specs.md`'s "Hebrew
 //! pronunciation" entry for why niqud, not Ollama, is the source of truth
 //! for Hebrew pronunciation.
 
@@ -8,6 +8,15 @@ use niqud::NiqudResult;
 use word_analysis::WordAnalysis;
 
 use crate::hebrew_word_merge::merge_by_niqud_boundaries;
+
+/// Whether `analysis`'s word count disagrees with `niqud_result`'s — the
+/// condition [`apply_niqud_pronunciation`] logs a warning and reconciles
+/// for. Exposed separately so a caller analyzing many sentences (e.g.
+/// `word_analysis::spawn_batch_analyze`) can tally how often this happens
+/// across a run without re-deriving the same check.
+pub fn word_count_mismatched(niqud_result: &NiqudResult, analysis: &WordAnalysis) -> bool {
+    analysis.words.len() != niqud_result.words.len()
+}
 
 /// Merges `analysis` — Ollama's response to being given `niqud_result`'s
 /// own words as a fixed, order-preserving list to translate — onto
@@ -22,7 +31,7 @@ pub fn apply_niqud_pronunciation(
     niqud_result: &NiqudResult,
     analysis: WordAnalysis,
 ) -> WordAnalysis {
-    if analysis.words.len() != niqud_result.words.len() {
+    if word_count_mismatched(niqud_result, &analysis) {
         tracing::warn!(
             ollama_words = analysis.words.len(),
             niqud_words = niqud_result.words.len(),
