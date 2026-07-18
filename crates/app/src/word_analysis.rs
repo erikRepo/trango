@@ -35,10 +35,10 @@ const MAX_ANALYZE_ATTEMPTS: u32 = 3;
 const RETRY_DELAY: Duration = Duration::from_millis(500);
 
 /// The two clients `spawn_batch_analyze`/`spawn_analyze_sentence` need:
-/// `ollama` for translation/pronunciation, `niqud` for the Hebrew
-/// pronunciation correction `niqud_pronunciation::apply_niqud_pronunciation`
-/// applies afterward. Bundled into one struct to keep both functions'
-/// parameter counts within clippy's `too_many_arguments` limit.
+/// `ollama` for translation/pronunciation, `niqud` for a Hebrew sentence's
+/// own word boundaries and pronunciation (see [`analyze_sentence`]).
+/// Bundled into one struct to keep both functions' parameter counts within
+/// clippy's `too_many_arguments` limit.
 pub struct AnalysisClients<C, N> {
     /// Talks to a local Ollama instance for word-by-word translation.
     pub ollama: C,
@@ -47,28 +47,73 @@ pub struct AnalysisClients<C, N> {
     pub niqud: N,
 }
 
-/// Calls `client.analyze_sentence` for `sentence`, retrying up to
-/// `MAX_ANALYZE_ATTEMPTS` times (with `RETRY_DELAY` between attempts) as
-/// long as it keeps failing. Returns the last attempt's result, whichever
-/// way it went.
-fn analyze_with_retries<C: OllamaClient>(
+/// Calls `attempt`, retrying up to `max_attempts` times (with
+/// `RETRY_DELAY` between attempts) as long as it keeps failing. Returns the
+/// last attempt's result, whichever way it went.
+fn call_with_retries<T>(
+    max_attempts: u32,
+    mut attempt: impl FnMut() -> Result<T, OllamaError>,
+) -> Result<T, OllamaError> {
+    let mut count = 1;
+    let mut result = attempt();
+    while let Err(err) = &result {
+        if count >= max_attempts {
+            break;
+        }
+        tracing::warn!(attempt = count, %err, "retrying failed word analysis");
+        thread::sleep(RETRY_DELAY);
+        result = attempt();
+        count += 1;
+    }
+    result
+}
+
+/// Analyzes `sentence` word-by-word, calling `attempt()` at most
+/// `max_attempts` times as long as it keeps failing (see
+/// [`call_with_retries`]). For a Hebrew sentence, niqud's own
+/// whitespace-split word boundaries are fetched first and given to
+/// `client.analyze_words` as a fixed list to fill in translations for —
+/// rather than leaving word splitting itself up to Ollama's free-text
+/// `analyze_sentence` prompt, which real use has shown drifts from
+/// niqud's boundaries (e.g. over-splitting Hebrew's attached prefix
+/// particles, despite being asked not to — see
+/// `niqud_pronunciation::apply_niqud_pronunciation`'s doc comment). Falls
+/// back to `analyze_sentence` when `sentence` isn't Hebrew, or when the
+/// niqud call itself fails (logged as a warning; Ollama's own word
+/// splitting is still better than no analysis at all).
+fn analyze_sentence<C: OllamaClient, N: NiqudClient>(
     client: &C,
+    niqud_client: &N,
     model: &str,
     sentence: &str,
     target_language: &str,
+    max_attempts: u32,
 ) -> Result<WordAnalysis, OllamaError> {
-    let mut attempt = 1;
-    let mut result = client.analyze_sentence(model, sentence, target_language);
-    while let Err(err) = &result {
-        if attempt >= MAX_ANALYZE_ATTEMPTS {
-            break;
+    if niqud::contains_hebrew(sentence) {
+        match niqud_client.transliterate_sentence(sentence) {
+            Ok(niqud_result) => {
+                let words: Vec<String> = niqud_result
+                    .words
+                    .iter()
+                    .map(|word| word.word.clone())
+                    .collect();
+                return call_with_retries(max_attempts, || {
+                    client.analyze_words(model, &words, target_language)
+                })
+                .map(|analysis| apply_niqud_pronunciation(&niqud_result, analysis));
+            }
+            Err(err) => {
+                tracing::warn!(
+                    %err,
+                    %sentence,
+                    "niqud transliteration failed, falling back to Ollama's own word splitting"
+                );
+            }
         }
-        tracing::warn!(attempt, %err, "retrying failed word analysis");
-        thread::sleep(RETRY_DELAY);
-        result = client.analyze_sentence(model, sentence, target_language);
-        attempt += 1;
     }
-    result
+    call_with_retries(max_attempts, || {
+        client.analyze_sentence(model, sentence, target_language)
+    })
 }
 
 /// Runs word-by-word analysis for every cue in `cues` not already present
@@ -86,9 +131,10 @@ fn analyze_with_retries<C: OllamaClient>(
 /// error seen, if any, so the caller can surface that a run finished with
 /// some cues left blank.
 ///
-/// Each successful analysis also passes through
-/// `niqud_pronunciation::apply_niqud_pronunciation`, replacing Ollama's
-/// guessed pronunciation with a niqud-derived one for Hebrew cues.
+/// Each Hebrew cue is analyzed via [`analyze_sentence`]'s niqud-first path:
+/// niqud's own word boundaries are fetched before Ollama is even called,
+/// and its pronunciation replaces Ollama's guess afterward (see
+/// `niqud_pronunciation::apply_niqud_pronunciation`).
 pub fn spawn_batch_analyze<C, N>(
     clients: AnalysisClients<C, N>,
     model: String,
@@ -114,10 +160,15 @@ pub fn spawn_batch_analyze<C, N>(
         for (done, cue) in cues.iter().enumerate() {
             if let std::collections::hash_map::Entry::Vacant(entry) = cache.entries.entry(cue.index)
             {
-                match analyze_with_retries(&client, &model, &cue.text, &target_language) {
+                match analyze_sentence(
+                    &client,
+                    &niqud_client,
+                    &model,
+                    &cue.text,
+                    &target_language,
+                    MAX_ANALYZE_ATTEMPTS,
+                ) {
                     Ok(analysis) => {
-                        let analysis =
-                            apply_niqud_pronunciation(&niqud_client, &cue.text, analysis);
                         entry.insert(analysis);
                     }
                     Err(err) => {
@@ -172,12 +223,10 @@ pub fn apply_batch_result(window: &AppWindow, result: Result<(), OllamaError>) {
 /// `config::TrangoConfig::ollama_target_language` has ever been set.
 pub const DEFAULT_TARGET_LANGUAGE: &str = "English";
 
-/// Runs `client.analyze_sentence(...)` on a background thread for a
-/// single `sentence`, calling `on_done` with its result once finished —
+/// Runs [`analyze_sentence`] (with no retries) on a background thread for
+/// a single `sentence`, calling `on_done` with its result once finished —
 /// the Ctrl+A popup's uncached-sentence path. Returns immediately without
-/// blocking the calling thread. A successful result also passes through
-/// `niqud_pronunciation::apply_niqud_pronunciation` (see
-/// `spawn_batch_analyze`'s doc comment).
+/// blocking the calling thread.
 pub fn spawn_analyze_sentence<C, N>(
     client: C,
     niqud_client: N,
@@ -190,9 +239,14 @@ pub fn spawn_analyze_sentence<C, N>(
     N: NiqudClient + Send + 'static,
 {
     thread::spawn(move || {
-        let result = client
-            .analyze_sentence(&model, &sentence, &target_language)
-            .map(|analysis| apply_niqud_pronunciation(&niqud_client, &sentence, analysis));
+        let result = analyze_sentence(
+            &client,
+            &niqud_client,
+            &model,
+            &sentence,
+            &target_language,
+            1,
+        );
         on_done(result);
     });
 }
@@ -352,6 +406,40 @@ mod tests {
                     pronunciation: "pronounced".to_string(),
                     parts: Vec::new(),
                 }],
+            })
+        }
+
+        fn analyze_words(
+            &self,
+            _model: &str,
+            words: &[String],
+            _target_language: &str,
+        ) -> Result<WordAnalysis, OllamaError> {
+            let joined = words.join(" ");
+            self.calls.lock().unwrap().push(joined.clone());
+            if self.fail_sentences.contains(&joined) {
+                return Err(OllamaError::ConnectionFailed(
+                    "fixed test failure".to_string(),
+                ));
+            }
+            if let Some(remaining) = self.flaky_sentences.lock().unwrap().get_mut(&joined) {
+                if *remaining > 0 {
+                    *remaining -= 1;
+                    return Err(OllamaError::ConnectionFailed(
+                        "transient test failure".to_string(),
+                    ));
+                }
+            }
+            Ok(WordAnalysis {
+                words: words
+                    .iter()
+                    .map(|word| WordEntry {
+                        word: word.clone(),
+                        translation: "translated".to_string(),
+                        pronunciation: "pronounced".to_string(),
+                        parts: Vec::new(),
+                    })
+                    .collect(),
             })
         }
     }

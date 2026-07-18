@@ -532,3 +532,22 @@ entries were consumed into one `WordEntry`, joining their translations
 with a space and rebuilding `parts` from them. Runs once, inside
 `apply_niqud_pronunciation`, before the analysis is cached — the Ctrl+A
 popup and cache file only ever see the already-reconciled result.
+
+## Hebrew word analysis: niqud's word list feeds the Ollama prompt, not the other way around
+
+Even with the merge above, Ollama's own word count kept drifting from
+niqud's in real use (e.g. logged as `ollama_words=31 niqud_words=30` on
+a real subtitle line) — asking a token-based LLM to reproduce an exact
+word count/order for a sentence it segments itself is inherently
+unreliable, no matter how the prompt wording is tuned.
+
+`word_analysis::analyze_sentence` (`crates/app/src/word_analysis.rs`)
+now calls niqud *before* Ollama for a Hebrew sentence, and passes its
+whitespace-split words to `OllamaClient::analyze_words` (`crates/
+word-analysis/src/ollama.rs`) as a fixed JSON array the model fills in
+`translation`/`pronunciation`/`parts` for — never asking it to decide
+word boundaries itself. `merge_by_niqud_boundaries` still runs
+afterward as a safety net for the rarer case where Ollama's response
+doesn't match the given list either. Non-Hebrew sentences are
+unaffected — they still use `analyze_sentence`'s free-text prompt,
+since there's no niqud tokenization to pre-split them with.
