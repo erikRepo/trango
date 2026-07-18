@@ -8,6 +8,10 @@
 //! (`process_client::PhonikudCliClient`) and derives the pronunciation
 //! guide from its output deterministically, without any further LLM call.
 
+mod entry;
 mod hebrew_detect;
+mod transliterate;
 
+pub use entry::{NiqudResult, NiqudWord};
 pub use hebrew_detect::contains_hebrew;
+pub use transliterate::niqud_to_pronunciation;
