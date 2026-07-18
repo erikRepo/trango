@@ -13,6 +13,6 @@ mod error;
 mod ollama;
 
 pub use cache::{cache_path_for, load_cache, save_cache, AnalysisCache};
-pub use entry::{WordAnalysis, WordEntry};
+pub use entry::{WordAnalysis, WordEntry, WordPart};
 pub use error::OllamaError;
-pub use ollama::{build_prompt, HttpOllamaClient, OllamaClient};
+pub use ollama::{build_prompt, build_prompt_for_words, HttpOllamaClient, OllamaClient};

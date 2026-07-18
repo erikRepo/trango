@@ -45,6 +45,12 @@ pub struct TrangoConfig {
     /// same principle as `video_folder`. `None` (first run, or no recording
     /// made yet) falls back to the current working directory.
     pub audio_recording_folder: Option<PathBuf>,
+    /// Path to the Hebrew niqud ONNX model file (`niqud::OnnxNiqudClient`),
+    /// with a `tokenizer.json` expected as a sibling file in the same
+    /// folder — see `docs/src/usage/word-analysis.md` for downloading it.
+    /// `None` means Hebrew word-analysis pronunciation falls back to
+    /// Ollama's own (less reliable) guess, same as any other language.
+    pub niqud_model_path: Option<PathBuf>,
 }
 
 /// Resolves the config directory from `xdg_config_home`/`home` (as
@@ -193,6 +199,7 @@ mod tests {
             video_folder: Some(PathBuf::from("/videos")),
             audio_monitor_source: Some("alsa_output.analog-stereo.monitor".to_string()),
             audio_recording_folder: Some(PathBuf::from("/recordings")),
+            niqud_model_path: Some(PathBuf::from("/models/phonikud-1.0.int8.onnx")),
         };
 
         save_to(&path, &config);

@@ -148,6 +148,7 @@ mod tests {
                     word: "hola".to_string(),
                     translation: "hi".to_string(),
                     pronunciation: "OH-lah".to_string(),
+                    parts: Vec::new(),
                 }],
             },
         );

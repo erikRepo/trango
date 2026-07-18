@@ -723,11 +723,17 @@ component FileListDialog {
 /// One word's analysis in the Ctrl+A popup below: the word as it appears
 /// in the sentence, its translation, and a pronunciation guide. Mirrors
 /// `word_analysis::WordEntry` (`crates/word-analysis/src/entry.rs`), set
-/// from Rust by `crates/app/src/word_analysis.rs`.
+/// from Rust by `crates/app/src/word_analysis.rs`. `word`/`pronunciation`
+/// always describe the whole word as written/spoken — for a word made of
+/// multiple morphemes (Hebrew's attached prefix particles, e.g. לסרטים =
+/// ל "to" + סרטים "movies"), `parts-label` carries a pre-formatted
+/// breakdown of `translation` (e.g. "ל = to · סרטים = movies"), empty for
+/// words with nothing to break down.
 struct WordAnalysisRow {
     word: string,
     translation: string,
     pronunciation: string,
+    parts-label: string,
 }
 
 /// State of the Ctrl+A word-analysis popup (`TODO.md` Vaihe 24, part 5/6)
@@ -844,7 +850,7 @@ component WordAnalysisPopup {
 
                     if root.status == WordAnalysisStatus.Done : ListView {
                         for row in root.rows : Rectangle {
-                            height: 56px;
+                            height: row.parts-label == "" ? 56px : 74px;
                             border-radius: 7px;
 
                             HorizontalLayout {
@@ -872,15 +878,28 @@ component WordAnalysisPopup {
                                     }
                                 }
 
-                                Text {
-                                    text: row.translation;
-                                    color: Palette.translation-text;
-                                    font-family: "Inter";
-                                    font-size: 14px;
-                                    font-weight: 500;
+                                VerticalLayout {
+                                    alignment: center;
                                     horizontal-stretch: 1;
-                                    horizontal-alignment: right;
-                                    vertical-alignment: center;
+                                    spacing: 2px;
+
+                                    Text {
+                                        text: row.translation;
+                                        color: Palette.translation-text;
+                                        font-family: "Inter";
+                                        font-size: 14px;
+                                        font-weight: 500;
+                                        horizontal-alignment: right;
+                                    }
+
+                                    if row.parts-label != "" : Text {
+                                        text: row.parts-label;
+                                        color: Palette.muted-text;
+                                        font-family: "Inter";
+                                        font-size: 11px;
+                                        horizontal-alignment: right;
+                                        wrap: word-wrap;
+                                    }
                                 }
                             }
                         }
@@ -982,12 +1001,16 @@ component SettingsDialog {
     in property <string> audio-monitor-source;
     in property <string> audio-recording-folder;
     in property <bool> audio-recording-folder-exists: true;
+    in property <bool> niqud-model-selected: false;
+    in property <string> niqud-model-name;
+    in property <bool> niqud-model-needs-restart: false;
     callback set-video-folder(string);
     callback select-whisper-model();
     callback select-ollama-model();
     callback set-ollama-target-language(string);
     callback set-audio-monitor-source(string);
     callback set-audio-recording-folder(string);
+    callback select-niqud-model();
     callback close();
 
     Rectangle {
@@ -1158,6 +1181,46 @@ component SettingsDialog {
                         font-family: "Inter";
                         font-size: 12px;
                         wrap: word-wrap;
+                    }
+
+                    VerticalLayout {
+                        spacing: 4px;
+
+                        Text {
+                            text: "HEBREW NIQUD MODEL (.ONNX)";
+                            color: Palette.muted-text;
+                            font-family: "JetBrains Mono";
+                            font-size: 10px;
+                            font-weight: 600;
+                            letter-spacing: 0.8px;
+                        }
+
+                        Rectangle {
+                            HorizontalLayout {
+                                Text {
+                                    text: root.niqud-model-selected
+                                        ? root.niqud-model-name + " (change)"
+                                        : "not set — Hebrew pronunciation falls back to Ollama's guess";
+                                    color: Palette.accent;
+                                    font-family: "Inter";
+                                    font-size: 13px;
+                                    font-weight: 500;
+                                    wrap: word-wrap;
+                                }
+                            }
+
+                            TouchArea {
+                                clicked => { root.select-niqud-model(); }
+                            }
+                        }
+
+                        if root.niqud-model-needs-restart : Text {
+                            text: "Restart TrangoPlayer to use this model — the pick is saved, but Hebrew word analysis keeps using whatever was loaded at startup until then.";
+                            color: Palette.muted-text;
+                            font-family: "Inter";
+                            font-size: 12px;
+                            wrap: word-wrap;
+                        }
                     }
 
                     Rectangle {
@@ -2228,6 +2291,27 @@ export component AppWindow inherits Window {
     callback select-model-picker-row(int);
     callback cancel-model-picker-dialog();
     callback confirm-model-picker-dialog();
+    // Hebrew niqud ONNX model selection: which model
+    // niqud::OnnxNiqudClient loads to correct Hebrew word-analysis
+    // pronunciation. Set from Rust by
+    // crates/app/src/niqud_model_picker.rs; persisted across restarts by
+    // crates/app/src/config.rs. Only reachable from the Settings dialog
+    // (no Open Subtitles dialog row, unlike whisper/Ollama models).
+    in property <bool> niqud-model-selected: false;
+    in property <string> niqud-model-name: "";
+    // Set from Rust once a pick is confirmed — niqud_client_from_config
+    // only runs once at startup, so a pick made here doesn't take effect
+    // until trango is restarted; the Settings dialog shows a hint once
+    // this is true (see SettingsDialog's niqud-model-needs-restart row).
+    in property <bool> niqud-model-needs-restart: false;
+    callback select-niqud-model-requested();
+    in property <bool> is-niqud-model-picker-dialog-open: false;
+    in property <string> niqud-model-picker-folder-label: "";
+    in property <[FileListRow]> niqud-model-picker-rows: [];
+    in property <int> niqud-model-picker-selected-index: -1;
+    callback select-niqud-model-picker-row(int);
+    callback cancel-niqud-model-picker-dialog();
+    callback confirm-niqud-model-picker-dialog();
     // Ollama model selection (TODO.md Vaihe 24): which locally installed
     // Ollama model the Ctrl+A popup and "Analyze all sentences" batch loop
     // run word-by-word sentence analysis against. Set from Rust by
@@ -2742,12 +2826,16 @@ export component AppWindow inherits Window {
             audio-monitor-source: root.settings-audio-monitor-source;
             audio-recording-folder: root.settings-audio-recording-folder;
             audio-recording-folder-exists: root.settings-audio-recording-folder-exists;
+            niqud-model-selected: root.niqud-model-selected;
+            niqud-model-name: root.niqud-model-name;
+            niqud-model-needs-restart: root.niqud-model-needs-restart;
             set-video-folder(text) => { root.set-settings-video-folder(text); }
             select-whisper-model => { root.select-whisper-model-requested(); }
             select-ollama-model => { root.select-ollama-model-requested(); }
             set-ollama-target-language(text) => { root.set-ollama-target-language(text); }
             set-audio-monitor-source(text) => { root.set-settings-audio-monitor-source(text); }
             set-audio-recording-folder(text) => { root.set-settings-audio-recording-folder(text); }
+            select-niqud-model => { root.select-niqud-model-requested(); }
             close => { root.close-settings-dialog(); }
         }
 
@@ -2780,6 +2868,21 @@ export component AppWindow inherits Window {
             row-clicked(index) => { root.select-model-picker-row(index); }
             cancel => { root.cancel-model-picker-dialog(); }
             confirm => { root.confirm-model-picker-dialog(); }
+        }
+
+        // Only reachable from the Settings dialog (no Open Subtitles
+        // dialog row, unlike the whisper/Ollama pickers above).
+        if root.is-niqud-model-picker-dialog-open : FileListDialog {
+            width: parent.width;
+            height: parent.height;
+            title: "Select Hebrew niqud model";
+            confirm-label: "Select";
+            folder-label: root.niqud-model-picker-folder-label;
+            rows: root.niqud-model-picker-rows;
+            selected-index: root.niqud-model-picker-selected-index;
+            row-clicked(index) => { root.select-niqud-model-picker-row(index); }
+            cancel => { root.cancel-niqud-model-picker-dialog(); }
+            confirm => { root.confirm-niqud-model-picker-dialog(); }
         }
 
         // Also reached from inside the Open Subtitles dialog, same as the

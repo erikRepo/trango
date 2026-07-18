@@ -63,6 +63,33 @@ Both features need a subtitle to be linked and an Ollama model selected
 first; TrangoPlayer shows a clear inline message rather than a generic
 error if either is missing.
 
+## Hebrew pronunciation
+
+For Hebrew sentences specifically, the pronunciation guide isn't guessed
+by Ollama — small local models transliterate Hebrew unreliably even when
+they translate it correctly. Instead TrangoPlayer runs a separate niqud
+(vowel-point) diacritization model
+([Phonikud](https://github.com/thewh1teagle/phonikud)) directly and
+derives the pronunciation deterministically from its output. Hebrew
+sentences are detected automatically from their script — nothing to
+configure there.
+
+The model itself needs a one-time setup: download
+[`phonikud-1.0.int8.onnx`](https://huggingface.co/thewh1teagle/phonikud-onnx)
+and [`tokenizer.json`](https://huggingface.co/dicta-il/dictabert-large-char-menaked)
+into the same folder, then point **Settings → "HEBREW NIQUD MODEL
+(.ONNX)"** at the `.onnx` file. If no model is configured, or loading it
+fails, Ctrl+A/"Analyze all sentences" still work exactly as before, just
+with Ollama's own (less accurate) pronunciation guess for Hebrew lines.
+
+Also needs ONNX Runtime itself installed — TrangoPlayer's `.deb` package
+pulls in Ubuntu/Debian's `libonnxruntime1.23` automatically, so this
+needs no action if you installed that way. Installed some other way?
+Install `libonnxruntime1.23` (or newer) yourself; TrangoPlayer finds it
+in the usual system library locations without any extra configuration —
+see [ort](../developer/technology/ort.md) for why this is a separate
+runtime dependency rather than bundled.
+
 ## If a model returns bad or empty analyses
 
 Run with the `--debug` flag to see exactly what prompt was sent to

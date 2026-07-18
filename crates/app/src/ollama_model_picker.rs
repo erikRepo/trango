@@ -147,6 +147,15 @@ mod tests {
         ) -> Result<word_analysis::WordAnalysis, OllamaError> {
             unreachable!("not exercised by these tests")
         }
+
+        fn analyze_words(
+            &self,
+            _model: &str,
+            _words: &[String],
+            _target_language: &str,
+        ) -> Result<word_analysis::WordAnalysis, OllamaError> {
+            unreachable!("not exercised by these tests")
+        }
     }
 
     /// Blocks up to a few seconds for `rx` to receive a value — see

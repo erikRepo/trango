@@ -4,10 +4,11 @@
 //! open — the edits themselves are handled by `crates/app/src/main.rs`'s
 //! `wire_settings_dialog` (video folder, audio monitor source, audio
 //! recording folder) and by the pre-existing `wire_model_picker`/
-//! `wire_ollama_model_picker`/`wire_ollama_target_language` handlers,
-//! reused as-is since the Settings dialog's model/language rows forward
-//! straight to the same top-level callbacks those already wire
-//! (`app-window.slint`'s SettingsDialog instantiation).
+//! `wire_niqud_model_picker`/`wire_ollama_model_picker`/
+//! `wire_ollama_target_language` handlers, reused as-is since the
+//! Settings dialog's model/language rows forward straight to the same
+//! top-level callbacks those already wire (`app-window.slint`'s
+//! SettingsDialog instantiation).
 
 use crate::system_audio_capture::default_recording_folder;
 use crate::{config, AppWindow};

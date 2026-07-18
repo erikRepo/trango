@@ -407,3 +407,147 @@ than the version field). Packaging uses `cargo-deb`, configured via
 `[package.metadata.deb]` in `crates/app/Cargo.toml`; runtime `Depends`
 are left at the default `$auto` so `dpkg-shlibdeps` derives them from the
 built binary's actual shared-library links instead of being hand-maintained.
+
+## Hebrew pronunciation: native `ort` inference, not the Ollama prompt
+
+Ollama's own `pronunciation` field is unreliable for Hebrew even with a
+Hebrew-capable model — small LLMs mistransliterate niqud/dagesh
+distinctions (e.g. שכב → "shkach" instead of "sha-khav"), and re-feeding
+niqud text through the LLM wouldn't fix this: BPE tokenization splits
+Hebrew combining diacritics unpredictably, so the same unreliability just
+moves one step later. Instead `crates/niqud`'s `OnnxNiqudClient` runs
+[Phonikud](https://github.com/thewh1teagle/phonikud)'s niqud model
+directly via `ort` (ONNX Runtime bindings), and a deterministic Rust
+table (`transliterate.rs`) converts the resulting niqud text to a
+hyphenated Latin guide — no further LLM call. Gated automatically by
+`contains_hebrew` (Unicode block U+0590–U+05FF); other languages are
+untouched. Ollama still handles translation (a real semantic task) and
+its `pronunciation` guess is kept as a fallback if no niqud model is
+configured, loading fails, or the word counts don't align
+(`tracing::warn`, never a hard failure).
+
+**Native Rust, not a Python subprocess.** An earlier version shelled out
+to a Python/`phonikud-onnx` CLI wrapper; it worked but accumulated real
+operational hackiness (a venv whose activation state depends on whatever
+shell happens to launch trango, on top of CPU-pinning/offline-mode
+workarounds). Reimplementing natively turned out tractable because the
+model's I/O contract and the `dicta-il/dictabert-large-char-menaked`
+tokenizer were both fully reverse-engineered during that first
+implementation: despite being stored in HuggingFace's "WordPiece"
+format, the tokenizer is actually **character-level** (its
+`pre_tokenizer` splits into individual characters first, so no subword
+merging ever happens) — a flat char→id vocab parsed straight from
+`tokenizer.json` is enough, no `tokenizers` crate dependency needed.
+`decode.rs` ports `phonikud_onnx`'s Python reconstruction loop
+(argmax over `nikud_logits`/`shin_logits`, threshold over
+`additional_logits`'s stress/vocal-shva/prefix classifiers) directly.
+
+**Pitfalls found in the model's output that both the decode loop and the
+transliteration table depend on:** beyond standard nikud/dagesh/shin-dot
+marks, the model also emits a `|` (U+007C) after prefix letters
+(ו/ב/כ/ל/מ/ש) marking a morpheme boundary, and a meteg (U+05BD) combined
+with shva distinguishes vocal shva ("e", pronounced) from silent shva —
+both undocumented in Phonikud's own API but load-bearing for correct
+syllabification.
+
+**Build vs. runtime linking.** `ort`'s default `download-binaries`
+feature fetches a prebuilt ONNX Runtime binary *at compile time* over the
+network — unacceptable for offline/CI builds. `crates/niqud/Cargo.toml`
+instead uses `load-dynamic` (loads `libonnxruntime.so` at *runtime*) plus
+`api-23`: the crate's *default* feature set requests API 24, which hangs
+indefinitely (not a clean error) against Ubuntu's apt-packaged
+`libonnxruntime1.23` — api-23 works correctly against that same package,
+confirmed by comparing its output against Python `onnxruntime`'s for
+identical input (matching to a few significant digits; a newer runtime
+like pip's onnxruntime 1.27 matches exactly).
+
+No `ORT_DYLIB_PATH` needed for a normal install: `crates/app/Cargo.toml`
+depends on `libonnxruntime1.23` directly (`$auto`/`dpkg-shlibdeps` can't
+detect it, since `load-dynamic` means no link-time ELF reference exists
+for it to find), and `crates/niqud/src/dylib.rs` scans the usual
+Debian/Ubuntu library directories at runtime for a match — see
+[ort](technology/ort.md) for the hang-avoidance details this needed.
+Model/tokenizer files are still a manual download (accepted tradeoff,
+not automatable the way the library dependency is — too large to bundle
+in the `.deb`) — see `docs/src/usage/word-analysis.md`.
+
+**GPU checked, CPU kept deliberately.** `onnxruntime`'s CUDA provider
+silently falls back to CPU if system cuDNN is missing (no hard error —
+easy to miss). Measured explicitly on real hardware (RTX 5070 Ti):
+inference is already ~16ms on plain CPU for this int8 model, so GPU
+wouldn't help. `OnnxNiqudClient` requests `CPUExecutionProvider`
+explicitly (not a silent default).
+
+## Hebrew prefix particles: a `parts` breakdown, not split top-level entries
+
+Real use surfaced two problems with Hebrew's single-letter prefix
+particles (ו/ה/ב/כ/ל/מ/ש, written attached to the following word with no
+space, e.g. לסרטים = ל + סרטים). A first attempt asked Ollama to always
+split such a word into two separate top-level word entries (own
+`"word"`/`"translation"`/`"pronunciation"` each). That was wrong on two
+counts:
+
+- **Not how it sounds.** A prefixed word is pronounced as one fused unit
+  in speech (e.g. "לסרטים" as "le-sratim"), not two separate sounds — but
+  the user wants exactly that fused pronunciation, matching what's
+  actually heard, not a per-morpheme guess.
+- **Broke niqud alignment.** `apply_niqud_pronunciation`'s word-count
+  check compares Ollama's word list against niqud's own, which only ever
+  splits on whitespace — so splitting a prefixed word into two Ollama
+  entries mismatched niqud's one, and the mismatch fallback (keep
+  Ollama's own pronunciation guess) applied far more often than it
+  should have.
+
+Fixed by keeping `"word"`/`"pronunciation"` as the whole combined form
+(restoring niqud's 1:1 alignment as a side effect — no changes needed to
+the niqud pipeline itself) and moving the morpheme breakdown into a new
+optional `"parts"` array on each `WordEntry` (`word-analysis/src/
+entry.rs`'s `WordPart`, `#[serde(default, skip_serializing_if =
+"Vec::is_empty")]` so it's absent from JSON for the overwhelming
+majority of words that have nothing to break down). `ollama.rs`'s
+`HEBREW_PREFIX_GUIDANCE` (gated on a `contains_hebrew` check duplicated
+from `niqud` rather than adding a crate dependency for one predicate)
+asks for this with a concrete worked example. The Ctrl+A popup
+(`WordAnalysisRow`'s `parts-label`) shows the breakdown as a small
+second line under the translation, e.g. "ל = to · סרטים = movies", only
+when non-empty.
+
+## Hebrew prefix particles: merging by niqud's boundaries, not by exact text
+
+The prompt guidance above isn't followed consistently — real captured
+output for one sentence correctly fused one prefixed word but still
+split two others into separate top-level entries in the same response.
+An earlier fix compared Ollama's and niqud's word lists via an LCS
+match on exact text equality, correcting pronunciation wherever both
+sides matched verbatim. That can't fix a split word: a split
+fragment's text ("ו", "אמר") never equals the fused token niqud
+returns ("ואמר"), so it stayed both visually split and mispronounced.
+
+`hebrew_word_merge::merge_by_niqud_boundaries` (`crates/app/src/
+hebrew_word_merge.rs`) fixes this instead by trusting niqud's
+whitespace-only tokenization as the word boundary, and growing a
+window of consecutive Ollama entries (smallest first) until their
+concatenated text matches niqud's current word — merging whichever
+entries were consumed into one `WordEntry`, joining their translations
+with a space and rebuilding `parts` from them. Runs once, inside
+`apply_niqud_pronunciation`, before the analysis is cached — the Ctrl+A
+popup and cache file only ever see the already-reconciled result.
+
+## Hebrew word analysis: niqud's word list feeds the Ollama prompt, not the other way around
+
+Even with the merge above, Ollama's own word count kept drifting from
+niqud's in real use (e.g. logged as `ollama_words=31 niqud_words=30` on
+a real subtitle line) — asking a token-based LLM to reproduce an exact
+word count/order for a sentence it segments itself is inherently
+unreliable, no matter how the prompt wording is tuned.
+
+`word_analysis::analyze_sentence` (`crates/app/src/word_analysis.rs`)
+now calls niqud *before* Ollama for a Hebrew sentence, and passes its
+whitespace-split words to `OllamaClient::analyze_words` (`crates/
+word-analysis/src/ollama.rs`) as a fixed JSON array the model fills in
+`translation`/`pronunciation`/`parts` for — never asking it to decide
+word boundaries itself. `merge_by_niqud_boundaries` still runs
+afterward as a safety net for the rarer case where Ollama's response
+doesn't match the given list either. Non-Hebrew sentences are
+unaffected — they still use `analyze_sentence`'s free-text prompt,
+since there's no niqud tokenization to pre-split them with.

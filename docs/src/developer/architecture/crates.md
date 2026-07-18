@@ -1,6 +1,6 @@
 # Crate structure
 
-trango is a Cargo workspace with five members, all inheriting `version`,
+trango is a Cargo workspace with six members, all inheriting `version`,
 `edition`, and `rust-version` from `[workspace.package]` in the root
 `Cargo.toml`.
 
@@ -69,6 +69,21 @@ gracefully via stdin before falling back to killing it), and
 `subtitle::WhisperCliGenerator`, tested against fake shell-script
 binaries the same way. No Slint/libmpv dependency.
 
+## `crates/niqud` (library)
+
+Hebrew niqud diacritization and a deterministic Latin pronunciation guide,
+replacing Ollama's unreliable LLM-guessed pronunciation for Hebrew
+sentences only (see [specs.md](../specs.md)'s "Hebrew pronunciation"
+entry and [ort](../technology/ort.md)). `hebrew_detect::contains_hebrew`
+gates the whole pipeline per sentence (Unicode block U+0590-U+05FF) —
+sentences in other languages never invoke it. `tokenizer.rs`/`decode.rs`
+are pure functions (tokenizing, and reconstructing the diacritized string
+from a model run's logits) tested against fixtures with no model file
+needed; `onnx_client::OnnxNiqudClient` ties them to a real `ort::Session`
+— `Clone`, so the loaded model is reused for the process's lifetime
+rather than per call. No Slint/libmpv dependency, same testability split
+as `word-analysis`.
+
 ## `crates/app` (binary, package `trango`)
 
 Ties Slint, libmpv, and the library crates together. Package name
@@ -96,9 +111,8 @@ skipped rather than blocking video playback.
 the result back into `AppWindow` properties the top bar/translation
 toggle read directly.
 
-## Why five crates instead of one
+## Why six crates instead of one
 
-Splitting `subtitle`, `playback-state`, `word-analysis`, and
-`audio-capture` out of the binary keeps most business logic testable
-without Slint/libmpv, and keeps files small (CLAUDE.md: aim for ~200
-lines/file).
+Splitting `subtitle`, `playback-state`, `word-analysis`, `audio-capture`,
+and `niqud` out of the binary keeps most business logic testable without
+Slint/libmpv, and keeps files small (CLAUDE.md: aim for ~200 lines/file).

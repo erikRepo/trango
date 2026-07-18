@@ -28,25 +28,145 @@ pub trait OllamaClient {
         sentence: &str,
         target_language: &str,
     ) -> Result<WordAnalysis, OllamaError>;
+
+    /// Analyzes `words` — already split onto exact word boundaries by the
+    /// caller, rather than left for the model to decide — using `model`,
+    /// asking for a `translation`/`pronunciation`/`parts` breakdown for
+    /// each one. Used instead of `analyze_sentence` when the caller
+    /// already knows a sentence's exact word boundaries (e.g. Hebrew
+    /// sentences use niqud's own whitespace tokenization — see
+    /// `crates/app/src/word_analysis.rs`), since getting an LLM to
+    /// reproduce an exact word count/order for a sentence it segments
+    /// itself is far less reliable than asking it to fill in blanks for a
+    /// list it was already given.
+    fn analyze_words(
+        &self,
+        model: &str,
+        words: &[String],
+        target_language: &str,
+    ) -> Result<WordAnalysis, OllamaError>;
 }
+
+/// Whether `text` contains Hebrew script (Unicode block U+0590-U+05FF).
+/// Mirrors `niqud::contains_hebrew`, duplicated here rather than adding a
+/// crate dependency for one predicate — word-analysis and niqud are
+/// independent sibling crates, both used directly by crates/app, and
+/// this is the same small-duplication tradeoff already made elsewhere
+/// (e.g. `run_command`/`last_stderr_line` between `subtitle` and
+/// `niqud`).
+fn contains_hebrew(text: &str) -> bool {
+    text.chars().any(|c| ('\u{0590}'..='\u{05FF}').contains(&c))
+}
+
+/// Extra guidance appended to the prompt for Hebrew sentences, asking for
+/// a `"parts"` breakdown of single-letter prefix particles (ו/ה/ב/כ/ל/
+/// מ/ש, written attached to the following word with no space) rather
+/// than splitting them into separate top-level word entries the way an
+/// earlier version of this prompt asked for.
+///
+/// That earlier approach was wrong on two counts, both found through
+/// real use: it's not how the word actually sounds (a prefixed word is
+/// pronounced as one fused unit in speech, e.g. "לסרטים" as "le-sratim",
+/// not two separate sounds) — and it broke
+/// `niqud_pronunciation::apply_niqud_pronunciation`'s word-count
+/// alignment with the niqud pipeline's own whitespace-based splitting,
+/// which only ever sees one whitespace-delimited unit per prefixed word.
+/// Keeping `"word"`/`"pronunciation"` as the whole combined form fixes
+/// both: it matches what's actually heard, and restores the 1:1
+/// alignment niqud correction depends on — while `"parts"` still gives a
+/// learner the grammatical breakdown each morpheme deserves.
+const HEBREW_PREFIX_GUIDANCE: &str = "\n\nThis sentence is Hebrew. Hebrew attaches single-letter \
+     prefix particles — ו (\"and\"), ה (\"the\"), ב (\"in\"), כ (\"as/like\"), \
+     ל (\"to\"), מ (\"from\"), ש (\"that\") — directly onto the following word \
+     with no space between them. Keep such a word as ONE entry: its \"word\" \
+     and \"pronunciation\" must describe the whole combined form exactly as \
+     it is written and actually pronounced together in speech (e.g. \
+     \"לסרטים\" is pronounced as one fused word — never split \"word\" or \
+     \"pronunciation\" across two entries for it). Instead, break down its \
+     meaning in a \"parts\" array, one entry per morpheme, e.g. for \
+     \"לסרטים\": \"parts\": [{\"word\": \"ל\", \"translation\": \"to\"}, \
+     {\"word\": \"סרטים\", \"translation\": \"movies\"}]. For a word with no \
+     attached prefix, \"parts\" should be an empty array. Each entry inside \
+     \"parts\" is always a flat {\"word\", \"translation\"} pair — never give \
+     a \"parts\" entry a \"parts\" field of its own, even for a word like \
+     \"מהספרים\" that fuses two prefixes (מ + ה) onto \"ספרים\": list all three \
+     morphemes as three flat, sibling entries in that one \"parts\" array, not \
+     nested inside each other. These prefix particles can also stack two at \
+     a time onto the SAME following word, e.g. \"כשכולם\" (כ+ש+כולם, \"when \
+     everyone\"): the whole stack still stays ONE top-level entry — never \
+     split the stack itself off as if it were its own top-level word (e.g. \
+     never emit \"כש\" and \"כולם\" as two separate top-level entries); its \
+     \"parts\" array then has one entry per stacked particle plus the base \
+     word, e.g. [{\"word\": \"כ\", ...}, {\"word\": \"ש\", ...}, \
+     {\"word\": \"כולם\", ...}].";
 
 /// Builds the prompt sent to Ollama for `analyze_sentence`: asks the model
 /// to split `sentence` into words and, for each, give its `translation`
 /// into `target_language` and a `pronunciation` guide, replying with
-/// exactly the JSON shape `WordAnalysis` deserializes from. A pure
-/// function (no I/O) so it's directly testable without a running Ollama.
+/// exactly the JSON shape `WordAnalysis` deserializes from. Hebrew
+/// sentences get extra guidance appended (see
+/// [`HEBREW_PREFIX_GUIDANCE`]). A pure function (no I/O) so it's directly
+/// testable without a running Ollama.
 pub fn build_prompt(sentence: &str, target_language: &str) -> String {
+    let hebrew_guidance = if contains_hebrew(sentence) {
+        HEBREW_PREFIX_GUIDANCE
+    } else {
+        ""
+    };
     format!(
         "You are a language-learning assistant. Break the following sentence \
-         into its individual words, in the order they appear. For each word, \
-         provide:\n\
+         into its individual words, in the order they appear. Output exactly \
+         one entry per word token in the sentence, in that exact order and \
+         count — subtitle sentences often repeat a word or a whole phrase \
+         one or more times, immediately or later in the sentence; when that \
+         happens, output a separate entry for every single occurrence, never \
+         merging, deduplicating, or silently dropping any of them. Do not add \
+         any entry that isn't literally one of the sentence's own words (no \
+         punctuation-only entries, no summary or \"end of sentence\" \
+         entries). For each word, provide:\n\
          - \"word\": the word exactly as it appears in the sentence\n\
          - \"translation\": its meaning in {target_language}\n\
          - \"pronunciation\": a simple phonetic pronunciation guide readable \
-         by a {target_language} speaker\n\n\
+         by a {target_language} speaker{hebrew_guidance}\n\n\
          Respond with ONLY valid JSON in exactly this shape, no other text:\n\
          {{\"words\": [{{\"word\": \"...\", \"translation\": \"...\", \"pronunciation\": \"...\"}}]}}\n\n\
          Sentence: \"{sentence}\""
+    )
+}
+
+/// Builds the prompt sent to Ollama for `analyze_words`: gives the model
+/// `words` — already split onto exact word boundaries by the caller — as
+/// a fixed, order-preserving JSON array and asks it to add a
+/// `translation`/`pronunciation` (and, for Hebrew, a `parts` breakdown) to
+/// each one, without adding, dropping, merging, splitting, or reordering
+/// any entry. Word segmentation is by far the least reliable part of
+/// `build_prompt`'s free-text prompt (real use has needed repeated
+/// wording fixes and still drifts, e.g. over-splitting Hebrew's attached
+/// prefix particles) — handing the model a pre-split, count-fixed list
+/// turns "get the segmentation right" into "fill in these blanks", which
+/// token-based LLMs are far more reliable at. A pure function (no I/O), so
+/// it's directly testable without a running Ollama.
+pub fn build_prompt_for_words(words: &[String], target_language: &str) -> String {
+    let hebrew_guidance = if words.iter().any(|word| contains_hebrew(word)) {
+        HEBREW_PREFIX_GUIDANCE
+    } else {
+        ""
+    };
+    let words_json = serde_json::to_string(words).unwrap_or_default();
+    let count = words.len();
+    format!(
+        "You are a language-learning assistant. Here is a JSON array of {count} words, \
+         already split from a sentence and given in order: {words_json}\n\n\
+         For each word in this array, output exactly one entry, in that exact order and \
+         count — the output \"words\" array must have exactly {count} entries, one per \
+         given word. Never add, drop, merge, split, reorder, or deduplicate any entry, \
+         even if a word repeats one or more times in the array. For each word, provide:\n\
+         - \"word\": copy the given word exactly, unchanged\n\
+         - \"translation\": its meaning in {target_language}\n\
+         - \"pronunciation\": a simple phonetic pronunciation guide readable \
+         by a {target_language} speaker{hebrew_guidance}\n\n\
+         Respond with ONLY valid JSON in exactly this shape, no other text:\n\
+         {{\"words\": [{{\"word\": \"...\", \"translation\": \"...\", \"pronunciation\": \"...\"}}]}}"
     )
 }
 
@@ -173,6 +293,39 @@ impl OllamaClient for HttpOllamaClient {
         }
         parse_analysis_response(&response.response)
     }
+
+    fn analyze_words(
+        &self,
+        model: &str,
+        words: &[String],
+        target_language: &str,
+    ) -> Result<WordAnalysis, OllamaError> {
+        let url = format!("{}/api/generate", self.base_url);
+        let prompt = build_prompt_for_words(words, target_language);
+        let request_body = GenerateRequest {
+            model,
+            prompt: prompt.clone(),
+            stream: false,
+            format: "json",
+            think: false,
+        };
+        tracing::debug!(%model, %prompt, "sending Ollama analyze_words request");
+        let response: GenerateResponse = ureq::post(&url)
+            .send_json(&request_body)
+            .map_err(map_ureq_error)?
+            .body_mut()
+            .read_json()
+            .map_err(|err| OllamaError::InvalidResponse(err.to_string()))?;
+        tracing::debug!(response = %response.response, "received Ollama analyze_words response");
+        if response.response.trim().is_empty() {
+            return Err(OllamaError::InvalidResponse(
+                "Ollama returned an empty response (the model may have spent its whole \
+                 budget \"thinking\" with no final answer — try a different model)"
+                    .to_string(),
+            ));
+        }
+        parse_analysis_response(&response.response)
+    }
 }
 
 /// Maps a `ureq::Error` to `OllamaError`: a non-2xx status becomes
@@ -208,6 +361,94 @@ mod tests {
     }
 
     #[test]
+    fn test_build_prompt_omits_hebrew_guidance_for_other_languages() {
+        // Given/When: building a prompt for a non-Hebrew sentence
+        // Then:  the Hebrew-specific prefix-splitting guidance is absent,
+        //        keeping the prompt short for languages it doesn't apply to
+        let prompt = build_prompt("hola mundo", "English");
+
+        assert!(!prompt.contains("prefix particles"));
+    }
+
+    #[test]
+    fn test_build_prompt_adds_hebrew_prefix_guidance_for_hebrew_sentences() {
+        // Given/When: building a prompt for a Hebrew sentence
+        // Then:  the guidance is included, naming a concrete example the
+        //        model can generalize from, and asks for a "parts"
+        //        breakdown rather than splitting "word"/"pronunciation"
+        //        themselves (see HEBREW_PREFIX_GUIDANCE's doc comment for
+        //        why an earlier version did the latter and was wrong)
+        let prompt = build_prompt("איך הספרים הופכים לסרטים", "English");
+
+        assert!(prompt.contains("prefix particles"));
+        assert!(prompt.contains("לסרטים"));
+        assert!(prompt.contains("\"parts\""));
+    }
+
+    #[test]
+    fn test_build_prompt_warns_that_prefix_particles_can_stack() {
+        // Given/When: building a prompt for a Hebrew sentence
+        // Then:  the guidance calls out that two single-letter prefixes can
+        //        stack onto one word (e.g. כש = כ+ש, "when") and must still
+        //        stay ONE top-level entry — found through real use returning
+        //        "כש"/"כולם" as two separate top-level entries for "כשכולם",
+        //        the same mistake the single-prefix guidance already fixed
+        //        for one-letter cases
+        let prompt = build_prompt("כשכולם ישנים", "English");
+
+        assert!(prompt.contains("כשכולם"));
+        assert!(prompt.contains("stack"));
+    }
+
+    #[test]
+    fn test_build_prompt_for_words_includes_given_words_and_target_language() {
+        // Given/When: building a words-prompt for a fixed word list
+        // Then:  the given words and target language appear in the prompt,
+        //        as a JSON array rather than free text
+        let prompt = build_prompt_for_words(&["hola".to_string(), "mundo".to_string()], "English");
+
+        assert!(prompt.contains(r#"["hola","mundo"]"#));
+        assert!(prompt.contains("English"));
+        assert!(prompt.contains("\"words\""));
+    }
+
+    #[test]
+    fn test_build_prompt_for_words_states_the_exact_required_count() {
+        // Given/When: building a words-prompt for three given words
+        // Then:  the prompt states "3" as the exact number of output
+        //        entries required, so the model can't drift the count the
+        //        way it can with a free-text sentence to split itself
+        let prompt = build_prompt_for_words(
+            &["a".to_string(), "b".to_string(), "c".to_string()],
+            "English",
+        );
+
+        assert!(prompt.contains("exactly 3 entries"));
+    }
+
+    #[test]
+    fn test_build_prompt_for_words_omits_hebrew_guidance_for_other_languages() {
+        // Given/When: building a words-prompt for non-Hebrew words
+        // Then:  the Hebrew-specific prefix-splitting guidance is absent
+        let prompt = build_prompt_for_words(&["hola".to_string(), "mundo".to_string()], "English");
+
+        assert!(!prompt.contains("prefix particles"));
+    }
+
+    #[test]
+    fn test_build_prompt_for_words_adds_hebrew_prefix_guidance_when_any_word_is_hebrew() {
+        // Given/When: building a words-prompt where one of the given words
+        //             is Hebrew
+        // Then:  the Hebrew prefix-splitting guidance is included, even
+        //        though it only needs to check individual words rather
+        //        than a whole free-text sentence
+        let prompt = build_prompt_for_words(&["איך".to_string(), "לסרטים".to_string()], "English");
+
+        assert!(prompt.contains("prefix particles"));
+        assert!(prompt.contains("\"parts\""));
+    }
+
+    #[test]
     fn test_parse_analysis_response_accepts_plain_json() {
         // Given: a raw response with no code fence
         // When:  parsing it
@@ -223,6 +464,7 @@ mod tests {
                     word: "hola".to_string(),
                     translation: "hi".to_string(),
                     pronunciation: "OH-lah".to_string(),
+                    parts: Vec::new(),
                 }]
             }
         );

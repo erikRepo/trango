@@ -5,7 +5,10 @@
 //! wired in later development steps (see `TODO.md`).
 
 mod config;
+mod hebrew_word_merge;
 mod model_picker;
+mod niqud_model_picker;
+mod niqud_pronunciation;
 mod ollama_model_picker;
 mod open_media_dialog;
 mod open_subtitles_dialog;
@@ -34,7 +37,8 @@ fn print_version() {
 /// Installs the `tracing` subscriber. `debug` (the `--debug` CLI flag,
 /// see `extract_debug_flag`) is the primary way to turn on debug-level
 /// logging — including `crates/word-analysis/src/ollama.rs`'s prompt/
-/// response logging — without needing to export an environment variable;
+/// response logging and `crates/niqud/src/onnx_client.rs`'s sentence/
+/// result logging — without needing to export an environment variable;
 /// when set it always wins, filtered to trango's own crates rather than
 /// `debug`-level noise from every dependency (`winit` in particular is
 /// very chatty). Without `--debug`, the `RUST_LOG` environment variable
@@ -45,7 +49,7 @@ fn print_version() {
 /// explicitly (see `docs/src/developer/technology/tracing.md`).
 fn init_logging(debug: bool) {
     let filter = if debug {
-        tracing_subscriber::EnvFilter::new("info,trango=debug,word_analysis=debug")
+        tracing_subscriber::EnvFilter::new("info,trango=debug,word_analysis=debug,niqud=debug")
     } else {
         tracing_subscriber::EnvFilter::try_from_default_env()
             .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
@@ -773,6 +777,60 @@ fn ffmpeg_path_from_env() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("ffmpeg"))
 }
 
+/// How long [`niqud_client_from_config`] waits for `OnnxNiqudClient::load`
+/// before giving up — real loads finish in well under a second, but a
+/// found-yet-incompatible `libonnxruntime.so` has been observed to hang
+/// `ort`'s session setup indefinitely rather than erroring cleanly (see
+/// `docs/src/developer/technology/ort.md`), and this call runs
+/// synchronously at startup, before the window is even shown.
+const NIQUD_LOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Builds the niqud client used by both `wire_word_analysis_batch` and
+/// `wire_word_analysis_popup` to derive Hebrew pronunciation guides (see
+/// `docs/src/developer/specs.md`'s "Hebrew pronunciation" entry) from
+/// `config.niqud_model_path` (a `.onnx` model file, with `tokenizer.json`
+/// expected as a sibling — set via the Settings dialog's "Hebrew niqud
+/// model" row). Called once at startup, not per word-analysis call —
+/// `niqud::OnnxNiqudClient` is `Clone` specifically so the loaded
+/// model/session can be reused for the life of the process rather than
+/// reloaded every time; changing the path in Settings takes effect on the
+/// next restart, not live.
+///
+/// Runs the actual load on a background thread with a bounded wait
+/// (`NIQUD_LOAD_TIMEOUT`) rather than calling it directly, so a hang
+/// inside `ort` can't freeze trango's startup — a timed-out load leaves
+/// that thread blocked indefinitely in the background rather than
+/// crashing or hanging the app, an acceptable tradeoff since it's a
+/// single extra idle thread, not a resource that grows unbounded.
+///
+/// Returns `None` (logging a warning, not an error — this is an expected,
+/// supported state, not a failure) if no path is configured, loading
+/// fails, or it times out; word analysis then falls back to Ollama's own
+/// pronunciation guess rather than failing outright
+/// (`niqud_pronunciation::apply_niqud_pronunciation`).
+fn niqud_client_from_config(config: &config::TrangoConfig) -> Option<niqud::OnnxNiqudClient> {
+    let model_path = config.niqud_model_path.clone()?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(niqud::OnnxNiqudClient::load(&model_path));
+    });
+    match rx.recv_timeout(NIQUD_LOAD_TIMEOUT) {
+        Ok(Ok(client)) => Some(client),
+        Ok(Err(err)) => {
+            tracing::warn!(%err, "failed to load niqud model, Hebrew word analysis will fall back to Ollama's own pronunciation guess");
+            None
+        }
+        Err(_timed_out) => {
+            tracing::warn!(
+                timeout_secs = NIQUD_LOAD_TIMEOUT.as_secs(),
+                "niqud model loading timed out (a hung/incompatible onnxruntime install?), \
+                 Hebrew word analysis will fall back to Ollama's own pronunciation guess"
+            );
+            None
+        }
+    }
+}
+
 fn wire_open_subtitles_dialog(
     window: &AppWindow,
     state: &Rc<RefCell<PlayerState>>,
@@ -1067,6 +1125,96 @@ fn wire_model_picker(window: &AppWindow, selected_model: Rc<RefCell<Option<PathB
     });
 }
 
+/// Wires the Settings dialog's Hebrew niqud model row: `select-niqud-model-
+/// requested` opens a `FileListDialog` scoped to `.onnx` files, mirroring
+/// `wire_model_picker` (see its doc comment for why an in-app folder
+/// browser rather than an OS-native picker). Always saves an absolute
+/// path (a `read_dir` entry's path always is one) to
+/// `config::TrangoConfig::niqud_model_path` — replaces an earlier
+/// plain-text field that silently accepted a relative path, which only
+/// resolved correctly by accident depending on trango's working directory
+/// at launch.
+///
+/// Unlike the whisper/Ollama pickers, only reachable from the Settings
+/// dialog and not shared with any other call site — `niqud_client_from_config`
+/// re-reads `config::load()` once at startup, so a pick here takes effect
+/// on the next restart, not live; the confirm handler sets
+/// `niqud-model-needs-restart` so the Settings dialog says so rather than
+/// silently doing nothing until the user figures it out.
+fn wire_niqud_model_picker(window: &AppWindow) {
+    let entries: Rc<RefCell<Vec<niqud_model_picker::FolderEntry>>> =
+        Rc::new(RefCell::new(Vec::new()));
+
+    let request_window_weak = window.as_weak();
+    let request_entries = Rc::clone(&entries);
+    window.on_select_niqud_model_requested(move || {
+        let Some(window) = request_window_weak.upgrade() else {
+            return;
+        };
+        let folder = niqud_model_picker::default_start_folder(&config::load());
+        let files = niqud_model_picker::list_folder_entries(&folder);
+        niqud_model_picker::open_dialog(&window, &folder, &files);
+        *request_entries.borrow_mut() = files;
+    });
+
+    let select_window_weak = window.as_weak();
+    let select_entries = Rc::clone(&entries);
+    window.on_select_niqud_model_picker_row(move |index| {
+        let Some(window) = select_window_weak.upgrade() else {
+            return;
+        };
+        let target_folder = usize::try_from(index).ok().and_then(|index| {
+            match select_entries.borrow().get(index)? {
+                niqud_model_picker::FolderEntry::Up(path)
+                | niqud_model_picker::FolderEntry::Folder { path, .. } => Some(path.clone()),
+                niqud_model_picker::FolderEntry::Model(_) => None,
+            }
+        });
+        if let Some(target_folder) = target_folder {
+            let files = niqud_model_picker::list_folder_entries(&target_folder);
+            niqud_model_picker::open_dialog(&window, &target_folder, &files);
+            *select_entries.borrow_mut() = files;
+            return;
+        }
+        window.set_niqud_model_picker_selected_index(index);
+        niqud_model_picker::mark_selected(&window, &select_entries.borrow(), index);
+    });
+
+    let cancel_window_weak = window.as_weak();
+    window.on_cancel_niqud_model_picker_dialog(move || {
+        if let Some(window) = cancel_window_weak.upgrade() {
+            window.set_is_niqud_model_picker_dialog_open(false);
+        }
+    });
+
+    let confirm_window_weak = window.as_weak();
+    let confirm_entries = Rc::clone(&entries);
+    window.on_confirm_niqud_model_picker_dialog(move || {
+        let Some(window) = confirm_window_weak.upgrade() else {
+            return;
+        };
+        let model = usize::try_from(window.get_niqud_model_picker_selected_index())
+            .ok()
+            .and_then(|index| confirm_entries.borrow().get(index).cloned())
+            .and_then(|entry| match entry {
+                niqud_model_picker::FolderEntry::Model(model) => Some(model),
+                _ => None,
+            });
+        let Some(model) = model else {
+            return;
+        };
+        tracing::info!(model_path = ?model.path, model_name = %model.name, "niqud model selected");
+        window.set_is_niqud_model_picker_dialog_open(false);
+        window.set_niqud_model_selected(true);
+        window.set_niqud_model_name(model.name.clone().into());
+        window.set_niqud_model_needs_restart(true);
+
+        let mut config = config::load();
+        config.niqud_model_path = Some(model.path.clone());
+        config::save(&config);
+    });
+}
+
 /// Wires the Open Subtitles dialog's Ollama model row (`TODO.md` Vaihe 24,
 /// part 3/6): `select-ollama-model-requested` opens a `FileListDialog`
 /// listing models a local Ollama instance reports installed
@@ -1273,6 +1421,7 @@ fn wire_word_analysis_batch(
     current_media: &Rc<RefCell<CurrentMedia>>,
     selected_ollama_model: Rc<RefCell<Option<String>>>,
     target_language: Rc<RefCell<String>>,
+    niqud_client: Option<niqud::OnnxNiqudClient>,
 ) {
     let window_weak = window.as_weak();
     let state = Rc::clone(state);
@@ -1306,7 +1455,10 @@ fn wire_word_analysis_batch(
         let progress_window_weak = window_weak.clone();
         let done_window_weak = window_weak.clone();
         word_analysis::spawn_batch_analyze(
-            ::word_analysis::HttpOllamaClient::default(),
+            word_analysis::AnalysisClients {
+                ollama: ::word_analysis::HttpOllamaClient::default(),
+                niqud: niqud_client.clone(),
+            },
             model,
             target_language.borrow().clone(),
             cues,
@@ -1349,6 +1501,7 @@ fn wire_word_analysis_popup(
     current_media: &Rc<RefCell<CurrentMedia>>,
     selected_ollama_model: Rc<RefCell<Option<String>>>,
     target_language: Rc<RefCell<String>>,
+    niqud_client: Option<niqud::OnnxNiqudClient>,
 ) {
     let window_weak = window.as_weak();
     let request_state = Rc::clone(state);
@@ -1418,6 +1571,7 @@ fn wire_word_analysis_popup(
         let cue_index = cue.index;
         word_analysis::spawn_analyze_sentence(
             ::word_analysis::HttpOllamaClient::default(),
+            niqud_client.clone(),
             model,
             cue.text.clone(),
             target_language.borrow().clone(),
@@ -1492,6 +1646,7 @@ fn main() -> anyhow::Result<()> {
     wire_pause_playback(&window, Rc::clone(&video_player));
 
     let startup_config = config::load();
+    let niqud_client = niqud_client_from_config(&startup_config);
 
     wire_open_media_dialog(
         &window,
@@ -1519,6 +1674,22 @@ fn main() -> anyhow::Result<()> {
     }
     wire_ollama_model_picker(&window, Rc::clone(&selected_ollama_model));
 
+    if let Some(niqud_model_path) = startup_config
+        .niqud_model_path
+        .as_deref()
+        .filter(|path| path.is_file())
+    {
+        window.set_niqud_model_selected(true);
+        window.set_niqud_model_name(
+            niqud_model_path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| niqud_model_path.display().to_string())
+                .into(),
+        );
+    }
+    wire_niqud_model_picker(&window);
+
     let target_language = Rc::new(RefCell::new(
         startup_config
             .ollama_target_language
@@ -1535,6 +1706,7 @@ fn main() -> anyhow::Result<()> {
         &current_media,
         Rc::clone(&selected_ollama_model),
         Rc::clone(&target_language),
+        niqud_client.clone(),
     );
     wire_word_analysis_popup(
         &window,
@@ -1542,6 +1714,7 @@ fn main() -> anyhow::Result<()> {
         &current_media,
         Rc::clone(&selected_ollama_model),
         Rc::clone(&target_language),
+        niqud_client,
     );
 
     let mut startup_audio_capture = audio_capture::AudioCapture::default();
@@ -1636,6 +1809,40 @@ mod tests {
                 "video.mp4".to_string(),
                 "subs.srt".to_string()
             ]
+        );
+    }
+
+    #[test]
+    fn test_niqud_client_from_config_returns_none_when_not_configured() {
+        // Given: a config with no niqud_model_path set
+        // When:  building the niqud client
+        // Then:  None comes back without spawning anything
+        let config = config::TrangoConfig::default();
+
+        assert!(niqud_client_from_config(&config).is_none());
+    }
+
+    #[test]
+    fn test_niqud_client_from_config_returns_none_quickly_for_a_bad_path() {
+        // Given: a config pointing at a model file that doesn't exist
+        // When:  building the niqud client
+        // Then:  None comes back well within NIQUD_LOAD_TIMEOUT — proving
+        //        a normal load failure (missing file) is reported via the
+        //        fast Ok(Err(_)) path, not by waiting out the timeout
+        //        meant only for a genuine hang
+        let config = config::TrangoConfig {
+            niqud_model_path: Some(PathBuf::from("/no/such/trango-test-niqud-model.onnx")),
+            ..Default::default()
+        };
+
+        let started = std::time::Instant::now();
+        let client = niqud_client_from_config(&config);
+        let elapsed = started.elapsed();
+
+        assert!(client.is_none());
+        assert!(
+            elapsed < NIQUD_LOAD_TIMEOUT / 2,
+            "expected a fast failure, took {elapsed:?}"
         );
     }
 
@@ -1997,6 +2204,7 @@ mod tests {
                     word: "Welcome".to_string(),
                     translation: "Tervetuloa".to_string(),
                     pronunciation: "wel-kuhm".to_string(),
+                    parts: Vec::new(),
                 }],
             },
         );
@@ -2016,6 +2224,7 @@ mod tests {
             &word_analysis_current_media,
             Rc::clone(&word_analysis_selected_model),
             Rc::clone(&word_analysis_target_language),
+            None,
         );
 
         assert_eq!(player_state.borrow().media_source, MediaSource::Video);
