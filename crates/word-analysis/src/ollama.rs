@@ -69,7 +69,19 @@ const HEBREW_PREFIX_GUIDANCE: &str = "\n\nThis sentence is Hebrew. Hebrew attach
      meaning in a \"parts\" array, one entry per morpheme, e.g. for \
      \"לסרטים\": \"parts\": [{\"word\": \"ל\", \"translation\": \"to\"}, \
      {\"word\": \"סרטים\", \"translation\": \"movies\"}]. For a word with no \
-     attached prefix, \"parts\" should be an empty array.";
+     attached prefix, \"parts\" should be an empty array. Each entry inside \
+     \"parts\" is always a flat {\"word\", \"translation\"} pair — never give \
+     a \"parts\" entry a \"parts\" field of its own, even for a word like \
+     \"מהספרים\" that fuses two prefixes (מ + ה) onto \"ספרים\": list all three \
+     morphemes as three flat, sibling entries in that one \"parts\" array, not \
+     nested inside each other. These prefix particles can also stack two at \
+     a time onto the SAME following word, e.g. \"כשכולם\" (כ+ש+כולם, \"when \
+     everyone\"): the whole stack still stays ONE top-level entry — never \
+     split the stack itself off as if it were its own top-level word (e.g. \
+     never emit \"כש\" and \"כולם\" as two separate top-level entries); its \
+     \"parts\" array then has one entry per stacked particle plus the base \
+     word, e.g. [{\"word\": \"כ\", ...}, {\"word\": \"ש\", ...}, \
+     {\"word\": \"כולם\", ...}].";
 
 /// Builds the prompt sent to Ollama for `analyze_sentence`: asks the model
 /// to split `sentence` into words and, for each, give its `translation`
@@ -86,8 +98,15 @@ pub fn build_prompt(sentence: &str, target_language: &str) -> String {
     };
     format!(
         "You are a language-learning assistant. Break the following sentence \
-         into its individual words, in the order they appear. For each word, \
-         provide:\n\
+         into its individual words, in the order they appear. Output exactly \
+         one entry per word token in the sentence, in that exact order and \
+         count — subtitle sentences often repeat a word or a whole phrase \
+         one or more times, immediately or later in the sentence; when that \
+         happens, output a separate entry for every single occurrence, never \
+         merging, deduplicating, or silently dropping any of them. Do not add \
+         any entry that isn't literally one of the sentence's own words (no \
+         punctuation-only entries, no summary or \"end of sentence\" \
+         entries). For each word, provide:\n\
          - \"word\": the word exactly as it appears in the sentence\n\
          - \"translation\": its meaning in {target_language}\n\
          - \"pronunciation\": a simple phonetic pronunciation guide readable \
@@ -278,6 +297,21 @@ mod tests {
         assert!(prompt.contains("prefix particles"));
         assert!(prompt.contains("לסרטים"));
         assert!(prompt.contains("\"parts\""));
+    }
+
+    #[test]
+    fn test_build_prompt_warns_that_prefix_particles_can_stack() {
+        // Given/When: building a prompt for a Hebrew sentence
+        // Then:  the guidance calls out that two single-letter prefixes can
+        //        stack onto one word (e.g. כש = כ+ש, "when") and must still
+        //        stay ONE top-level entry — found through real use returning
+        //        "כש"/"כולם" as two separate top-level entries for "כשכולם",
+        //        the same mistake the single-prefix guidance already fixed
+        //        for one-letter cases
+        let prompt = build_prompt("כשכולם ישנים", "English");
+
+        assert!(prompt.contains("כשכולם"));
+        assert!(prompt.contains("stack"));
     }
 
     #[test]

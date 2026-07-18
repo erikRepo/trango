@@ -67,6 +67,7 @@ impl OnnxNiqudClient {
 
 impl NiqudClient for OnnxNiqudClient {
     fn transliterate_sentence(&self, sentence: &str) -> Result<NiqudResult, NiqudError> {
+        tracing::debug!(%sentence, "running niqud transliterate_sentence");
         let niqud_stripped = strip_niqud(sentence);
         let tokens = tokenize(&self.vocab, &niqud_stripped);
         let seq_len = tokens.len();
@@ -112,7 +113,7 @@ impl NiqudClient for OnnxNiqudClient {
             additional_logits,
         );
 
-        Ok(NiqudResult {
+        let result = NiqudResult {
             words: sentence
                 .split_whitespace()
                 .zip(diacritized.split_whitespace())
@@ -122,7 +123,9 @@ impl NiqudClient for OnnxNiqudClient {
                     niqud: niqud.to_string(),
                 })
                 .collect(),
-        })
+        };
+        tracing::debug!(?result, "niqud transliterate_sentence result");
+        Ok(result)
     }
 }
 
