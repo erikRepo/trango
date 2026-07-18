@@ -27,9 +27,9 @@ no separate "Save" button:
 
 - **Video folder**, **audio recording folder** — plain text fields;
   type a path and it's used from then on.
-- **Whisper model**, **Ollama model** — clicking the current value (or
-  "select a model…") reopens the same picker dialogs used elsewhere in
-  the app, rather than typing a path.
+- **Whisper model**, **Ollama model**, **Hebrew niqud model** —
+  clicking the current value (or "select a model…") opens a picker
+  dialog rather than typing a path, guaranteeing a valid, absolute path.
 - **Word analysis target language** — the same field as the Subtitles
   dialog's language box; editing it in either place updates the other.
 - **Audio monitor source** — overrides the Audio source's Ctrl+Space
@@ -40,11 +40,12 @@ no separate "Save" button:
   record from a non-default one — to the exact source name (check
   `pactl list sources short`) to skip autodetection entirely. Empty
   means "keep autodetecting".
-- **Hebrew niqud model (.onnx)** — path to a downloaded niqud
+- **Hebrew niqud model (.onnx)** — points at a downloaded niqud
   diacritization model file, used to correct Hebrew pronunciation
   guides in [word analysis](word-analysis.md#hebrew-pronunciation).
-  Empty means Hebrew falls back to Ollama's own (less accurate) guess.
-  Takes effect on the next restart, not live.
+  Not set means Hebrew falls back to Ollama's own (less accurate)
+  guess. A new pick only takes effect after restarting TrangoPlayer —
+  the dialog says so once you've picked one.
 
 If this file is missing or unreadable, TrangoPlayer just starts with
 nothing remembered rather than failing to open — losing a remembered

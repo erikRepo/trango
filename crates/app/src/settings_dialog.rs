@@ -4,10 +4,11 @@
 //! open — the edits themselves are handled by `crates/app/src/main.rs`'s
 //! `wire_settings_dialog` (video folder, audio monitor source, audio
 //! recording folder) and by the pre-existing `wire_model_picker`/
-//! `wire_ollama_model_picker`/`wire_ollama_target_language` handlers,
-//! reused as-is since the Settings dialog's model/language rows forward
-//! straight to the same top-level callbacks those already wire
-//! (`app-window.slint`'s SettingsDialog instantiation).
+//! `wire_niqud_model_picker`/`wire_ollama_model_picker`/
+//! `wire_ollama_target_language` handlers, reused as-is since the
+//! Settings dialog's model/language rows forward straight to the same
+//! top-level callbacks those already wire (`app-window.slint`'s
+//! SettingsDialog instantiation).
 
 use crate::system_audio_capture::default_recording_folder;
 use crate::{config, AppWindow};
@@ -33,8 +34,6 @@ pub fn open_dialog(window: &AppWindow, config: &config::TrangoConfig) {
     let recording_folder = default_recording_folder(config);
     window.set_settings_audio_recording_folder(recording_folder.display().to_string().into());
     window.set_settings_audio_recording_folder_exists(recording_folder.is_dir());
-
-    window.set_settings_niqud_model_path(path_label(config.niqud_model_path.as_deref()).into());
 
     window.set_is_settings_dialog_open(true);
 }

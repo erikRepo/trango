@@ -982,14 +982,16 @@ component SettingsDialog {
     in property <string> audio-monitor-source;
     in property <string> audio-recording-folder;
     in property <bool> audio-recording-folder-exists: true;
-    in property <string> niqud-model-path;
+    in property <bool> niqud-model-selected: false;
+    in property <string> niqud-model-name;
+    in property <bool> niqud-model-needs-restart: false;
     callback set-video-folder(string);
     callback select-whisper-model();
     callback select-ollama-model();
     callback set-ollama-target-language(string);
     callback set-audio-monitor-source(string);
     callback set-audio-recording-folder(string);
-    callback set-niqud-model-path(string);
+    callback select-niqud-model();
     callback close();
 
     Rectangle {
@@ -1162,11 +1164,44 @@ component SettingsDialog {
                         wrap: word-wrap;
                     }
 
-                    SettingsEditRow {
-                        label: "HEBREW NIQUD MODEL (.ONNX)";
-                        value: root.niqud-model-path;
-                        placeholder: "not set — Hebrew pronunciation falls back to Ollama's guess";
-                        edited(text) => { root.set-niqud-model-path(text); }
+                    VerticalLayout {
+                        spacing: 4px;
+
+                        Text {
+                            text: "HEBREW NIQUD MODEL (.ONNX)";
+                            color: Palette.muted-text;
+                            font-family: "JetBrains Mono";
+                            font-size: 10px;
+                            font-weight: 600;
+                            letter-spacing: 0.8px;
+                        }
+
+                        Rectangle {
+                            HorizontalLayout {
+                                Text {
+                                    text: root.niqud-model-selected
+                                        ? root.niqud-model-name + " (change)"
+                                        : "not set — Hebrew pronunciation falls back to Ollama's guess";
+                                    color: Palette.accent;
+                                    font-family: "Inter";
+                                    font-size: 13px;
+                                    font-weight: 500;
+                                    wrap: word-wrap;
+                                }
+                            }
+
+                            TouchArea {
+                                clicked => { root.select-niqud-model(); }
+                            }
+                        }
+
+                        if root.niqud-model-needs-restart : Text {
+                            text: "Restart TrangoPlayer to use this model — the pick is saved, but Hebrew word analysis keeps using whatever was loaded at startup until then.";
+                            color: Palette.muted-text;
+                            font-family: "Inter";
+                            font-size: 12px;
+                            wrap: word-wrap;
+                        }
                     }
 
                     Rectangle {
@@ -2237,6 +2272,27 @@ export component AppWindow inherits Window {
     callback select-model-picker-row(int);
     callback cancel-model-picker-dialog();
     callback confirm-model-picker-dialog();
+    // Hebrew niqud ONNX model selection: which model
+    // niqud::OnnxNiqudClient loads to correct Hebrew word-analysis
+    // pronunciation. Set from Rust by
+    // crates/app/src/niqud_model_picker.rs; persisted across restarts by
+    // crates/app/src/config.rs. Only reachable from the Settings dialog
+    // (no Open Subtitles dialog row, unlike whisper/Ollama models).
+    in property <bool> niqud-model-selected: false;
+    in property <string> niqud-model-name: "";
+    // Set from Rust once a pick is confirmed — niqud_client_from_config
+    // only runs once at startup, so a pick made here doesn't take effect
+    // until trango is restarted; the Settings dialog shows a hint once
+    // this is true (see SettingsDialog's niqud-model-needs-restart row).
+    in property <bool> niqud-model-needs-restart: false;
+    callback select-niqud-model-requested();
+    in property <bool> is-niqud-model-picker-dialog-open: false;
+    in property <string> niqud-model-picker-folder-label: "";
+    in property <[FileListRow]> niqud-model-picker-rows: [];
+    in property <int> niqud-model-picker-selected-index: -1;
+    callback select-niqud-model-picker-row(int);
+    callback cancel-niqud-model-picker-dialog();
+    callback confirm-niqud-model-picker-dialog();
     // Ollama model selection (TODO.md Vaihe 24): which locally installed
     // Ollama model the Ctrl+A popup and "Analyze all sentences" batch loop
     // run word-by-word sentence analysis against. Set from Rust by
@@ -2341,11 +2397,9 @@ export component AppWindow inherits Window {
     in property <string> settings-audio-monitor-source: "";
     in property <string> settings-audio-recording-folder: "";
     in property <bool> settings-audio-recording-folder-exists: true;
-    in property <string> settings-niqud-model-path: "";
     callback set-settings-video-folder(string);
     callback set-settings-audio-monitor-source(string);
     callback set-settings-audio-recording-folder(string);
-    callback set-settings-niqud-model-path(string);
     callback close-settings-dialog();
 
     title: "TrangoPlayer v" + version;
@@ -2753,14 +2807,16 @@ export component AppWindow inherits Window {
             audio-monitor-source: root.settings-audio-monitor-source;
             audio-recording-folder: root.settings-audio-recording-folder;
             audio-recording-folder-exists: root.settings-audio-recording-folder-exists;
-            niqud-model-path: root.settings-niqud-model-path;
+            niqud-model-selected: root.niqud-model-selected;
+            niqud-model-name: root.niqud-model-name;
+            niqud-model-needs-restart: root.niqud-model-needs-restart;
             set-video-folder(text) => { root.set-settings-video-folder(text); }
             select-whisper-model => { root.select-whisper-model-requested(); }
             select-ollama-model => { root.select-ollama-model-requested(); }
             set-ollama-target-language(text) => { root.set-ollama-target-language(text); }
             set-audio-monitor-source(text) => { root.set-settings-audio-monitor-source(text); }
             set-audio-recording-folder(text) => { root.set-settings-audio-recording-folder(text); }
-            set-niqud-model-path(text) => { root.set-settings-niqud-model-path(text); }
+            select-niqud-model => { root.select-niqud-model-requested(); }
             close => { root.close-settings-dialog(); }
         }
 
@@ -2793,6 +2849,21 @@ export component AppWindow inherits Window {
             row-clicked(index) => { root.select-model-picker-row(index); }
             cancel => { root.cancel-model-picker-dialog(); }
             confirm => { root.confirm-model-picker-dialog(); }
+        }
+
+        // Only reachable from the Settings dialog (no Open Subtitles
+        // dialog row, unlike the whisper/Ollama pickers above).
+        if root.is-niqud-model-picker-dialog-open : FileListDialog {
+            width: parent.width;
+            height: parent.height;
+            title: "Select Hebrew niqud model";
+            confirm-label: "Select";
+            folder-label: root.niqud-model-picker-folder-label;
+            rows: root.niqud-model-picker-rows;
+            selected-index: root.niqud-model-picker-selected-index;
+            row-clicked(index) => { root.select-niqud-model-picker-row(index); }
+            cancel => { root.cancel-niqud-model-picker-dialog(); }
+            confirm => { root.confirm-niqud-model-picker-dialog(); }
         }
 
         // Also reached from inside the Open Subtitles dialog, same as the

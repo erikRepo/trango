@@ -6,6 +6,7 @@
 
 mod config;
 mod model_picker;
+mod niqud_model_picker;
 mod niqud_pronunciation;
 mod ollama_model_picker;
 mod open_media_dialog;
@@ -1122,6 +1123,96 @@ fn wire_model_picker(window: &AppWindow, selected_model: Rc<RefCell<Option<PathB
     });
 }
 
+/// Wires the Settings dialog's Hebrew niqud model row: `select-niqud-model-
+/// requested` opens a `FileListDialog` scoped to `.onnx` files, mirroring
+/// `wire_model_picker` (see its doc comment for why an in-app folder
+/// browser rather than an OS-native picker). Always saves an absolute
+/// path (a `read_dir` entry's path always is one) to
+/// `config::TrangoConfig::niqud_model_path` — replaces an earlier
+/// plain-text field that silently accepted a relative path, which only
+/// resolved correctly by accident depending on trango's working directory
+/// at launch.
+///
+/// Unlike the whisper/Ollama pickers, only reachable from the Settings
+/// dialog and not shared with any other call site — `niqud_client_from_config`
+/// re-reads `config::load()` once at startup, so a pick here takes effect
+/// on the next restart, not live; the confirm handler sets
+/// `niqud-model-needs-restart` so the Settings dialog says so rather than
+/// silently doing nothing until the user figures it out.
+fn wire_niqud_model_picker(window: &AppWindow) {
+    let entries: Rc<RefCell<Vec<niqud_model_picker::FolderEntry>>> =
+        Rc::new(RefCell::new(Vec::new()));
+
+    let request_window_weak = window.as_weak();
+    let request_entries = Rc::clone(&entries);
+    window.on_select_niqud_model_requested(move || {
+        let Some(window) = request_window_weak.upgrade() else {
+            return;
+        };
+        let folder = niqud_model_picker::default_start_folder(&config::load());
+        let files = niqud_model_picker::list_folder_entries(&folder);
+        niqud_model_picker::open_dialog(&window, &folder, &files);
+        *request_entries.borrow_mut() = files;
+    });
+
+    let select_window_weak = window.as_weak();
+    let select_entries = Rc::clone(&entries);
+    window.on_select_niqud_model_picker_row(move |index| {
+        let Some(window) = select_window_weak.upgrade() else {
+            return;
+        };
+        let target_folder = usize::try_from(index).ok().and_then(|index| {
+            match select_entries.borrow().get(index)? {
+                niqud_model_picker::FolderEntry::Up(path)
+                | niqud_model_picker::FolderEntry::Folder { path, .. } => Some(path.clone()),
+                niqud_model_picker::FolderEntry::Model(_) => None,
+            }
+        });
+        if let Some(target_folder) = target_folder {
+            let files = niqud_model_picker::list_folder_entries(&target_folder);
+            niqud_model_picker::open_dialog(&window, &target_folder, &files);
+            *select_entries.borrow_mut() = files;
+            return;
+        }
+        window.set_niqud_model_picker_selected_index(index);
+        niqud_model_picker::mark_selected(&window, &select_entries.borrow(), index);
+    });
+
+    let cancel_window_weak = window.as_weak();
+    window.on_cancel_niqud_model_picker_dialog(move || {
+        if let Some(window) = cancel_window_weak.upgrade() {
+            window.set_is_niqud_model_picker_dialog_open(false);
+        }
+    });
+
+    let confirm_window_weak = window.as_weak();
+    let confirm_entries = Rc::clone(&entries);
+    window.on_confirm_niqud_model_picker_dialog(move || {
+        let Some(window) = confirm_window_weak.upgrade() else {
+            return;
+        };
+        let model = usize::try_from(window.get_niqud_model_picker_selected_index())
+            .ok()
+            .and_then(|index| confirm_entries.borrow().get(index).cloned())
+            .and_then(|entry| match entry {
+                niqud_model_picker::FolderEntry::Model(model) => Some(model),
+                _ => None,
+            });
+        let Some(model) = model else {
+            return;
+        };
+        tracing::info!(model_path = ?model.path, model_name = %model.name, "niqud model selected");
+        window.set_is_niqud_model_picker_dialog_open(false);
+        window.set_niqud_model_selected(true);
+        window.set_niqud_model_name(model.name.clone().into());
+        window.set_niqud_model_needs_restart(true);
+
+        let mut config = config::load();
+        config.niqud_model_path = Some(model.path.clone());
+        config::save(&config);
+    });
+}
+
 /// Wires the Open Subtitles dialog's Ollama model row (`TODO.md` Vaihe 24,
 /// part 3/6): `select-ollama-model-requested` opens a `FileListDialog`
 /// listing models a local Ollama instance reports installed
@@ -1310,19 +1401,6 @@ fn wire_settings_dialog(window: &AppWindow) {
             system_audio_capture::default_recording_folder(&config).is_dir(),
         );
         system_audio_capture::refresh_recording_folder_label(&window, &config);
-    });
-
-    let niqud_model_window_weak = window.as_weak();
-    window.on_set_settings_niqud_model_path(move |path| {
-        let Some(window) = niqud_model_window_weak.upgrade() else {
-            return;
-        };
-        let path = path.to_string();
-        let trimmed = path.trim();
-        let mut config = config::load();
-        config.niqud_model_path = (!trimmed.is_empty()).then(|| PathBuf::from(trimmed));
-        config::save(&config);
-        window.set_settings_niqud_model_path(path.into());
     });
 }
 
@@ -1593,6 +1671,22 @@ fn main() -> anyhow::Result<()> {
         window.set_ollama_model_name(model.into());
     }
     wire_ollama_model_picker(&window, Rc::clone(&selected_ollama_model));
+
+    if let Some(niqud_model_path) = startup_config
+        .niqud_model_path
+        .as_deref()
+        .filter(|path| path.is_file())
+    {
+        window.set_niqud_model_selected(true);
+        window.set_niqud_model_name(
+            niqud_model_path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| niqud_model_path.display().to_string())
+                .into(),
+        );
+    }
+    wire_niqud_model_picker(&window);
 
     let target_language = Rc::new(RefCell::new(
         startup_config
