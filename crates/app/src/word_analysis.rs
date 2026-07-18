@@ -15,10 +15,12 @@ use std::rc::Rc;
 use std::thread;
 use std::time::Duration;
 
+use niqud::NiqudClient;
 use slint::VecModel;
 use subtitle::Cue;
 use word_analysis::{OllamaClient, OllamaError, WordAnalysis};
 
+use crate::niqud_pronunciation::apply_niqud_pronunciation;
 use crate::{AppWindow, WordAnalysisBatchStatus, WordAnalysisRow, WordAnalysisStatus};
 
 /// Number of times `spawn_batch_analyze` calls `analyze_sentence` for a
@@ -31,6 +33,19 @@ const MAX_ANALYZE_ATTEMPTS: u32 = 3;
 /// to let a momentary hiccup pass, short enough not to noticeably slow a
 /// batch run that's mostly succeeding.
 const RETRY_DELAY: Duration = Duration::from_millis(500);
+
+/// The two clients `spawn_batch_analyze`/`spawn_analyze_sentence` need:
+/// `ollama` for translation/pronunciation, `niqud` for the Hebrew
+/// pronunciation correction `niqud_pronunciation::apply_niqud_pronunciation`
+/// applies afterward. Bundled into one struct to keep both functions'
+/// parameter counts within clippy's `too_many_arguments` limit.
+pub struct AnalysisClients<C, N> {
+    /// Talks to a local Ollama instance for word-by-word translation.
+    pub ollama: C,
+    /// Derives a Hebrew sentence's pronunciation guide from niqud, in
+    /// place of Ollama's own (less reliable) guess.
+    pub niqud: N,
+}
 
 /// Calls `client.analyze_sentence` for `sentence`, retrying up to
 /// `MAX_ANALYZE_ATTEMPTS` times (with `RETRY_DELAY` between attempts) as
@@ -70,8 +85,12 @@ fn analyze_with_retries<C: OllamaClient>(
 /// not retried again on every future run; `on_done` reports the *last*
 /// error seen, if any, so the caller can surface that a run finished with
 /// some cues left blank.
-pub fn spawn_batch_analyze<C>(
-    client: C,
+///
+/// Each successful analysis also passes through
+/// `niqud_pronunciation::apply_niqud_pronunciation`, replacing Ollama's
+/// guessed pronunciation with a niqud-derived one for Hebrew cues.
+pub fn spawn_batch_analyze<C, N>(
+    clients: AnalysisClients<C, N>,
     model: String,
     target_language: String,
     cues: Vec<Cue>,
@@ -80,7 +99,12 @@ pub fn spawn_batch_analyze<C>(
     on_done: impl FnOnce(Result<(), OllamaError>) + Send + 'static,
 ) where
     C: OllamaClient + Send + 'static,
+    N: NiqudClient + Send + 'static,
 {
+    let AnalysisClients {
+        ollama: client,
+        niqud: niqud_client,
+    } = clients;
     thread::spawn(move || {
         let mut cache = word_analysis::load_cache(&cache_path);
         cache.model = model.clone();
@@ -92,6 +116,8 @@ pub fn spawn_batch_analyze<C>(
             {
                 match analyze_with_retries(&client, &model, &cue.text, &target_language) {
                     Ok(analysis) => {
+                        let analysis =
+                            apply_niqud_pronunciation(&niqud_client, &cue.text, analysis);
                         entry.insert(analysis);
                     }
                     Err(err) => {
@@ -149,18 +175,25 @@ pub const DEFAULT_TARGET_LANGUAGE: &str = "English";
 /// Runs `client.analyze_sentence(...)` on a background thread for a
 /// single `sentence`, calling `on_done` with its result once finished —
 /// the Ctrl+A popup's uncached-sentence path. Returns immediately without
-/// blocking the calling thread.
-pub fn spawn_analyze_sentence<C>(
+/// blocking the calling thread. A successful result also passes through
+/// `niqud_pronunciation::apply_niqud_pronunciation` (see
+/// `spawn_batch_analyze`'s doc comment).
+pub fn spawn_analyze_sentence<C, N>(
     client: C,
+    niqud_client: N,
     model: String,
     sentence: String,
     target_language: String,
     on_done: impl FnOnce(Result<WordAnalysis, OllamaError>) + Send + 'static,
 ) where
     C: OllamaClient + Send + 'static,
+    N: NiqudClient + Send + 'static,
 {
     thread::spawn(move || {
-        on_done(client.analyze_sentence(&model, &sentence, &target_language));
+        let result = client
+            .analyze_sentence(&model, &sentence, &target_language)
+            .map(|analysis| apply_niqud_pronunciation(&niqud_client, &sentence, analysis));
+        on_done(result);
     });
 }
 
@@ -218,9 +251,40 @@ mod tests {
     use std::sync::mpsc;
     use std::time::Duration;
 
+    use niqud::{NiqudError, NiqudResult, NiqudWord};
     use word_analysis::{AnalysisCache, WordAnalysis, WordEntry};
 
     use super::*;
+
+    /// A `NiqudClient` test double that panics if ever called — every test
+    /// in this module analyzes non-Hebrew sentences, so
+    /// `apply_niqud_pronunciation`'s `contains_hebrew` short-circuit
+    /// should always skip it. Its presence proves that end-to-end, not
+    /// just at the unit level (see `niqud_pronunciation`'s own tests).
+    struct NeverCalledNiqudClient;
+
+    impl NiqudClient for NeverCalledNiqudClient {
+        fn transliterate_sentence(&self, _sentence: &str) -> Result<NiqudResult, NiqudError> {
+            unreachable!("niqud client should never be called for a non-Hebrew sentence")
+        }
+    }
+
+    /// A `NiqudClient` test double returning a fixed successful result
+    /// with one word matching whatever single-word Hebrew sentence the
+    /// batch-analysis integration test below uses.
+    struct FixedNiqudClient;
+
+    impl NiqudClient for FixedNiqudClient {
+        fn transliterate_sentence(&self, _sentence: &str) -> Result<NiqudResult, NiqudError> {
+            Ok(NiqudResult {
+                words: vec![NiqudWord {
+                    word: "שכב".to_string(),
+                    niqud: "שָׁכַב".to_string(),
+                    pronunciation: "sha-khav".to_string(),
+                }],
+            })
+        }
+    }
 
     /// An `OllamaClient` test double whose `analyze_sentence` returns a
     /// fixed result per call count, and records every sentence it was
@@ -317,7 +381,10 @@ mod tests {
         let (done_tx, done_rx) = mpsc::channel();
 
         spawn_batch_analyze(
-            client,
+            AnalysisClients {
+                ollama: client,
+                niqud: NeverCalledNiqudClient,
+            },
             "llama3.1:8b".to_string(),
             "English".to_string(),
             cues,
@@ -373,7 +440,10 @@ mod tests {
         let (done_tx, done_rx) = mpsc::channel();
 
         spawn_batch_analyze(
-            client,
+            AnalysisClients {
+                ollama: client,
+                niqud: NeverCalledNiqudClient,
+            },
             "llama3.1:8b".to_string(),
             "English".to_string(),
             cues,
@@ -411,7 +481,10 @@ mod tests {
         let (done_tx, done_rx) = mpsc::channel();
 
         spawn_batch_analyze(
-            client,
+            AnalysisClients {
+                ollama: client,
+                niqud: NeverCalledNiqudClient,
+            },
             "llama3.1:8b".to_string(),
             "English".to_string(),
             cues,
@@ -452,7 +525,10 @@ mod tests {
         let (done_tx, done_rx) = mpsc::channel();
 
         spawn_batch_analyze(
-            client,
+            AnalysisClients {
+                ollama: client,
+                niqud: NeverCalledNiqudClient,
+            },
             "llama3.1:8b".to_string(),
             "English".to_string(),
             cues,
@@ -488,7 +564,10 @@ mod tests {
         let (done_tx, done_rx) = mpsc::channel();
 
         spawn_batch_analyze(
-            client,
+            AnalysisClients {
+                ollama: client,
+                niqud: NeverCalledNiqudClient,
+            },
             "llama3.1:8b".to_string(),
             "English".to_string(),
             cues,
@@ -501,6 +580,44 @@ mod tests {
 
         recv_with_timeout(&done_rx).expect_err("batch run should report the failure");
         assert_eq!(calls.lock().unwrap().len(), MAX_ANALYZE_ATTEMPTS as usize);
+
+        let _ = std::fs::remove_file(&cache_path);
+    }
+
+    #[test]
+    fn test_spawn_batch_analyze_applies_niqud_pronunciation_for_hebrew_cues() {
+        // Given: a Hebrew cue and a niqud client returning a matching word
+        // When:  running the batch analysis
+        // Then:  the cached analysis carries the niqud-derived
+        //        pronunciation, not Ollama's own guess
+        let cache_path = temp_cache_path("applies-niqud-pronunciation");
+        let _ = std::fs::remove_file(&cache_path);
+        let client = RecordingClient {
+            calls: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            fail_sentences: Vec::new(),
+            ..Default::default()
+        };
+        let cues = vec![cue(0, "שכב")];
+        let (done_tx, done_rx) = mpsc::channel();
+
+        spawn_batch_analyze(
+            AnalysisClients {
+                ollama: client,
+                niqud: FixedNiqudClient,
+            },
+            "llama3.1:8b".to_string(),
+            "English".to_string(),
+            cues,
+            cache_path.clone(),
+            |_, _| {},
+            move |result| {
+                let _ = done_tx.send(result);
+            },
+        );
+
+        recv_with_timeout(&done_rx).expect("batch run should succeed");
+        let cache = word_analysis::load_cache(&cache_path);
+        assert_eq!(cache.entries[&0].words[0].pronunciation, "sha-khav");
 
         let _ = std::fs::remove_file(&cache_path);
     }
@@ -521,6 +638,7 @@ mod tests {
 
         spawn_analyze_sentence(
             client,
+            NeverCalledNiqudClient,
             "llama3.1:8b".to_string(),
             "hola".to_string(),
             "English".to_string(),
@@ -548,6 +666,7 @@ mod tests {
 
         spawn_analyze_sentence(
             client,
+            NeverCalledNiqudClient,
             "llama3.1:8b".to_string(),
             "hola".to_string(),
             "English".to_string(),

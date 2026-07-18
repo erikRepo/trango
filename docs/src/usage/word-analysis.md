@@ -63,6 +63,19 @@ Both features need a subtitle to be linked and an Ollama model selected
 first; TrangoPlayer shows a clear inline message rather than a generic
 error if either is missing.
 
+## Hebrew pronunciation
+
+For Hebrew sentences specifically, the pronunciation guide isn't guessed
+by Ollama — small local models transliterate Hebrew unreliably even when
+they translate it correctly. Instead TrangoPlayer runs a separate niqud
+diacritization tool ([Phonikud](https://github.com/thewh1teagle/phonikud)
+via a small CLI wrapper, see `tools/niqud-cli/README.md` for installing
+it) and derives the pronunciation deterministically from its output. This
+happens automatically — Hebrew sentences are detected from their script,
+no setting to configure. If the niqud CLI isn't installed (or fails),
+Ctrl+A/"Analyze all sentences" still work exactly as before, just with
+Ollama's own (less accurate) pronunciation guess for Hebrew lines.
+
 ## If a model returns bad or empty analyses
 
 Run with the `--debug` flag to see exactly what prompt was sent to

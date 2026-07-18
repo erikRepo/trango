@@ -60,7 +60,7 @@ Rust + [Slint](https://slint.dev) + `libmpv`-pohjainen kielenoppimisvideosoitin.
 - **Error handling:** `thiserror` kirjastokoodissa (crate-kohtaiset virhetyypit), `anyhow` binäärissä ja integraatiotesteissä
 - Ei `unwrap()` / `expect()` muualla kuin testeissä
 - **Logging:** `tracing`-crate — ei `println!`-tulostuksia tuotantokoodissa (tasot: `trace`/`debug`/`info`/`warn`/`error`)
-- **Käyttäjän asetukset: CLI-vipu tai `config.toml`, ei ympäristömuuttuja.** Esim. debug-lokitus on `--debug`-vipu (`main.rs`:n `extract_debug_flag`), ei `RUST_LOG`; mallivalinnat ja muut pysyvät asetukset menevät `config.rs`:n kautta `config.toml`:iin (ks. `crates/app/src/config.rs`). Ympäristömuuttuja on hyväksyttävä vain kun kyse on aidosti kertaluontoisesta, harvoin muuttuvasta järjestelmätason polusta (esim. `TRANGO_WHISPER_CLI_PATH`/`TRANGO_FFMPEG_PATH` — ulkoisen binäärin sijainti, ei sovelluksen oma käyttäjäasetus)
+- **Käyttäjän asetukset: CLI-vipu tai `config.toml`, ei ympäristömuuttuja.** Esim. debug-lokitus on `--debug`-vipu (`main.rs`:n `extract_debug_flag`), ei `RUST_LOG`; mallivalinnat ja muut pysyvät asetukset menevät `config.rs`:n kautta `config.toml`:iin (ks. `crates/app/src/config.rs`). Ympäristömuuttuja on hyväksyttävä vain kun kyse on aidosti kertaluontoisesta, harvoin muuttuvasta järjestelmätason polusta (esim. `TRANGO_WHISPER_CLI_PATH`/`TRANGO_FFMPEG_PATH`/`TRANGO_NIQUD_CLI_PATH` — ulkoisen binäärin sijainti, ei sovelluksen oma käyttäjäasetus)
 - Tiedostot lyhyitä ja yhden vastuun mukaisia — jos tiedosto kasvaa yli ~200 riviä, harkitse jakamista
 - Ei dead codea tai placeholder-kommentteja
 - Kaikilla funktioilla, structeilla ja enumeilla — julkisilla ja yksityisillä — `///`-rustdoc-kommentti

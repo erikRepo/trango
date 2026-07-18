@@ -6,6 +6,7 @@
 
 mod config;
 mod model_picker;
+mod niqud_pronunciation;
 mod ollama_model_picker;
 mod open_media_dialog;
 mod open_subtitles_dialog;
@@ -773,6 +774,25 @@ fn ffmpeg_path_from_env() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("ffmpeg"))
 }
 
+/// Builds a `niqud::PhonikudCliClient`, used by both
+/// `wire_word_analysis_batch` and `wire_word_analysis_popup` to derive
+/// Hebrew pronunciation guides (see
+/// `docs/src/developer/specs.md`'s "Hebrew pronunciation" entry).
+///
+/// `TRANGO_NIQUD_CLI_PATH` env var: path or bare name of the niqud CLI
+/// wrapper script. Defaults to `"trango-niqud-cli"`, resolved via
+/// `PATH` — mirrors `TRANGO_WHISPER_CLI_PATH`/`TRANGO_FFMPEG_PATH` above;
+/// see `tools/niqud-cli/README.md` for installing it. If it isn't found
+/// or fails, word analysis falls back to Ollama's own pronunciation
+/// guess rather than failing outright (`niqud_pronunciation::
+/// apply_niqud_pronunciation`).
+fn niqud_cli_client_from_env() -> niqud::PhonikudCliClient {
+    let binary_path = std::env::var_os("TRANGO_NIQUD_CLI_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("trango-niqud-cli"));
+    niqud::PhonikudCliClient { binary_path }
+}
+
 fn wire_open_subtitles_dialog(
     window: &AppWindow,
     state: &Rc<RefCell<PlayerState>>,
@@ -1306,7 +1326,10 @@ fn wire_word_analysis_batch(
         let progress_window_weak = window_weak.clone();
         let done_window_weak = window_weak.clone();
         word_analysis::spawn_batch_analyze(
-            ::word_analysis::HttpOllamaClient::default(),
+            word_analysis::AnalysisClients {
+                ollama: ::word_analysis::HttpOllamaClient::default(),
+                niqud: niqud_cli_client_from_env(),
+            },
             model,
             target_language.borrow().clone(),
             cues,
@@ -1418,6 +1441,7 @@ fn wire_word_analysis_popup(
         let cue_index = cue.index;
         word_analysis::spawn_analyze_sentence(
             ::word_analysis::HttpOllamaClient::default(),
+            niqud_cli_client_from_env(),
             model,
             cue.text.clone(),
             target_language.borrow().clone(),
