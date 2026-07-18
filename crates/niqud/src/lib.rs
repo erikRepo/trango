@@ -10,16 +10,20 @@
 
 mod cli_output;
 mod client;
+mod decode;
 mod entry;
 mod error;
 mod hebrew_detect;
 mod process_client;
+mod tokenizer;
 mod transliterate;
 
 pub use cli_output::parse_cli_output;
 pub use client::NiqudClient;
+pub use decode::decode;
 pub use entry::{NiqudResult, NiqudWord};
 pub use error::NiqudError;
 pub use hebrew_detect::contains_hebrew;
 pub use process_client::PhonikudCliClient;
+pub use tokenizer::{strip_niqud, tokenize, Token, Vocab};
 pub use transliterate::niqud_to_pronunciation;
