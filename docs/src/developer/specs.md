@@ -511,3 +511,24 @@ asks for this with a concrete worked example. The Ctrl+A popup
 (`WordAnalysisRow`'s `parts-label`) shows the breakdown as a small
 second line under the translation, e.g. "ל = to · סרטים = movies", only
 when non-empty.
+
+## Hebrew prefix particles: merging by niqud's boundaries, not by exact text
+
+The prompt guidance above isn't followed consistently — real captured
+output for one sentence correctly fused one prefixed word but still
+split two others into separate top-level entries in the same response.
+An earlier fix compared Ollama's and niqud's word lists via an LCS
+match on exact text equality, correcting pronunciation wherever both
+sides matched verbatim. That can't fix a split word: a split
+fragment's text ("ו", "אמר") never equals the fused token niqud
+returns ("ואמר"), so it stayed both visually split and mispronounced.
+
+`hebrew_word_merge::merge_by_niqud_boundaries` (`crates/app/src/
+hebrew_word_merge.rs`) fixes this instead by trusting niqud's
+whitespace-only tokenization as the word boundary, and growing a
+window of consecutive Ollama entries (smallest first) until their
+concatenated text matches niqud's current word — merging whichever
+entries were consumed into one `WordEntry`, joining their translations
+with a space and rebuilding `parts` from them. Runs once, inside
+`apply_niqud_pronunciation`, before the analysis is cached — the Ctrl+A
+popup and cache file only ever see the already-reconciled result.

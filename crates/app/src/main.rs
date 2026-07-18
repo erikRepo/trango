@@ -5,6 +5,7 @@
 //! wired in later development steps (see `TODO.md`).
 
 mod config;
+mod hebrew_word_merge;
 mod model_picker;
 mod niqud_model_picker;
 mod niqud_pronunciation;
@@ -36,7 +37,8 @@ fn print_version() {
 /// Installs the `tracing` subscriber. `debug` (the `--debug` CLI flag,
 /// see `extract_debug_flag`) is the primary way to turn on debug-level
 /// logging — including `crates/word-analysis/src/ollama.rs`'s prompt/
-/// response logging — without needing to export an environment variable;
+/// response logging and `crates/niqud/src/onnx_client.rs`'s sentence/
+/// result logging — without needing to export an environment variable;
 /// when set it always wins, filtered to trango's own crates rather than
 /// `debug`-level noise from every dependency (`winit` in particular is
 /// very chatty). Without `--debug`, the `RUST_LOG` environment variable
@@ -47,7 +49,7 @@ fn print_version() {
 /// explicitly (see `docs/src/developer/technology/tracing.md`).
 fn init_logging(debug: bool) {
     let filter = if debug {
-        tracing_subscriber::EnvFilter::new("info,trango=debug,word_analysis=debug")
+        tracing_subscriber::EnvFilter::new("info,trango=debug,word_analysis=debug,niqud=debug")
     } else {
         tracing_subscriber::EnvFilter::try_from_default_env()
             .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
