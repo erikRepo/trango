@@ -2202,6 +2202,7 @@ mod tests {
                     word: "Welcome".to_string(),
                     translation: "Tervetuloa".to_string(),
                     pronunciation: "wel-kuhm".to_string(),
+                    parts: Vec::new(),
                 }],
             },
         );

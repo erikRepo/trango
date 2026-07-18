@@ -242,8 +242,21 @@ fn analysis_rows(analysis: &WordAnalysis) -> Vec<WordAnalysisRow> {
             word: entry.word.clone().into(),
             translation: entry.translation.clone().into(),
             pronunciation: entry.pronunciation.clone().into(),
+            parts_label: parts_label(&entry.parts).into(),
         })
         .collect()
+}
+
+/// Formats a `WordEntry::parts` breakdown (e.g. Hebrew's ל "to" + סרטים
+/// "movies", written attached with no space as לסרטים) into one display
+/// line, e.g. `"ל = to · סרטים = movies"` — empty when there's nothing
+/// to break down, which the popup uses to hide the line entirely.
+fn parts_label(parts: &[word_analysis::WordPart]) -> String {
+    parts
+        .iter()
+        .map(|part| format!("{} = {}", part.word, part.translation))
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 #[cfg(test)]
@@ -337,6 +350,7 @@ mod tests {
                     word: sentence.to_string(),
                     translation: "translated".to_string(),
                     pronunciation: "pronounced".to_string(),
+                    parts: Vec::new(),
                 }],
             })
         }
@@ -427,6 +441,7 @@ mod tests {
                     word: "hola".to_string(),
                     translation: "hi".to_string(),
                     pronunciation: "OH-lah".to_string(),
+                    parts: Vec::new(),
                 }],
             },
         );
@@ -690,11 +705,13 @@ mod tests {
                     word: "hola".to_string(),
                     translation: "hi".to_string(),
                     pronunciation: "OH-lah".to_string(),
+                    parts: Vec::new(),
                 },
                 WordEntry {
                     word: "mundo".to_string(),
                     translation: "world".to_string(),
                     pronunciation: "MOON-doh".to_string(),
+                    parts: Vec::new(),
                 },
             ],
         };
@@ -705,6 +722,38 @@ mod tests {
         assert_eq!(rows[0].word, "hola");
         assert_eq!(rows[0].translation, "hi");
         assert_eq!(rows[0].pronunciation, "OH-lah");
+        assert_eq!(rows[0].parts_label, "");
         assert_eq!(rows[1].word, "mundo");
+    }
+
+    #[test]
+    fn test_analysis_rows_formats_parts_label_for_a_prefixed_hebrew_word() {
+        // Given: a WordEntry for a prefixed Hebrew word, broken into parts
+        // When:  mapping it to popup rows
+        // Then:  word/pronunciation stay as the whole combined form, and
+        //        parts_label carries a readable breakdown of the parts
+        let analysis = WordAnalysis {
+            words: vec![WordEntry {
+                word: "לסרטים".to_string(),
+                translation: "to the movies".to_string(),
+                pronunciation: "le-sratim".to_string(),
+                parts: vec![
+                    word_analysis::WordPart {
+                        word: "ל".to_string(),
+                        translation: "to".to_string(),
+                    },
+                    word_analysis::WordPart {
+                        word: "סרטים".to_string(),
+                        translation: "movies".to_string(),
+                    },
+                ],
+            }],
+        };
+
+        let rows = analysis_rows(&analysis);
+
+        assert_eq!(rows[0].word, "לסרטים");
+        assert_eq!(rows[0].pronunciation, "le-sratim");
+        assert_eq!(rows[0].parts_label, "ל = to · סרטים = movies");
     }
 }

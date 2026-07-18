@@ -93,6 +93,7 @@ mod tests {
                 word: word.to_string(),
                 translation: "translated".to_string(),
                 pronunciation: pronunciation.to_string(),
+                parts: Vec::new(),
             }],
         }
     }

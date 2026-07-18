@@ -723,11 +723,17 @@ component FileListDialog {
 /// One word's analysis in the Ctrl+A popup below: the word as it appears
 /// in the sentence, its translation, and a pronunciation guide. Mirrors
 /// `word_analysis::WordEntry` (`crates/word-analysis/src/entry.rs`), set
-/// from Rust by `crates/app/src/word_analysis.rs`.
+/// from Rust by `crates/app/src/word_analysis.rs`. `word`/`pronunciation`
+/// always describe the whole word as written/spoken — for a word made of
+/// multiple morphemes (Hebrew's attached prefix particles, e.g. לסרטים =
+/// ל "to" + סרטים "movies"), `parts-label` carries a pre-formatted
+/// breakdown of `translation` (e.g. "ל = to · סרטים = movies"), empty for
+/// words with nothing to break down.
 struct WordAnalysisRow {
     word: string,
     translation: string,
     pronunciation: string,
+    parts-label: string,
 }
 
 /// State of the Ctrl+A word-analysis popup (`TODO.md` Vaihe 24, part 5/6)
@@ -844,7 +850,7 @@ component WordAnalysisPopup {
 
                     if root.status == WordAnalysisStatus.Done : ListView {
                         for row in root.rows : Rectangle {
-                            height: 56px;
+                            height: row.parts-label == "" ? 56px : 74px;
                             border-radius: 7px;
 
                             HorizontalLayout {
@@ -872,15 +878,28 @@ component WordAnalysisPopup {
                                     }
                                 }
 
-                                Text {
-                                    text: row.translation;
-                                    color: Palette.translation-text;
-                                    font-family: "Inter";
-                                    font-size: 14px;
-                                    font-weight: 500;
+                                VerticalLayout {
+                                    alignment: center;
                                     horizontal-stretch: 1;
-                                    horizontal-alignment: right;
-                                    vertical-alignment: center;
+                                    spacing: 2px;
+
+                                    Text {
+                                        text: row.translation;
+                                        color: Palette.translation-text;
+                                        font-family: "Inter";
+                                        font-size: 14px;
+                                        font-weight: 500;
+                                        horizontal-alignment: right;
+                                    }
+
+                                    if row.parts-label != "" : Text {
+                                        text: row.parts-label;
+                                        color: Palette.muted-text;
+                                        font-family: "Inter";
+                                        font-size: 11px;
+                                        horizontal-alignment: right;
+                                        wrap: word-wrap;
+                                    }
                                 }
                             }
                         }

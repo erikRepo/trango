@@ -478,26 +478,36 @@ inference is already ~16ms on plain CPU for this int8 model, so GPU
 wouldn't help. `OnnxNiqudClient` requests `CPUExecutionProvider`
 explicitly (not a silent default).
 
-## Hebrew prompt guidance for prefix particles
+## Hebrew prefix particles: a `parts` breakdown, not split top-level entries
 
-Real use surfaced `apply_niqud_pronunciation`'s word-count-mismatch
-fallback firing more than expected: Ollama was inconsistent about
-Hebrew's single-letter prefix particles (ו/ה/ב/כ/ל/מ/ש, written attached
-to the following word with no space, e.g. לסרטים = ל + סרטים) —
-sometimes splitting them into their own word entry, sometimes not, for
-near-identical sentences. `ollama.rs`'s `build_prompt` now appends
-explicit guidance (`HEBREW_PREFIX_GUIDANCE`, gated on a `contains_hebrew`
-check duplicated from `niqud` rather than adding a crate dependency for
-one predicate) asking the model to always split these off, with a
-concrete worked example.
+Real use surfaced two problems with Hebrew's single-letter prefix
+particles (ו/ה/ב/כ/ל/מ/ש, written attached to the following word with no
+space, e.g. לסרטים = ל + סרטים). A first attempt asked Ollama to always
+split such a word into two separate top-level word entries (own
+`"word"`/`"translation"`/`"pronunciation"` each). That was wrong on two
+counts:
 
-This is also the pedagogically correct behavior independent of the
-alignment concern — each prefix is its own grammatical word and a
-learner benefits from seeing its own translation — but it doesn't fully
-close the alignment gap on its own: niqud's own word list still splits
-purely on whitespace, so a sentence with a prefixed word still produces
-more Ollama entries than niqud entries, and the mismatch fallback still
-applies (Ollama's own guess is kept for that sentence). Teaching the
-niqud pipeline to also split at Phonikud's own prefix-boundary
-predictions (already computed, currently only used for hyphenation in
-`transliterate.rs`) would close this properly; not done yet.
+- **Not how it sounds.** A prefixed word is pronounced as one fused unit
+  in speech (e.g. "לסרטים" as "le-sratim"), not two separate sounds — but
+  the user wants exactly that fused pronunciation, matching what's
+  actually heard, not a per-morpheme guess.
+- **Broke niqud alignment.** `apply_niqud_pronunciation`'s word-count
+  check compares Ollama's word list against niqud's own, which only ever
+  splits on whitespace — so splitting a prefixed word into two Ollama
+  entries mismatched niqud's one, and the mismatch fallback (keep
+  Ollama's own pronunciation guess) applied far more often than it
+  should have.
+
+Fixed by keeping `"word"`/`"pronunciation"` as the whole combined form
+(restoring niqud's 1:1 alignment as a side effect — no changes needed to
+the niqud pipeline itself) and moving the morpheme breakdown into a new
+optional `"parts"` array on each `WordEntry` (`word-analysis/src/
+entry.rs`'s `WordPart`, `#[serde(default, skip_serializing_if =
+"Vec::is_empty")]` so it's absent from JSON for the overwhelming
+majority of words that have nothing to break down). `ollama.rs`'s
+`HEBREW_PREFIX_GUIDANCE` (gated on a `contains_hebrew` check duplicated
+from `niqud` rather than adding a crate dependency for one predicate)
+asks for this with a concrete worked example. The Ctrl+A popup
+(`WordAnalysisRow`'s `parts-label`) shows the breakdown as a small
+second line under the translation, e.g. "ל = to · סרטים = movies", only
+when non-empty.

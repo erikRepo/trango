@@ -41,27 +41,35 @@ fn contains_hebrew(text: &str) -> bool {
     text.chars().any(|c| ('\u{0590}'..='\u{05FF}').contains(&c))
 }
 
-/// Extra guidance appended to the prompt for Hebrew sentences: without
-/// this, Ollama is inconsistent about single-letter prefix particles
-/// (ו/ה/ב/כ/ל/מ/ש, written attached to the following word with no
-/// space) — sometimes splitting them into their own entry, sometimes
-/// not, observed in real use. Pedagogically the split is what a learner
-/// wants (each prefix is its own grammatical word and deserves its own
-/// translation), so this asks for it explicitly and consistently rather
-/// than leaving it to chance.
+/// Extra guidance appended to the prompt for Hebrew sentences, asking for
+/// a `"parts"` breakdown of single-letter prefix particles (ו/ה/ב/כ/ל/
+/// מ/ש, written attached to the following word with no space) rather
+/// than splitting them into separate top-level word entries the way an
+/// earlier version of this prompt asked for.
 ///
-/// This also matters for `niqud_pronunciation::apply_niqud_pronunciation`:
-/// consistent splitting is a prerequisite for its word count to reliably
-/// line up with the niqud pipeline's, which is *why* it currently
-/// doesn't for prefixed sentences (see `docs/src/developer/specs.md`).
+/// That earlier approach was wrong on two counts, both found through
+/// real use: it's not how the word actually sounds (a prefixed word is
+/// pronounced as one fused unit in speech, e.g. "לסרטים" as "le-sratim",
+/// not two separate sounds) — and it broke
+/// `niqud_pronunciation::apply_niqud_pronunciation`'s word-count
+/// alignment with the niqud pipeline's own whitespace-based splitting,
+/// which only ever sees one whitespace-delimited unit per prefixed word.
+/// Keeping `"word"`/`"pronunciation"` as the whole combined form fixes
+/// both: it matches what's actually heard, and restores the 1:1
+/// alignment niqud correction depends on — while `"parts"` still gives a
+/// learner the grammatical breakdown each morpheme deserves.
 const HEBREW_PREFIX_GUIDANCE: &str = "\n\nThis sentence is Hebrew. Hebrew attaches single-letter \
      prefix particles — ו (\"and\"), ה (\"the\"), ב (\"in\"), כ (\"as/like\"), \
      ל (\"to\"), מ (\"from\"), ש (\"that\") — directly onto the following word \
-     with no space between them. Always split each such prefix off as its \
-     own separate word entry with its own translation and pronunciation, \
-     even though it's written attached — for example \"לסרטים\" must become \
-     two entries: \"ל\" (\"to\") and \"סרטים\" (\"movies\"), never one \
-     combined entry.";
+     with no space between them. Keep such a word as ONE entry: its \"word\" \
+     and \"pronunciation\" must describe the whole combined form exactly as \
+     it is written and actually pronounced together in speech (e.g. \
+     \"לסרטים\" is pronounced as one fused word — never split \"word\" or \
+     \"pronunciation\" across two entries for it). Instead, break down its \
+     meaning in a \"parts\" array, one entry per morpheme, e.g. for \
+     \"לסרטים\": \"parts\": [{\"word\": \"ל\", \"translation\": \"to\"}, \
+     {\"word\": \"סרטים\", \"translation\": \"movies\"}]. For a word with no \
+     attached prefix, \"parts\" should be an empty array.";
 
 /// Builds the prompt sent to Ollama for `analyze_sentence`: asks the model
 /// to split `sentence` into words and, for each, give its `translation`
@@ -260,12 +268,16 @@ mod tests {
     #[test]
     fn test_build_prompt_adds_hebrew_prefix_guidance_for_hebrew_sentences() {
         // Given/When: building a prompt for a Hebrew sentence
-        // Then:  the prefix-splitting guidance is included, naming a
-        //        concrete example the model can generalize from
+        // Then:  the guidance is included, naming a concrete example the
+        //        model can generalize from, and asks for a "parts"
+        //        breakdown rather than splitting "word"/"pronunciation"
+        //        themselves (see HEBREW_PREFIX_GUIDANCE's doc comment for
+        //        why an earlier version did the latter and was wrong)
         let prompt = build_prompt("איך הספרים הופכים לסרטים", "English");
 
         assert!(prompt.contains("prefix particles"));
         assert!(prompt.contains("לסרטים"));
+        assert!(prompt.contains("\"parts\""));
     }
 
     #[test]
@@ -284,6 +296,7 @@ mod tests {
                     word: "hola".to_string(),
                     translation: "hi".to_string(),
                     pronunciation: "OH-lah".to_string(),
+                    parts: Vec::new(),
                 }]
             }
         );
