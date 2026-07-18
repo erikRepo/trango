@@ -11,6 +11,7 @@ use ort::value::Tensor;
 
 use crate::client::NiqudClient;
 use crate::decode::decode;
+use crate::dylib::ensure_ort_initialized;
 use crate::entry::{NiqudResult, NiqudWord};
 use crate::error::NiqudError;
 use crate::tokenizer::{strip_niqud, tokenize, Vocab};
@@ -36,6 +37,8 @@ impl OnnxNiqudClient {
     /// Loads the ONNX model at `model_path` and a `tokenizer.json`
     /// expected as a sibling file in the same folder.
     pub fn load(model_path: &Path) -> Result<Self, NiqudError> {
+        ensure_ort_initialized()?;
+
         let tokenizer_path = model_path.with_file_name("tokenizer.json");
         let tokenizer_json = std::fs::read_to_string(&tokenizer_path).map_err(|err| {
             NiqudError::ModelLoadFailed(format!(

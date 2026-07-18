@@ -774,6 +774,14 @@ fn ffmpeg_path_from_env() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("ffmpeg"))
 }
 
+/// How long [`niqud_client_from_config`] waits for `OnnxNiqudClient::load`
+/// before giving up — real loads finish in well under a second, but a
+/// found-yet-incompatible `libonnxruntime.so` has been observed to hang
+/// `ort`'s session setup indefinitely rather than erroring cleanly (see
+/// `docs/src/developer/technology/ort.md`), and this call runs
+/// synchronously at startup, before the window is even shown.
+const NIQUD_LOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Builds the niqud client used by both `wire_word_analysis_batch` and
 /// `wire_word_analysis_popup` to derive Hebrew pronunciation guides (see
 /// `docs/src/developer/specs.md`'s "Hebrew pronunciation" entry) from
@@ -785,17 +793,36 @@ fn ffmpeg_path_from_env() -> PathBuf {
 /// reloaded every time; changing the path in Settings takes effect on the
 /// next restart, not live.
 ///
+/// Runs the actual load on a background thread with a bounded wait
+/// (`NIQUD_LOAD_TIMEOUT`) rather than calling it directly, so a hang
+/// inside `ort` can't freeze trango's startup — a timed-out load leaves
+/// that thread blocked indefinitely in the background rather than
+/// crashing or hanging the app, an acceptable tradeoff since it's a
+/// single extra idle thread, not a resource that grows unbounded.
+///
 /// Returns `None` (logging a warning, not an error — this is an expected,
-/// supported state, not a failure) if no path is configured or loading
-/// fails; word analysis then falls back to Ollama's own pronunciation
-/// guess rather than failing outright
+/// supported state, not a failure) if no path is configured, loading
+/// fails, or it times out; word analysis then falls back to Ollama's own
+/// pronunciation guess rather than failing outright
 /// (`niqud_pronunciation::apply_niqud_pronunciation`).
 fn niqud_client_from_config(config: &config::TrangoConfig) -> Option<niqud::OnnxNiqudClient> {
-    let model_path = config.niqud_model_path.as_ref()?;
-    match niqud::OnnxNiqudClient::load(model_path) {
-        Ok(client) => Some(client),
-        Err(err) => {
-            tracing::warn!(?model_path, %err, "failed to load niqud model, Hebrew word analysis will fall back to Ollama's own pronunciation guess");
+    let model_path = config.niqud_model_path.clone()?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(niqud::OnnxNiqudClient::load(&model_path));
+    });
+    match rx.recv_timeout(NIQUD_LOAD_TIMEOUT) {
+        Ok(Ok(client)) => Some(client),
+        Ok(Err(err)) => {
+            tracing::warn!(%err, "failed to load niqud model, Hebrew word analysis will fall back to Ollama's own pronunciation guess");
+            None
+        }
+        Err(_timed_out) => {
+            tracing::warn!(
+                timeout_secs = NIQUD_LOAD_TIMEOUT.as_secs(),
+                "niqud model loading timed out (a hung/incompatible onnxruntime install?), \
+                 Hebrew word analysis will fall back to Ollama's own pronunciation guess"
+            );
             None
         }
     }
@@ -1686,6 +1713,40 @@ mod tests {
                 "video.mp4".to_string(),
                 "subs.srt".to_string()
             ]
+        );
+    }
+
+    #[test]
+    fn test_niqud_client_from_config_returns_none_when_not_configured() {
+        // Given: a config with no niqud_model_path set
+        // When:  building the niqud client
+        // Then:  None comes back without spawning anything
+        let config = config::TrangoConfig::default();
+
+        assert!(niqud_client_from_config(&config).is_none());
+    }
+
+    #[test]
+    fn test_niqud_client_from_config_returns_none_quickly_for_a_bad_path() {
+        // Given: a config pointing at a model file that doesn't exist
+        // When:  building the niqud client
+        // Then:  None comes back well within NIQUD_LOAD_TIMEOUT — proving
+        //        a normal load failure (missing file) is reported via the
+        //        fast Ok(Err(_)) path, not by waiting out the timeout
+        //        meant only for a genuine hang
+        let config = config::TrangoConfig {
+            niqud_model_path: Some(PathBuf::from("/no/such/trango-test-niqud-model.onnx")),
+            ..Default::default()
+        };
+
+        let started = std::time::Instant::now();
+        let client = niqud_client_from_config(&config);
+        let elapsed = started.elapsed();
+
+        assert!(client.is_none());
+        assert!(
+            elapsed < NIQUD_LOAD_TIMEOUT / 2,
+            "expected a fast failure, took {elapsed:?}"
         );
     }
 

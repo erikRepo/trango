@@ -453,15 +453,23 @@ syllabification.
 **Build vs. runtime linking.** `ort`'s default `download-binaries`
 feature fetches a prebuilt ONNX Runtime binary *at compile time* over the
 network — unacceptable for offline/CI builds. `crates/niqud/Cargo.toml`
-instead uses `load-dynamic` (loads `libonnxruntime.so` at *runtime* via
-`ORT_DYLIB_PATH` or the system loader) plus `api-23`: the crate's
-*default* feature set requests API 24, which hangs indefinitely (not a
-clean error) against Ubuntu's apt-packaged `libonnxruntime1.23` —
-api-23 works correctly against that same package, confirmed by comparing
-its output against Python `onnxruntime`'s for identical input (matching
-to a few significant digits; a newer runtime like pip's onnxruntime
-1.27 matches exactly). Model/tokenizer files are still a manual
-download — see `docs/src/usage/word-analysis.md`.
+instead uses `load-dynamic` (loads `libonnxruntime.so` at *runtime*) plus
+`api-23`: the crate's *default* feature set requests API 24, which hangs
+indefinitely (not a clean error) against Ubuntu's apt-packaged
+`libonnxruntime1.23` — api-23 works correctly against that same package,
+confirmed by comparing its output against Python `onnxruntime`'s for
+identical input (matching to a few significant digits; a newer runtime
+like pip's onnxruntime 1.27 matches exactly).
+
+No `ORT_DYLIB_PATH` needed for a normal install: `crates/app/Cargo.toml`
+depends on `libonnxruntime1.23` directly (`$auto`/`dpkg-shlibdeps` can't
+detect it, since `load-dynamic` means no link-time ELF reference exists
+for it to find), and `crates/niqud/src/dylib.rs` scans the usual
+Debian/Ubuntu library directories at runtime for a match — see
+[ort](technology/ort.md) for the hang-avoidance details this needed.
+Model/tokenizer files are still a manual download (accepted tradeoff,
+not automatable the way the library dependency is — too large to bundle
+in the `.deb`) — see `docs/src/usage/word-analysis.md`.
 
 **GPU checked, CPU kept deliberately.** `onnxruntime`'s CUDA provider
 silently falls back to CPU if system cuDNN is missing (no hard error —

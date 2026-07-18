@@ -29,3 +29,21 @@ apt-packaged `libonnxruntime1.23`, that **hangs indefinitely** rather
 than erroring. `api-23` works correctly against the same library. Always
 verify a chosen `api-XX` against the actual runtime version being
 targeted; a mismatch's failure mode isn't guaranteed to be a clean error.
+
+**A missing/incompatible dylib can hang instead of erroring, even with
+the right `api-XX`.** `Session::builder()` was observed hanging
+indefinitely (not just slow) both for an `api-24`/`libonnxruntime1.23`
+mismatch *and* when no dylib could be resolved at all — dlopen failures
+aren't guaranteed to surface as a fast, clean `Result::Err` here. Two
+mitigations, both in `crates/niqud/src/dylib.rs`/`main.rs`, so a normal
+user never has to know any of this:
+- `dylib::ensure_ort_initialized` resolves a dylib path *itself*
+  (`ORT_DYLIB_PATH` if set, else scanning the usual Debian/Ubuntu
+  library directories for `libonnxruntime.so*`) and returns a clean
+  error immediately, without ever calling into `ort`, if nothing is
+  found — sidesteps the "nothing found" hang entirely by construction.
+- `main.rs`'s `niqud_client_from_config` still runs the actual load on a
+  background thread with a bounded `recv_timeout` (`NIQUD_LOAD_TIMEOUT`),
+  since a *found-but-incompatible* dylib can still hang inside `ort`
+  itself — this is defense-in-depth for a failure mode whose root cause
+  wasn't fully diagnosed, not a targeted fix.

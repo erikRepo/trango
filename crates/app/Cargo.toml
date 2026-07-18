@@ -37,4 +37,9 @@ a sentence-by-sentence mode driven by subtitle timing, with word-by-word \
 translation lookup and automatic subtitle generation."""
 section = "video"
 priority = "optional"
-depends = "$auto"
+# $auto (dpkg-shlibdeps) won't pick up libonnxruntime on its own: niqud's
+# ort dependency uses load-dynamic (dlopen at runtime), so the binary has
+# no link-time ELF reference to it for dpkg-shlibdeps to detect — see
+# docs/src/developer/technology/ort.md. Listed explicitly so installing
+# this .deb pulls it in automatically; no separate manual install step.
+depends = "$auto, libonnxruntime1.23"

@@ -11,6 +11,7 @@
 
 mod client;
 mod decode;
+mod dylib;
 mod entry;
 mod error;
 mod hebrew_detect;

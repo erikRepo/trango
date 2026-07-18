@@ -3,6 +3,6 @@ resolver = "2"
 members = ["crates/subtitle", "crates/playback-state", "crates/app", "crates/word-analysis", "crates/audio-capture", "crates/niqud"]
 
 [workspace.package]
-version = "0.1.63"
+version = "0.1.64"
 edition = "2021"
 rust-version = "1.97"
