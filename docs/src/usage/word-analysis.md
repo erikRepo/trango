@@ -53,7 +53,11 @@ pre-analyzing a whole video before watching it, rather than one sentence
 at a time via Ctrl+A. It writes to the same cache file, skipping
 sentences already analyzed, so it's safe to stop partway through (close
 the app, or just decide you have enough) and pick up later — including
-after adding individual Ctrl+A analyses in between.
+after adding individual Ctrl+A analyses in between. A sentence that fails
+to analyze is retried a few times before the run moves on to the next
+one; if it still fails, it's saved with a blank analysis rather than
+stopping the whole run — re-run Ctrl+A on that sentence later to fill it
+in.
 
 Both features need a subtitle to be linked and an Ollama model selected
 first; TrangoPlayer shows a clear inline message rather than a generic

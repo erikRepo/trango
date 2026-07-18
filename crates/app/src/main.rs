@@ -1395,7 +1395,15 @@ fn wire_word_analysis_popup(
 
         let cache_path = ::word_analysis::cache_path_for(&subtitle_path);
         let cache = ::word_analysis::load_cache(&cache_path);
-        if let Some(analysis) = cache.entries.get(&cue.index) {
+        // An entry with no words is what spawn_batch_analyze leaves behind
+        // for a cue that kept failing after all its retries — not treating
+        // it as a hit means pressing Ctrl+A on that sentence tries Ollama
+        // again instead of reopening the same blank popup forever.
+        if let Some(analysis) = cache
+            .entries
+            .get(&cue.index)
+            .filter(|a| !a.words.is_empty())
+        {
             tracing::debug!(cue_index = cue.index, "word analysis cache hit");
             word_analysis::open_popup_with_result(&window, analysis);
             return;
@@ -2021,6 +2029,27 @@ mod tests {
         );
         window.invoke_close_word_analysis_popup();
         assert!(!window.get_is_word_analysis_popup_open());
+
+        // When:  the cache holds a blank analysis for the current cue —
+        //        what spawn_batch_analyze leaves behind for a cue that
+        //        kept failing after all its retries — and Ctrl+A is
+        //        pressed on that sentence
+        // Then:  it's not treated as a cache hit; the popup goes into
+        //        Loading (a fresh Ollama call kicked off) rather than
+        //        reopening the same blank result forever
+        let mut blank_word_analysis_cache = word_analysis_cache.clone();
+        blank_word_analysis_cache.entries.insert(
+            player_state.borrow().cues[0].index,
+            ::word_analysis::WordAnalysis { words: Vec::new() },
+        );
+        ::word_analysis::save_cache(&word_analysis_cache_path, &blank_word_analysis_cache);
+        window.invoke_show_word_analysis();
+        assert_eq!(
+            window.get_word_analysis_status(),
+            WordAnalysisStatus::Loading
+        );
+        window.invoke_close_word_analysis_popup();
+        ::word_analysis::save_cache(&word_analysis_cache_path, &word_analysis_cache);
 
         // When:  switching to the Audio source with nothing loaded there
         //        yet (loaded-media-source still Video, forced explicitly
