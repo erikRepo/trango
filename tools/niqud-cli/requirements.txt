@@ -1,2 +1,0 @@
-phonikud-onnx
-onnxruntime

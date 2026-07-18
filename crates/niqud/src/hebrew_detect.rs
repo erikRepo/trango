@@ -1,5 +1,5 @@
 //! Detects whether a sentence contains Hebrew script, used to gate the
-//! niqud/pronunciation pipeline (`crate::process_client::PhonikudCliClient`)
+//! niqud/pronunciation pipeline (`crate::onnx_client::OnnxNiqudClient`)
 //! per sentence — trango has no explicit "source language" setting, so this
 //! is the only signal available for which sentences niqud even applies to.
 

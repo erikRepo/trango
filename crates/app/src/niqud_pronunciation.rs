@@ -167,12 +167,12 @@ mod tests {
 
     #[test]
     fn test_niqud_client_error_keeps_ollamas_pronunciation() {
-        // Given: a Hebrew sentence and a niqud client that fails (e.g. the
-        //        CLI isn't installed)
+        // Given: a Hebrew sentence and a niqud client that fails (e.g. no
+        //        model configured)
         // When:  applying niqud pronunciation
         // Then:  Ollama's original pronunciation is kept, and no panic
-        let client = FakeNiqudClient::returning(Err(NiqudError::ProcessFailed(
-            "niqud CLI not found".to_string(),
+        let client = FakeNiqudClient::returning(Err(NiqudError::ModelLoadFailed(
+            "niqud model not configured".to_string(),
         )));
         let analysis = word_analysis("שכב", "shkach");
 

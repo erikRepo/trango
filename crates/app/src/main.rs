@@ -774,23 +774,31 @@ fn ffmpeg_path_from_env() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("ffmpeg"))
 }
 
-/// Builds a `niqud::PhonikudCliClient`, used by both
-/// `wire_word_analysis_batch` and `wire_word_analysis_popup` to derive
-/// Hebrew pronunciation guides (see
-/// `docs/src/developer/specs.md`'s "Hebrew pronunciation" entry).
+/// Builds the niqud client used by both `wire_word_analysis_batch` and
+/// `wire_word_analysis_popup` to derive Hebrew pronunciation guides (see
+/// `docs/src/developer/specs.md`'s "Hebrew pronunciation" entry) from
+/// `config.niqud_model_path` (a `.onnx` model file, with `tokenizer.json`
+/// expected as a sibling — set via the Settings dialog's "Hebrew niqud
+/// model" row). Called once at startup, not per word-analysis call —
+/// `niqud::OnnxNiqudClient` is `Clone` specifically so the loaded
+/// model/session can be reused for the life of the process rather than
+/// reloaded every time; changing the path in Settings takes effect on the
+/// next restart, not live.
 ///
-/// `TRANGO_NIQUD_CLI_PATH` env var: path or bare name of the niqud CLI
-/// wrapper script. Defaults to `"trango-niqud-cli"`, resolved via
-/// `PATH` — mirrors `TRANGO_WHISPER_CLI_PATH`/`TRANGO_FFMPEG_PATH` above;
-/// see `tools/niqud-cli/README.md` for installing it. If it isn't found
-/// or fails, word analysis falls back to Ollama's own pronunciation
-/// guess rather than failing outright (`niqud_pronunciation::
-/// apply_niqud_pronunciation`).
-fn niqud_cli_client_from_env() -> niqud::PhonikudCliClient {
-    let binary_path = std::env::var_os("TRANGO_NIQUD_CLI_PATH")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("trango-niqud-cli"));
-    niqud::PhonikudCliClient { binary_path }
+/// Returns `None` (logging a warning, not an error — this is an expected,
+/// supported state, not a failure) if no path is configured or loading
+/// fails; word analysis then falls back to Ollama's own pronunciation
+/// guess rather than failing outright
+/// (`niqud_pronunciation::apply_niqud_pronunciation`).
+fn niqud_client_from_config(config: &config::TrangoConfig) -> Option<niqud::OnnxNiqudClient> {
+    let model_path = config.niqud_model_path.as_ref()?;
+    match niqud::OnnxNiqudClient::load(model_path) {
+        Ok(client) => Some(client),
+        Err(err) => {
+            tracing::warn!(?model_path, %err, "failed to load niqud model, Hebrew word analysis will fall back to Ollama's own pronunciation guess");
+            None
+        }
+    }
 }
 
 fn wire_open_subtitles_dialog(
@@ -1276,6 +1284,19 @@ fn wire_settings_dialog(window: &AppWindow) {
         );
         system_audio_capture::refresh_recording_folder_label(&window, &config);
     });
+
+    let niqud_model_window_weak = window.as_weak();
+    window.on_set_settings_niqud_model_path(move |path| {
+        let Some(window) = niqud_model_window_weak.upgrade() else {
+            return;
+        };
+        let path = path.to_string();
+        let trimmed = path.trim();
+        let mut config = config::load();
+        config.niqud_model_path = (!trimmed.is_empty()).then(|| PathBuf::from(trimmed));
+        config::save(&config);
+        window.set_settings_niqud_model_path(path.into());
+    });
 }
 
 /// Wires the Open Subtitles dialog's "Analyze all sentences" button
@@ -1293,6 +1314,7 @@ fn wire_word_analysis_batch(
     current_media: &Rc<RefCell<CurrentMedia>>,
     selected_ollama_model: Rc<RefCell<Option<String>>>,
     target_language: Rc<RefCell<String>>,
+    niqud_client: Option<niqud::OnnxNiqudClient>,
 ) {
     let window_weak = window.as_weak();
     let state = Rc::clone(state);
@@ -1328,7 +1350,7 @@ fn wire_word_analysis_batch(
         word_analysis::spawn_batch_analyze(
             word_analysis::AnalysisClients {
                 ollama: ::word_analysis::HttpOllamaClient::default(),
-                niqud: niqud_cli_client_from_env(),
+                niqud: niqud_client.clone(),
             },
             model,
             target_language.borrow().clone(),
@@ -1372,6 +1394,7 @@ fn wire_word_analysis_popup(
     current_media: &Rc<RefCell<CurrentMedia>>,
     selected_ollama_model: Rc<RefCell<Option<String>>>,
     target_language: Rc<RefCell<String>>,
+    niqud_client: Option<niqud::OnnxNiqudClient>,
 ) {
     let window_weak = window.as_weak();
     let request_state = Rc::clone(state);
@@ -1441,7 +1464,7 @@ fn wire_word_analysis_popup(
         let cue_index = cue.index;
         word_analysis::spawn_analyze_sentence(
             ::word_analysis::HttpOllamaClient::default(),
-            niqud_cli_client_from_env(),
+            niqud_client.clone(),
             model,
             cue.text.clone(),
             target_language.borrow().clone(),
@@ -1516,6 +1539,7 @@ fn main() -> anyhow::Result<()> {
     wire_pause_playback(&window, Rc::clone(&video_player));
 
     let startup_config = config::load();
+    let niqud_client = niqud_client_from_config(&startup_config);
 
     wire_open_media_dialog(
         &window,
@@ -1559,6 +1583,7 @@ fn main() -> anyhow::Result<()> {
         &current_media,
         Rc::clone(&selected_ollama_model),
         Rc::clone(&target_language),
+        niqud_client.clone(),
     );
     wire_word_analysis_popup(
         &window,
@@ -1566,6 +1591,7 @@ fn main() -> anyhow::Result<()> {
         &current_media,
         Rc::clone(&selected_ollama_model),
         Rc::clone(&target_language),
+        niqud_client,
     );
 
     let mut startup_audio_capture = audio_capture::AudioCapture::default();
@@ -2040,6 +2066,7 @@ mod tests {
             &word_analysis_current_media,
             Rc::clone(&word_analysis_selected_model),
             Rc::clone(&word_analysis_target_language),
+            None,
         );
 
         assert_eq!(player_state.borrow().media_source, MediaSource::Video);

@@ -982,12 +982,14 @@ component SettingsDialog {
     in property <string> audio-monitor-source;
     in property <string> audio-recording-folder;
     in property <bool> audio-recording-folder-exists: true;
+    in property <string> niqud-model-path;
     callback set-video-folder(string);
     callback select-whisper-model();
     callback select-ollama-model();
     callback set-ollama-target-language(string);
     callback set-audio-monitor-source(string);
     callback set-audio-recording-folder(string);
+    callback set-niqud-model-path(string);
     callback close();
 
     Rectangle {
@@ -1158,6 +1160,13 @@ component SettingsDialog {
                         font-family: "Inter";
                         font-size: 12px;
                         wrap: word-wrap;
+                    }
+
+                    SettingsEditRow {
+                        label: "HEBREW NIQUD MODEL (.ONNX)";
+                        value: root.niqud-model-path;
+                        placeholder: "not set — Hebrew pronunciation falls back to Ollama's guess";
+                        edited(text) => { root.set-niqud-model-path(text); }
                     }
 
                     Rectangle {
@@ -2332,9 +2341,11 @@ export component AppWindow inherits Window {
     in property <string> settings-audio-monitor-source: "";
     in property <string> settings-audio-recording-folder: "";
     in property <bool> settings-audio-recording-folder-exists: true;
+    in property <string> settings-niqud-model-path: "";
     callback set-settings-video-folder(string);
     callback set-settings-audio-monitor-source(string);
     callback set-settings-audio-recording-folder(string);
+    callback set-settings-niqud-model-path(string);
     callback close-settings-dialog();
 
     title: "TrangoPlayer v" + version;
@@ -2742,12 +2753,14 @@ export component AppWindow inherits Window {
             audio-monitor-source: root.settings-audio-monitor-source;
             audio-recording-folder: root.settings-audio-recording-folder;
             audio-recording-folder-exists: root.settings-audio-recording-folder-exists;
+            niqud-model-path: root.settings-niqud-model-path;
             set-video-folder(text) => { root.set-settings-video-folder(text); }
             select-whisper-model => { root.select-whisper-model-requested(); }
             select-ollama-model => { root.select-ollama-model-requested(); }
             set-ollama-target-language(text) => { root.set-ollama-target-language(text); }
             set-audio-monitor-source(text) => { root.set-settings-audio-monitor-source(text); }
             set-audio-recording-folder(text) => { root.set-settings-audio-recording-folder(text); }
+            set-niqud-model-path(text) => { root.set-settings-niqud-model-path(text); }
             close => { root.close-settings-dialog(); }
         }
 

@@ -34,6 +34,8 @@ pub fn open_dialog(window: &AppWindow, config: &config::TrangoConfig) {
     window.set_settings_audio_recording_folder(recording_folder.display().to_string().into());
     window.set_settings_audio_recording_folder_exists(recording_folder.is_dir());
 
+    window.set_settings_niqud_model_path(path_label(config.niqud_model_path.as_deref()).into());
+
     window.set_is_settings_dialog_open(true);
 }
 
