@@ -599,7 +599,7 @@ a plain `impl Fn(PlaySpanCommand)` closure rather than a
 documents: it keeps the function's guard-path logic testable without a
 real mpv render context.
 
-## Optional VAD — word timing only, not whole-file generation
+## VAD tried and fully reverted — both for whole-file generation and word timing
 
 Real Ctrl+W testing found a concrete failure: a sentence whose clip had
 a synth pad before the real speech starts got a hallucinated "word"
@@ -607,43 +607,52 @@ from the pad, and the resulting garbage context also merged two real
 words right after it into one entry. `-ml 1 -sow` can't fix this after
 the fact — it only splits whitespace within whatever text `whisper-cli`
 already decided to output, and here the model glued two spoken words
-into one token in the first place.
+into one token in the first place. whisper.cpp's own `--vad -vm <model>`
+looked like the fix, skipping non-speech audio before decoding — so it
+was wired into a new `TrangoConfig.vad_model_path` setting and threaded
+into every `whisper-cli` call.
 
-whisper.cpp's own `--vad -vm <model>` fixes this at the source by
-skipping non-speech audio before decoding. `TrangoConfig.vad_model_path`
-(`crates/app/src/config.rs`) is a new optional setting, picked via
-`crates/app/src/vad_model_picker.rs` — a near-exact mirror of
-`niqud_model_picker.rs` (same `FileListDialog` chrome/traversal logic,
-`.bin` extension instead of `.onnx`, whisper-style
-`whisper.cpp/models`-family autodiscovery instead of niqud's
-no-autodiscovery case). One deliberate difference from niqud: no
-restart-required behavior — niqud's client loads once at startup, so a
-new pick needs `niqud-model-needs-restart` to warn the user, but VAD has
-no equivalent long-lived client; `main.rs`'s constructors read
-`config::load()` fresh on every call (subtitle generation/word timing
-are both on-demand, not continuous), so a new pick just applies on the
-very next whisper-cli call.
+It went through two rounds of real-world testing, each finding a new way
+`--vad` actively hurts more than it helps, because it isn't a passive
+"ignore this audio" filter — it re-chunks the whole input into
+independent speech segments *before* decoding, and `whisper-cli` decodes
+each segment with **zero acoustic context** from its neighbors:
 
-**Only `WhisperCliWordSegmenter` (`crates/subtitle/src/word_timing.rs`)
-got a `vad_model_path` field — `WhisperCliGenerator`
-(`crates/subtitle/src/generate.rs`, used for both whole-file "Generate
-subtitles" and live-segment transcription) deliberately doesn't.**
-First shipped on both, per an explicit "use it everywhere" request, then
-scoped back down after testing on real (Hebrew, sung) content: `--vad`
-doesn't just gate hallucination, it also redraws whisper-cli's own
-segment/cue boundaries, and on audio with continuous background music
-(never dipping below VAD's speech threshold between phrases) that
-collapsed a 66-cue transcript into 26 much longer ones — a real
-granularity regression. `WhisperCliWordSegmenter` doesn't share this
-risk: its clip's cue boundary is already fixed by the caller (the
-original subtitle's own timing), so VAD there only ever affects
-word-level hallucination *within* that fixed span, never cue counts.
+1. **Whole-file "Generate subtitles"** (`WhisperCliGenerator`): on audio
+   with continuous background music (never dipping below VAD's speech
+   threshold between phrases), a 66-cue transcript collapsed into 26
+   much longer ones — VAD's segment boundaries became the subtitle's
+   cue boundaries, badly reducing granularity. First reaction was to
+   scope `vad_model_path` to `WhisperCliWordSegmenter`
+   (`crates/subtitle/src/word_timing.rs`) only, on the theory that its
+   already-fixed clip boundary (the caller already knows the sentence's
+   start/end) made it safe from this specific failure mode.
+2. **Word timing** (used by both Ctrl+W and practice audio): that theory
+   was wrong. If VAD's frame-level speech/silence classifier dips
+   mid-word — plausible for many phonetic structures — one real word
+   gets split into two independent VAD segments, and `whisper-cli`
+   decodes each in isolation, with no memory of the other half. It
+   doesn't just get the timing wrong: it recognizes two disconnected
+   fragments as two separate words (e.g. "Shalom" coming back as two
+   words instead of one), which `-sow` then dutifully splits into two
+   separate entries — breaking the exact "one clip per real word"
+   guarantee `WhisperCliWordSegmenter` exists to provide, visibly
+   corrupting practice audio's per-word output.
 
-Testing this against real audio with a real VAD model also turned up
-one more `segment_words` edge case beyond the zero-duration-word one:
-a VAD-detected speech blip can come back as a cue with valid, non-zero
-timing but **empty** text — nothing was actually transcribed there.
-Left alone, that would show up as a blank row in the Ctrl+W popup.
-`segment_words`'s existing degenerate-block filter (already dropping
-zero/negative-duration blocks, logged at `warn`) now also drops
-empty-text ones the same way.
+Given VAD undermined both of its own use cases once tested against real
+content, it was removed entirely rather than tuned further — the
+`--vad`/`-vm` flags, `TrangoConfig.vad_model_path`, the Settings model
+row, and `vad_model_picker.rs` are all gone. No config setting remains
+for a future re-attempt; a real fix would need VAD run as a genuinely
+separate pre-pass (e.g. trimming silence via `ffmpeg` *before* handing
+audio to `whisper-cli`, never letting VAD's segment boundaries reach
+`whisper-cli`'s own decoding loop at all), not just flipping `--vad` on.
+
+One piece of this work is still worth keeping regardless: real VAD
+testing surfaced a `segment_words` edge case that can happen even
+without VAD — a block can come back with valid, non-zero timing but
+**empty** text (nothing was actually transcribed there), which would
+otherwise show up as a blank row in the Ctrl+W popup or a broken
+practice-audio word. `segment_words`'s existing degenerate-block filter
+(already dropping zero/negative-duration blocks, logged at `warn`) also
+drops empty-text ones the same way.

@@ -77,15 +77,15 @@ impl SubtitleGenerator for StubSubtitleGenerator {
 /// the one `open_media_dialog::matching_subtitle_path` looks for, so no
 /// raw-text parsing is needed here.
 ///
-/// Deliberately has **no** VAD (Voice Activity Detection) support, unlike
-/// `word_timing::WhisperCliWordSegmenter` — see `docs/src/developer/specs.md`'s
-/// "Optional VAD" entry: `whisper-cli`'s `--vad` also redraws segment/cue
-/// boundaries, not just gates hallucination, and real testing on
-/// music-heavy content (continuous instrumental audio rarely dips below
-/// VAD's speech threshold) showed it collapsing many short, natural
-/// cues into far fewer, much longer ones — a real regression for
-/// whole-file generation that `WhisperCliWordSegmenter` doesn't share,
-/// since its clip's cue boundary is already fixed by the caller.
+/// Deliberately has **no** VAD (Voice Activity Detection) support — see
+/// `docs/src/developer/specs.md`'s "VAD tried and fully reverted" entry:
+/// `whisper-cli`'s `--vad` doesn't just gate hallucination, it re-chunks
+/// audio into independent segments decoded with no shared context, and
+/// on music-heavy content (continuous instrumental audio rarely dips
+/// below VAD's speech threshold) that collapsed many short, natural cues
+/// into far fewer, much longer ones. Tried, found to regress
+/// `word_timing::WhisperCliWordSegmenter` too for the same underlying
+/// reason, and removed from both entirely rather than tuned further.
 pub struct WhisperCliGenerator {
     /// Path or bare name of the `whisper-cli` binary to run.
     /// [`Default::default`] uses `"whisper-cli"`, resolved via `PATH`.

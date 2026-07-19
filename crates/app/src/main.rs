@@ -17,7 +17,6 @@ mod sentence_list;
 mod settings_dialog;
 mod subtitle_generation;
 mod system_audio_capture;
-mod vad_model_picker;
 mod video_player;
 mod word_analysis;
 mod word_timing_ui;
@@ -746,13 +745,6 @@ fn open_selected_media(
 ///   to `whisper-cli` (which can't read most video containers directly —
 ///   see `WhisperCliGenerator`'s doc comment). Defaults to `"ffmpeg"`,
 ///   resolved via `PATH`.
-///
-/// No VAD support here, unlike [`whisper_cli_word_segmenter`] — see
-/// `subtitle::WhisperCliGenerator`'s own doc comment and
-/// `docs/src/developer/specs.md`'s "Optional VAD" entry: real testing
-/// found `--vad` redraws whole-file segment/cue boundaries, not just
-/// gates hallucination, which regressed cue granularity badly on
-/// music-heavy content.
 pub(crate) fn whisper_cli_generator(model_path: PathBuf) -> subtitle::WhisperCliGenerator {
     let binary_path = std::env::var_os("TRANGO_WHISPER_CLI_PATH")
         .map(PathBuf::from)
@@ -777,17 +769,10 @@ pub(crate) fn whisper_cli_generator(model_path: PathBuf) -> subtitle::WhisperCli
 /// Builds a `subtitle::WhisperCliWordSegmenter` for the Ctrl+W word-timing
 /// popup (`TODO.md` Vaihe 32), mirroring [`whisper_cli_generator`] (same
 /// `TRANGO_WHISPER_CLI_PATH`/`TRANGO_FFMPEG_PATH`/`language_flag`
-/// derivation from the same selected whisper model) plus two additions:
+/// derivation from the same selected whisper model) plus one addition:
 /// `dtw_preset`, derived from `model_path`'s filename via
 /// `subtitle::dtw_preset_for_model` — `None` for an unrecognized model
-/// name, which makes the segmenter omit `-dtw` rather than guess wrong —
-/// and `vad_model_path` (`TODO.md` Vaihe 33), read fresh from
-/// `config::load()` on every call (nothing else needs it held in memory,
-/// so unlike the Hebrew niqud model setting, a pick applies immediately,
-/// no restart needed) and filtered to an existing file so a stale/deleted
-/// config path never gets passed to `whisper-cli` as `-vm`. VAD is
-/// word-timing-only, not shared with `whisper_cli_generator` above — see
-/// its doc comment for why.
+/// name, which makes the segmenter omit `-dtw` rather than guess wrong.
 pub(crate) fn whisper_cli_word_segmenter(model_path: PathBuf) -> subtitle::WhisperCliWordSegmenter {
     let binary_path = std::env::var_os("TRANGO_WHISPER_CLI_PATH")
         .map(PathBuf::from)
@@ -795,14 +780,12 @@ pub(crate) fn whisper_cli_word_segmenter(model_path: PathBuf) -> subtitle::Whisp
     let ffmpeg_path = ffmpeg_path_from_env();
     let language = model_picker::language_flag(&model_path).to_string();
     let dtw_preset = subtitle::dtw_preset_for_model(&model_path).map(str::to_string);
-    let vad_model_path = config::load().vad_model_path.filter(|path| path.is_file());
     tracing::info!(
         ?binary_path,
         ?ffmpeg_path,
         ?model_path,
         %language,
         ?dtw_preset,
-        ?vad_model_path,
         "configured whisper-cli word segmenter"
     );
     subtitle::WhisperCliWordSegmenter {
@@ -811,7 +794,6 @@ pub(crate) fn whisper_cli_word_segmenter(model_path: PathBuf) -> subtitle::Whisp
         model_path: Some(model_path),
         language: Some(language),
         dtw_preset,
-        vad_model_path,
     }
 }
 
@@ -1261,89 +1243,6 @@ fn wire_niqud_model_picker(window: &AppWindow) {
 
         let mut config = config::load();
         config.niqud_model_path = Some(model.path.clone());
-        config::save(&config);
-    });
-}
-
-/// Wires the Settings dialog's VAD model row (`TODO.md` Vaihe 33):
-/// `select-vad-model-requested` opens a `FileListDialog` scoped to `.bin`
-/// files, mirroring `wire_niqud_model_picker` almost exactly. Always
-/// saves an absolute path to `config::TrangoConfig::vad_model_path`.
-///
-/// **Unlike niqud, no restart-required behavior**: `whisper_cli_generator`/
-/// `whisper_cli_word_segmenter` both read `config::load()` fresh on every
-/// whisper-cli call rather than caching it in a long-lived client the way
-/// `niqud_client_from_config` does, so a pick here applies immediately —
-/// no `vad-model-needs-restart` property exists.
-fn wire_vad_model_picker(window: &AppWindow) {
-    let entries: Rc<RefCell<Vec<vad_model_picker::FolderEntry>>> =
-        Rc::new(RefCell::new(Vec::new()));
-
-    let request_window_weak = window.as_weak();
-    let request_entries = Rc::clone(&entries);
-    window.on_select_vad_model_requested(move || {
-        let Some(window) = request_window_weak.upgrade() else {
-            return;
-        };
-        let folder = vad_model_picker::default_start_folder(&config::load());
-        let files = vad_model_picker::list_folder_entries(&folder);
-        vad_model_picker::open_dialog(&window, &folder, &files);
-        *request_entries.borrow_mut() = files;
-    });
-
-    let select_window_weak = window.as_weak();
-    let select_entries = Rc::clone(&entries);
-    window.on_select_vad_model_picker_row(move |index| {
-        let Some(window) = select_window_weak.upgrade() else {
-            return;
-        };
-        let target_folder = usize::try_from(index).ok().and_then(|index| {
-            match select_entries.borrow().get(index)? {
-                vad_model_picker::FolderEntry::Up(path)
-                | vad_model_picker::FolderEntry::Folder { path, .. } => Some(path.clone()),
-                vad_model_picker::FolderEntry::Model(_) => None,
-            }
-        });
-        if let Some(target_folder) = target_folder {
-            let files = vad_model_picker::list_folder_entries(&target_folder);
-            vad_model_picker::open_dialog(&window, &target_folder, &files);
-            *select_entries.borrow_mut() = files;
-            return;
-        }
-        window.set_vad_model_picker_selected_index(index);
-        vad_model_picker::mark_selected(&window, &select_entries.borrow(), index);
-    });
-
-    let cancel_window_weak = window.as_weak();
-    window.on_cancel_vad_model_picker_dialog(move || {
-        if let Some(window) = cancel_window_weak.upgrade() {
-            window.set_is_vad_model_picker_dialog_open(false);
-        }
-    });
-
-    let confirm_window_weak = window.as_weak();
-    let confirm_entries = Rc::clone(&entries);
-    window.on_confirm_vad_model_picker_dialog(move || {
-        let Some(window) = confirm_window_weak.upgrade() else {
-            return;
-        };
-        let model = usize::try_from(window.get_vad_model_picker_selected_index())
-            .ok()
-            .and_then(|index| confirm_entries.borrow().get(index).cloned())
-            .and_then(|entry| match entry {
-                vad_model_picker::FolderEntry::Model(model) => Some(model),
-                _ => None,
-            });
-        let Some(model) = model else {
-            return;
-        };
-        tracing::info!(model_path = ?model.path, model_name = %model.name, "VAD model selected");
-        window.set_is_vad_model_picker_dialog_open(false);
-        window.set_vad_model_selected(true);
-        window.set_vad_model_name(model.name.clone().into());
-
-        let mut config = config::load();
-        config.vad_model_path = Some(model.path.clone());
         config::save(&config);
     });
 }
@@ -1920,22 +1819,6 @@ fn main() -> anyhow::Result<()> {
         );
     }
     wire_niqud_model_picker(&window);
-
-    if let Some(vad_model_path) = startup_config
-        .vad_model_path
-        .as_deref()
-        .filter(|path| path.is_file())
-    {
-        window.set_vad_model_selected(true);
-        window.set_vad_model_name(
-            vad_model_path
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_else(|| vad_model_path.display().to_string())
-                .into(),
-        );
-    }
-    wire_vad_model_picker(&window);
 
     let target_language = Rc::new(RefCell::new(
         startup_config

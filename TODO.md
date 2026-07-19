@@ -852,3 +852,15 @@ nyt siisti; varmista myös että "Generate subtitles" toimii ennallaan
   toteutettu ja sittemmin purettu liian monimutkaisena; korvattu
   suoraviivaisemmalla nauhoita-koko-tiedosto-ja-generoi-erikseen-mallilla
   (ks. Vaihe 25:n "Suunnanmuutos"-huomautus yllä)
+- `whisper-cli --vad` subtitle-/word-timing-generointiin (Vaihe 33,
+  versio 0.1.57) — toteutettu ensin kaikkialle, rajattiin testauksen
+  jälkeen word timingiin, ja lopulta purettu kokonaan: `--vad` ei ole
+  passiivinen "ohita tämä audio" -suodatin vaan pilkkoo koko syötteen
+  itsenäisiin puhesegmentteihin joita whisper-cli dekoodaa ilman
+  jaettua kontekstia — tämä paitsi piirsi uusiksi koko-tiedoston
+  cue-rajat (66→26 cueta musiikkipitoisella sisällöllä), myös pilkkoi
+  yksittäisiä sanoja kahdeksi erilliseksi sanaksi word timingissä
+  (esim. "Shalom" → kaksi osaa), mikä rikkoi juuri sen takuun jota
+  `WhisperCliWordSegmenter` on olemassa antamaan. Ei jäänyt config-
+  asetusta uudelleenyritystä varten — ks. `docs/src/developer/specs.md`
+  "VAD tried and fully reverted" -päätöskirjaus

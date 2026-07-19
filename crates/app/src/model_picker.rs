@@ -375,7 +375,6 @@ mod tests {
             audio_monitor_source: None,
             audio_recording_folder: None,
             niqud_model_path: None,
-            vad_model_path: None,
         };
 
         assert_eq!(default_start_folder(&config), dir);
@@ -400,7 +399,6 @@ mod tests {
             audio_monitor_source: None,
             audio_recording_folder: None,
             niqud_model_path: None,
-            vad_model_path: None,
         };
 
         let folder = default_start_folder(&config);
