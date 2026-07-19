@@ -19,8 +19,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 
 ## [0.1.57] - 2026-07-19
 
-### Added
-- Optional VAD (Voice Activity Detection) for Ctrl+W word timing: a new Settings row, "VAD MODEL (.BIN)", points at a whisper.cpp-compatible ggml VAD model (e.g. a converted Silero VAD model); when set, Ctrl+W skips non-speech audio before re-transcribing a sentence's clip, avoiding hallucinated/merged words from non-speech audio (e.g. a synth pad before a clip's real speech starts) — found via real Ctrl+W testing. Applies immediately on the next Ctrl+W run, no restart needed. Deliberately **not** applied to "Generate subtitles" — real testing on music-heavy content found `--vad` also redraws whisper-cli's own subtitle segment boundaries, badly reducing cue granularity when background music never dips below VAD's speech threshold between phrases. See `docs/src/usage/settings.md`
+### Fixed
+- Ctrl+W word timing: a `whisper-cli` block with valid, non-zero timing but empty transcribed text (an edge case found while testing an experimental VAD-based fix — see `docs/src/developer/specs.md`'s "VAD tried and fully reverted" entry) is now dropped like the existing zero-duration-word case, instead of showing up as a blank row.
+
+(An experimental `--vad`-based fix for hallucinated/merged words in Ctrl+W word timing was added and then fully reverted within this same unreleased version, after real testing found it caused worse problems than it solved on both "Generate subtitles" and Ctrl+W. No user-visible change remains from that work other than the fix above.)
 
 ## [0.1.56] - 2026-07-19
 

@@ -51,16 +51,6 @@ pub struct TrangoConfig {
     /// `None` means Hebrew word-analysis pronunciation falls back to
     /// Ollama's own (less reliable) guess, same as any other language.
     pub niqud_model_path: Option<PathBuf>,
-    /// Path to a whisper.cpp-compatible VAD (Voice Activity Detection)
-    /// ggml model file (e.g. a converted Silero VAD model), passed to
-    /// every `whisper-cli` invocation via `--vad -vm` (subtitle
-    /// generation, live-segment transcription, and Ctrl+W word timing)
-    /// when set — see `docs/src/developer/specs.md`. `None` means
-    /// `whisper-cli` runs without VAD, as before: it may occasionally
-    /// hallucinate a "word" from non-speech audio (e.g. a synth pad
-    /// before a clip's real speech starts) and mis-recognize real words
-    /// right after it.
-    pub vad_model_path: Option<PathBuf>,
 }
 
 /// Resolves the config directory from `xdg_config_home`/`home` (as
@@ -210,7 +200,6 @@ mod tests {
             audio_monitor_source: Some("alsa_output.analog-stereo.monitor".to_string()),
             audio_recording_folder: Some(PathBuf::from("/recordings")),
             niqud_model_path: Some(PathBuf::from("/models/phonikud-1.0.int8.onnx")),
-            vad_model_path: Some(PathBuf::from("/models/silero-vad-v6.2.0-ggml.bin")),
         };
 
         save_to(&path, &config);
