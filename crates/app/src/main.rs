@@ -747,27 +747,23 @@ fn open_selected_media(
 ///   see `WhisperCliGenerator`'s doc comment). Defaults to `"ffmpeg"`,
 ///   resolved via `PATH`.
 ///
-/// `vad_model_path` (`TODO.md` Vaihe 33) comes from `config::load()`,
-/// read fresh on every call rather than threaded in as a parameter —
-/// unlike the whisper model itself (picked via `wire_model_picker`'s
-/// live `Rc<RefCell<...>>` state), nothing else in the app needs the VAD
-/// setting held in memory, so this is simpler and, unlike the Hebrew
-/// niqud model setting, applies immediately on the next whisper-cli call
-/// rather than needing a restart. Filtered to an existing file so a
-/// stale/deleted config path never gets passed to `whisper-cli` as `-vm`.
+/// No VAD support here, unlike [`whisper_cli_word_segmenter`] — see
+/// `subtitle::WhisperCliGenerator`'s own doc comment and
+/// `docs/src/developer/specs.md`'s "Optional VAD" entry: real testing
+/// found `--vad` redraws whole-file segment/cue boundaries, not just
+/// gates hallucination, which regressed cue granularity badly on
+/// music-heavy content.
 pub(crate) fn whisper_cli_generator(model_path: PathBuf) -> subtitle::WhisperCliGenerator {
     let binary_path = std::env::var_os("TRANGO_WHISPER_CLI_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("whisper-cli"));
     let ffmpeg_path = ffmpeg_path_from_env();
     let language = model_picker::language_flag(&model_path).to_string();
-    let vad_model_path = config::load().vad_model_path.filter(|path| path.is_file());
     tracing::info!(
         ?binary_path,
         ?ffmpeg_path,
         ?model_path,
         %language,
-        ?vad_model_path,
         "configured whisper-cli generator"
     );
     subtitle::WhisperCliGenerator {
@@ -775,17 +771,23 @@ pub(crate) fn whisper_cli_generator(model_path: PathBuf) -> subtitle::WhisperCli
         ffmpeg_path,
         model_path: Some(model_path),
         language: Some(language),
-        vad_model_path,
     }
 }
 
 /// Builds a `subtitle::WhisperCliWordSegmenter` for the Ctrl+W word-timing
-/// popup (`TODO.md` Vaihe 32), mirroring [`whisper_cli_generator`] exactly
-/// (same `TRANGO_WHISPER_CLI_PATH`/`TRANGO_FFMPEG_PATH`/`language_flag`/
-/// `vad_model_path` derivation from the same selected whisper model) plus
-/// one addition: `dtw_preset`, derived from `model_path`'s filename via
+/// popup (`TODO.md` Vaihe 32), mirroring [`whisper_cli_generator`] (same
+/// `TRANGO_WHISPER_CLI_PATH`/`TRANGO_FFMPEG_PATH`/`language_flag`
+/// derivation from the same selected whisper model) plus two additions:
+/// `dtw_preset`, derived from `model_path`'s filename via
 /// `subtitle::dtw_preset_for_model` — `None` for an unrecognized model
-/// name, which makes the segmenter omit `-dtw` rather than guess wrong.
+/// name, which makes the segmenter omit `-dtw` rather than guess wrong —
+/// and `vad_model_path` (`TODO.md` Vaihe 33), read fresh from
+/// `config::load()` on every call (nothing else needs it held in memory,
+/// so unlike the Hebrew niqud model setting, a pick applies immediately,
+/// no restart needed) and filtered to an existing file so a stale/deleted
+/// config path never gets passed to `whisper-cli` as `-vm`. VAD is
+/// word-timing-only, not shared with `whisper_cli_generator` above — see
+/// its doc comment for why.
 pub(crate) fn whisper_cli_word_segmenter(model_path: PathBuf) -> subtitle::WhisperCliWordSegmenter {
     let binary_path = std::env::var_os("TRANGO_WHISPER_CLI_PATH")
         .map(PathBuf::from)

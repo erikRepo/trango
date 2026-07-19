@@ -49,13 +49,16 @@ no separate "Save" button:
   the dialog says so once you've picked one.
 - **VAD model (.bin)** — points at a whisper.cpp-compatible Voice
   Activity Detection ggml model (e.g. a converted Silero VAD model).
-  When set, every `whisper-cli` run (subtitle generation and Ctrl+W
-  word timing alike) skips non-speech audio before transcribing, which
-  helps with clips that have music/noise before the real speech starts
-  — without it, such audio can occasionally get transcribed as a
-  spurious "word" and throw off recognition of the real words right
-  after it. Not set means `whisper-cli` runs without VAD, as before. A
-  new pick applies immediately, no restart needed.
+  When set, [Ctrl+W word timing](word-timing.md) skips non-speech audio
+  before re-transcribing a sentence's clip, which helps when a clip has
+  music/noise before the real speech starts — without it, such audio
+  can occasionally get transcribed as a spurious "word" and throw off
+  recognition of the real words right after it. Not set means Ctrl+W
+  runs without VAD, as before. A new pick applies immediately, no
+  restart needed. Only affects Ctrl+W, not "Generate subtitles" — VAD
+  also changes where whisper-cli draws sentence/subtitle boundaries, not
+  just which audio it hears, which can noticeably reduce subtitle
+  granularity on music-heavy videos.
 
 If this file is missing or unreadable, TrangoPlayer just starts with
 nothing remembered rather than failing to open — losing a remembered

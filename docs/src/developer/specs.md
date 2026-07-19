@@ -599,7 +599,7 @@ a plain `impl Fn(PlaySpanCommand)` closure rather than a
 documents: it keeps the function's guard-path logic testable without a
 real mpv render context.
 
-## Optional VAD for every whisper-cli call
+## Optional VAD — word timing only, not whole-file generation
 
 Real Ctrl+W testing found a concrete failure: a sentence whose clip had
 a synth pad before the real speech starts got a hallucinated "word"
@@ -616,28 +616,34 @@ skipping non-speech audio before decoding. `TrangoConfig.vad_model_path`
 `niqud_model_picker.rs` (same `FileListDialog` chrome/traversal logic,
 `.bin` extension instead of `.onnx`, whisper-style
 `whisper.cpp/models`-family autodiscovery instead of niqud's
-no-autodiscovery case). `WhisperCliGenerator` and
-`WhisperCliWordSegmenter` both gained an independent `vad_model_path`
-field (kept separate rather than introduced as a shared sub-struct,
-matching this codebase's existing precedent of duplicating these two
-structs' fields); both `main.rs` constructors
-(`whisper_cli_generator`/`whisper_cli_word_segmenter`) pass it through
-whenever a model is configured, so it applies to subtitle generation,
-live-segment transcription, and word timing alike.
+no-autodiscovery case). One deliberate difference from niqud: no
+restart-required behavior — niqud's client loads once at startup, so a
+new pick needs `niqud-model-needs-restart` to warn the user, but VAD has
+no equivalent long-lived client; `main.rs`'s constructors read
+`config::load()` fresh on every call (subtitle generation/word timing
+are both on-demand, not continuous), so a new pick just applies on the
+very next whisper-cli call.
 
-One deliberate difference from niqud: no restart-required behavior.
-Niqud's client loads once at startup, so a new pick needs
-`niqud-model-needs-restart` to warn the user. VAD has no equivalent
-long-lived client — both constructors already call `config::load()`
-fresh every time they're invoked (subtitle generation/word timing are
-both on-demand, not continuous), so a new pick just applies on the very
-next whisper-cli call.
+**Only `WhisperCliWordSegmenter` (`crates/subtitle/src/word_timing.rs`)
+got a `vad_model_path` field — `WhisperCliGenerator`
+(`crates/subtitle/src/generate.rs`, used for both whole-file "Generate
+subtitles" and live-segment transcription) deliberately doesn't.**
+First shipped on both, per an explicit "use it everywhere" request, then
+scoped back down after testing on real (Hebrew, sung) content: `--vad`
+doesn't just gate hallucination, it also redraws whisper-cli's own
+segment/cue boundaries, and on audio with continuous background music
+(never dipping below VAD's speech threshold between phrases) that
+collapsed a 66-cue transcript into 26 much longer ones — a real
+granularity regression. `WhisperCliWordSegmenter` doesn't share this
+risk: its clip's cue boundary is already fixed by the caller (the
+original subtitle's own timing), so VAD there only ever affects
+word-level hallucination *within* that fixed span, never cue counts.
 
-Testing this against real audio with a real VAD model turned up one
-more `segment_words` edge case beyond the zero-duration-word one
-(`crates/subtitle/src/word_timing.rs`): a VAD-detected speech blip can
-come back as a cue with valid, non-zero timing but **empty** text —
-nothing was actually transcribed there. Left alone, that would show up
-as a blank row in the Ctrl+W popup. `segment_words`'s existing
-degenerate-block filter (already dropping zero/negative-duration
-blocks, logged at `warn`) now also drops empty-text ones the same way.
+Testing this against real audio with a real VAD model also turned up
+one more `segment_words` edge case beyond the zero-duration-word one:
+a VAD-detected speech blip can come back as a cue with valid, non-zero
+timing but **empty** text — nothing was actually transcribed there.
+Left alone, that would show up as a blank row in the Ctrl+W popup.
+`segment_words`'s existing degenerate-block filter (already dropping
+zero/negative-duration blocks, logged at `warn`) now also drops
+empty-text ones the same way.
