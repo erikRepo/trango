@@ -13,11 +13,30 @@ use crate::error::SubtitleError;
 /// `SubtitleError::InvalidTiming` if a cue's end time is not after its
 /// start time.
 pub fn parse_srt(input: &str) -> Result<Vec<Cue>, SubtitleError> {
+    parse_srt_blocks(input)?
+        .into_iter()
+        .map(|(index, start, end, text)| Cue::new(index, start, end, text))
+        .collect()
+}
+
+/// Splits `input` into raw `(index, start, end, text)` blocks — the same
+/// index/timing-line/text-lines structure [`parse_srt`] builds `Cue`s
+/// from, minus [`Cue::new`]'s `start < end` validation. Used directly by
+/// [`parse_srt`] and by `word_timing::WhisperCliWordSegmenter::segment_words`,
+/// which needs to tolerate (by dropping, not erroring the whole batch) an
+/// occasional zero/negative-duration word `whisper-cli`'s DTW timestamps
+/// produce at a clip boundary — a real subtitle file failing this
+/// strictly is a problem worth surfacing, but one degenerate word out of
+/// a sentence's worth of `whisper-cli` output isn't worth losing the
+/// rest of that sentence's timing over.
+pub(crate) fn parse_srt_blocks(
+    input: &str,
+) -> Result<Vec<(u32, Duration, Duration, String)>, SubtitleError> {
     let without_bom = input.strip_prefix('\u{FEFF}').unwrap_or(input);
     let normalized = without_bom.replace("\r\n", "\n").replace('\r', "\n");
     let lines: Vec<&str> = normalized.lines().collect();
 
-    let mut cues = Vec::new();
+    let mut blocks = Vec::new();
     let mut position = 0;
 
     while position < lines.len() {
@@ -44,10 +63,10 @@ pub fn parse_srt(input: &str) -> Result<Vec<Cue>, SubtitleError> {
             position += 1;
         }
 
-        cues.push(Cue::new(index, start, end, text_lines.join("\n"))?);
+        blocks.push((index, start, end, text_lines.join("\n")));
     }
 
-    Ok(cues)
+    Ok(blocks)
 }
 
 /// Parses a `start --> end` timing line into a pair of `Duration`s.
@@ -149,5 +168,22 @@ mod tests {
             parse_srt(input),
             Err(SubtitleError::InvalidTiming { .. })
         ));
+    }
+
+    #[test]
+    fn test_parse_srt_blocks_does_not_validate_timing() {
+        // Given: a block whose end time equals its start time (degenerate
+        //        zero-duration, e.g. what whisper-cli's DTW timestamps can
+        //        occasionally produce for a token right at a clip's edge)
+        // When:  parsing via parse_srt_blocks (not parse_srt)
+        // Then:  it's returned as-is rather than erroring — leaving the
+        //        start<end check to Cue::new/parse_srt's callers, not
+        //        this lower-level primitive
+        let input = "1\n00:00:00,000 --> 00:00:00,000\nHi\n";
+        let blocks = parse_srt_blocks(input).unwrap();
+        assert_eq!(
+            blocks,
+            vec![(1, Duration::ZERO, Duration::ZERO, "Hi".to_string())]
+        );
     }
 }
