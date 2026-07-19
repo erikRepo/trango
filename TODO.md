@@ -714,6 +714,39 @@ toimii jos käännösanalyysi on ajettu.
 
 ---
 
+## Vaihe 31 — Sana-tason audion haarukointi (whisper-cli DTW)
+
+**Tavoite:** Selvittää ohjelmallisesti, missä kohdassa lauseen jo
+tunnettua `[start, end)`-aikaväliä kukin sana alkaa ja loppuu — pohjatyö
+myöhemmälle automaattiselle ääntämisharjoitteluäänitteelle (käännös +
+TTS + nopeusvariantit per sana, koko lause lopuksi — **ei** tässä
+vaiheessa, vain sanojen ajoitus). Kirjastotason kyvykkyys ilman UI-
+kytkentää tässä vaiheessa.
+
+- `subtitle::WhisperCliWordSegmenter::segment_words` (uusi
+  `crates/subtitle/src/word_timing.rs`): leikkaa cuen aikavälin
+  `ffmpeg`illä omaksi WAV-pätkäksi ja ajaa sille `whisper-cli`in
+  `-ml 1 -sow` (yksi sana per SRT-cue) sekä, jos malli tunnistetaan,
+  `-dtw <preset>` tarkempaa sana-tason ajoitusta varten — palauttaa
+  `Vec<WordTiming>` (sana + start/end, offsetoitu lauseen omaan alkuun)
+- `subtitle::dtw_preset_for_model` päättelee `-dtw`-presetin mallin
+  tiedostonimestä (esim. `ggml-large-v3.bin` → `"large.v3"`); `None`
+  tuntemattomalle nimelle — `whisper-cli` kaatuu kovaan virheeseen
+  väärällä presetillä, joten arvausta vältetään
+- Ei UI-kytkentää, ei pysyvyyttä (cache/tallennus) tässä vaiheessa —
+  käännös/TTS/nopeusvariantit/harjoitteluäänitteen kokoaminen ovat omia
+  myöhempiä vaiheitaan
+
+**Voit ajaa/testata:** `scripts/test.sh` — uudet yksikkötestit
+(fake ffmpeg/whisper-cli, ei riipu asennetuista binääreistä) kattavat
+`-ss`/`-to`-leikkauksen, `-dtw`-lipun läsnä/poissaolon,
+SRT→`WordTiming`-mapin offsetteineen ja temp-tiedostojen siivouksen.
+Manuaalinen tarkistus (ei CI:ssä): aja `segment_words` oikealla
+lyhyellä pätkällä ja asennetulla mallilla, tarkista silmämääräisesti
+että sanat/ajat osuvat `[start, end)`:n sisään ja täsmäävät ääneen.
+
+---
+
 ## Ei tässä listassa (myöhempää harkintaa)
 
 - Kansion vaihto Open Video -dialogissa natiivilla kansiovalitsimella

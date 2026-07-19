@@ -551,3 +551,27 @@ afterward as a safety net for the rarer case where Ollama's response
 doesn't match the given list either. Non-Hebrew sentences are
 unaffected — they still use `analyze_sentence`'s free-text prompt,
 since there's no niqud tokenization to pre-split them with.
+
+## Word-level audio timing: a per-cue whisper-cli re-run, not JSON tokens
+
+Building automatic pronunciation-practice audio needs to know where
+each word starts/ends within a cue's known `[start, end)` span — data
+nothing in the app produced before. `WhisperCliWordSegmenter::segment_words`
+(`crates/subtitle/src/word_timing.rs`) gets it by cutting just that
+span out of the source file with `ffmpeg` and re-running `whisper-cli`
+on the clip with `-ml 1 -sow` (one word per output cue) plus, when the
+loaded model maps to a known preset, `-dtw <preset>` for cross-
+attention-based accurate word timing. A short, focused clip rather
+than the whole file, since DTW alignment quality depends on it — and
+`-osrt` output is reused via the existing `parse_srt`, since one word
+per SRT cue already gives word/start/end without needing whisper.cpp's
+separate JSON token-timestamp output.
+
+`dtw_preset_for_model` (same file) infers the `-dtw` preset from the
+model's filename: whisper.cpp model names use a dash before the
+version (`ggml-large-v3.bin`) while its own preset tokens use a dot
+(`"large.v3"`), so the stem is normalized before matching. An
+unrecognized filename (e.g. a custom fine-tune) returns `None` rather
+than guessing — `whisper-cli` hard-errors on an unknown `--dtw` value,
+and the non-DTW word timestamps whisper.cpp falls back to are still
+usable, just less precisely aligned.

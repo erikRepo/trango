@@ -12,6 +12,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 
 ### Removed
 
+## [0.1.55] - 2026-07-19
+
+### Added
+- Word-level audio timing: `subtitle::WhisperCliWordSegmenter::segment_words` derives where each word starts/ends within an already-known sentence span, by cutting that span out with `ffmpeg` and re-running `whisper-cli` on the clip with `-ml 1 -sow` (one word per output cue) plus, when the loaded whisper.cpp model maps to a known preset (`dtw_preset_for_model`), `-dtw <preset>` for more accurate cross-attention-based word timing. Library-only groundwork for automatic per-word pronunciation-practice audio — no UI trigger yet; see `docs/src/developer/specs.md`
+
 ## [0.1.54] - 2026-07-18
 
 ### Added
