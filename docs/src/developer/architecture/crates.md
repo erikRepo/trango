@@ -1,6 +1,6 @@
 # Crate structure
 
-trango is a Cargo workspace with six members, all inheriting `version`,
+trango is a Cargo workspace with seven members, all inheriting `version`,
 `edition`, and `rust-version` from `[workspace.package]` in the root
 `Cargo.toml`.
 
@@ -84,6 +84,22 @@ needed; `onnx_client::OnnxNiqudClient` ties them to a real `ort::Session`
 rather than per call. No Slint/libmpv dependency, same testability split
 as `word-analysis`.
 
+## `crates/practice-audio` (library)
+
+Assembles one sentence's pronunciation-practice `.mp3` (see
+[specs.md](../specs.md)'s "Practice audio" entry): `tts.rs` wraps the
+external `espeak-ng` binary; `pieces.rs` wraps `ffmpeg` for clip
+extraction, `atempo` speed changes, silence generation, and final
+`concat`-demuxer `.mp3` encoding; `sentence.rs`'s `PracticeAudioBuilder`
+sequences them per word (TTS translation, then 50/75/100% speed twice
+each) and per sentence (real audio 3×), with a dynamic pause (that
+piece's own duration + 1s) after every piece. Generic — `WordPracticeSpec`/
+`SentencePracticeAudioRequest` carry only text and `Duration`, no
+`subtitle`/`word-analysis` types — so this crate depends on neither,
+mirroring `niqud`/`word-analysis`'s own independence from each other.
+No Slint/libmpv dependency, same external-process-via-`Command` testing
+pattern as `subtitle`/`audio-capture`.
+
 ## `crates/app` (binary, package `trango`)
 
 Ties Slint, libmpv, and the library crates together. Package name
@@ -111,8 +127,9 @@ skipped rather than blocking video playback.
 the result back into `AppWindow` properties the top bar/translation
 toggle read directly.
 
-## Why six crates instead of one
+## Why seven crates instead of one
 
 Splitting `subtitle`, `playback-state`, `word-analysis`, `audio-capture`,
-and `niqud` out of the binary keeps most business logic testable without
-Slint/libmpv, and keeps files small (CLAUDE.md: aim for ~200 lines/file).
+`niqud`, and `practice-audio` out of the binary keeps most business logic
+testable without Slint/libmpv, and keeps files small (CLAUDE.md: aim for
+~200 lines/file).

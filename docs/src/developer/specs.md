@@ -656,3 +656,50 @@ otherwise show up as a blank row in the Ctrl+W popup or a broken
 practice-audio word. `segment_words`'s existing degenerate-block filter
 (already dropping zero/negative-duration blocks, logged at `warn`) also
 drops empty-text ones the same way.
+
+## Practice audio: a new crate, positional word/translation alignment, no new config
+
+`crates/practice-audio` (`TODO.md` Vaihe 34) assembles the "Generate
+practice audio" batch's per-sentence `.mp3` (TTS translation + real
+audio at 50/75/100% speed per word, then the whole sentence 3×, dynamic
+pauses throughout). Kept as its own crate rather than folded into `app`
+or `subtitle`: it's generic (`WordPracticeSpec`/`SentencePracticeAudioRequest`
+carry only text/`Duration`, no `Cue`/`WordTiming`/`WordEntry`), so it
+has no dependency on `subtitle` or `word-analysis` — mirrors this
+codebase's existing crate-per-concern shape, where `niqud` and
+`word-analysis` don't depend on each other either. TTS is
+[`espeak-ng`](https://github.com/espeak-ng/espeak-ng) (external process,
+same pattern as `whisper-cli`/`ffmpeg` — chosen over Piper's neural TTS
+for zero per-language model download, since audio quality here matters
+less than for niqud's actual pronunciation guide: this is just the
+translation cue, real pronunciation still comes from the real audio
+replays).
+
+Every intermediate piece (extracted clips, speed variants, silence, TTS
+output) is normalized to 22050 Hz mono 16-bit PCM WAV — `espeak-ng`'s
+own native output rate — so concatenation never needs to resample
+anything. A piece's own duration is computed directly wherever possible
+(clip length from its known `[start, end)`; a speed variant's from
+`original / speed`) rather than probed; the one exception is TTS output,
+whose duration depends on text length/speech rate and isn't knowable in
+advance — `pieces::wav_duration` reads it from the file's size instead of
+running `ffprobe`, since every piece this crate writes shares one fixed,
+known format.
+
+**Word ↔ translation alignment is positional, not text-matched.**
+`subtitle::WhisperCliWordSegmenter::segment_words` (audio timing) and
+the cached `word_analysis::WordAnalysis.words` (translations) are two
+independently-derived word lists for the same sentence and can differ in
+count. `practice_audio_ui::generate_one` zips them by index up to
+`min(len)`, logging a `tracing::warn!` when they differ, rather than
+attempting text-based re-alignment or failing the cue — same fail-soft
+philosophy as `hebrew_word_merge` and the VAD empty-word-drop fix above.
+A cue with no cached (non-empty) analysis is skipped the same way — this
+feature deliberately never calls Ollama itself, only reads what
+"Analyze all sentences"/Ctrl+A already cached.
+
+**Output folder is computed, not configured**: `practice-audio/<video
+stem>-<timestamp>/` next to the video (`main.rs`'s
+`practice_audio_output_dir`), no new `TrangoConfig` field — kept simple
+rather than adding a setting nobody asked for; easy to add later if it
+turns out to matter.

@@ -16,6 +16,7 @@ chrono = "0.4"
 libmpv2 = { version = "6", features = ["render"] }
 niqud = { path = "../niqud" }
 playback-state = { path = "../playback-state" }
+practice-audio = { path = "../practice-audio" }
 serde = { version = "1", features = ["derive"] }
 slint = "1.17.1"
 subtitle = { path = "../subtitle" }
