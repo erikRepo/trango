@@ -835,6 +835,44 @@ nyt siisti; varmista myös että "Generate subtitles" toimii ennallaan
 
 ---
 
+## Vaihe 34 — Automaattinen ääntämisharjoitteluäänite (.mp3)
+
+**Tavoite:** "Generate practice audio" -nappi Open Subtitles -dialogiin,
+joka käy koko ladatun tekstityksen läpi lause kerrallaan ja tuottaa
+jokaisesta lauseesta oman `.mp3`:n: per sana TTS-käännös + sanan oma
+audio 50 %/75 %/100 % nopeudella (2x per nopeus), kaikkien sanojen
+jälkeen koko lause 3x normaalinopeudella — joka palan jälkeen dynaaminen
+tauko (palan oma kesto + 1s), jotta ehtii toistaa sanan/lauseen itse.
+
+- Uusi crate `crates/practice-audio` — geneerinen (ei riipu
+  `subtitle`/`word-analysis`-tyypeistä): `tts.rs` (`espeak-ng`-wrapperi
+  + kieli→ääni-taulukko), `pieces.rs` (`ffmpeg`: leikkaus, `atempo`,
+  hiljaisuus, `concat`-demuxer → `.mp3`), `sentence.rs`
+  (`PracticeAudioBuilder` kokoaa palajärjestyksen)
+- Sana↔käännös-kohdistus positionaalisesti `segment_words`in ajastusten
+  ja jo cachetun `WordAnalysis`in käännösten välillä (paras-yritys,
+  lyhyempään pituuteen, varoitusloki erotessa) — `crates/app/src/
+  practice_audio_ui.rs`
+- Edellytys: "Analyze all sentences" pitää olla ajettu ensin — uusi
+  nappi ei itse aja Ollamaa, vain lukee cachea
+- Tallennus: `<video-kansio>/practice-audio/<video>-<aikaleima>/`,
+  tiedostot `0001.mp3`, `0002.mp3`... — ei uutta config-asetusta
+- TTS-moottori `espeak-ng` (uusi ulkoinen riippuvuus, käyttäjän
+  hyväksymä) — `TRANGO_ESPEAK_PATH`-ympäristömuuttuja samaan tapaan
+  kuin `TRANGO_WHISPER_CLI_PATH`/`TRANGO_FFMPEG_PATH`
+
+**Voit ajaa/testata:** `scripts/test.sh` — `practice-audio`-craten omat
+yksikkötestit (fake `espeak-ng`/`ffmpeg`, mukaan lukien koko
+palasekvenssin oikeellisuus) ja `practice_audio_ui.rs`/`main.rs`:n omat
+`OK`. Todennettu myös oikeilla työkaluilla (real `espeak`/`ffmpeg`,
+oikea whisper-malli) sekä crate-tasolla että koko app-tason
+`spawn_batch_generate`-polulla sample-videota vasten. Manuaalinen
+läpikäynti: aseta whisper-malli, aja "Analyze all sentences", paina
+"Generate practice audio", tarkista että kansio + numeroidut `.mp3`:t
+syntyvät ja kuulostavat suunnitellulta.
+
+---
+
 ## Ei tässä listassa (myöhempää harkintaa)
 
 - Kansion vaihto Open Video -dialogissa natiivilla kansiovalitsimella

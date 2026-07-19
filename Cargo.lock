@@ -455,7 +455,7 @@ dependencies = [
 
 [[package]]
 name = "audio-capture"
-version = "0.1.57"
+version = "0.1.58"
 dependencies = [
  "thiserror 2.0.18",
  "tracing",
@@ -3003,7 +3003,7 @@ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
 name = "niqud"
-version = "0.1.57"
+version = "0.1.58"
 dependencies = [
  "ort",
  "serde",
@@ -3765,7 +3765,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "playback-state"
-version = "0.1.57"
+version = "0.1.58"
 dependencies = [
  "subtitle",
 ]
@@ -3848,6 +3848,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "85eae3c4ed2f50dcfe72643da4befc30deadb458a9b590d720cde2f2b1e97da9"
 dependencies = [
  "zerocopy",
+]
+
+[[package]]
+name = "practice-audio"
+version = "0.1.58"
+dependencies = [
+ "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
@@ -4852,7 +4860,7 @@ dependencies = [
 
 [[package]]
 name = "subtitle"
-version = "0.1.57"
+version = "0.1.58"
 dependencies = [
  "thiserror 2.0.18",
  "tracing",
@@ -5293,7 +5301,7 @@ dependencies = [
 
 [[package]]
 name = "trango"
-version = "0.1.57"
+version = "0.1.58"
 dependencies = [
  "anyhow",
  "audio-capture",
@@ -5301,6 +5309,7 @@ dependencies = [
  "libmpv2",
  "niqud",
  "playback-state",
+ "practice-audio",
  "serde",
  "slint",
  "slint-build",
@@ -6204,7 +6213,7 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "word-analysis"
-version = "0.1.57"
+version = "0.1.58"
 dependencies = [
  "serde",
  "serde_json",

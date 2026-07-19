@@ -12,6 +12,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 
 ### Removed
 
+## [0.1.58] - 2026-07-19
+
+### Added
+- Practice audio: a new "Generate practice audio" button in the Open Subtitles dialog walks every sentence in the loaded subtitle and builds a standalone `.mp3` per sentence — each word's translation spoken (via a new `espeak-ng` TTS dependency), then that word's real audio at 50%/75%/100% speed (twice each), then the whole sentence's real audio three times — with a dynamic pause (that piece's own duration + 1s) after every piece so there's time to repeat it out loud. Files land in a new `practice-audio/<video>-<timestamp>/` folder next to the video, numbered in subtitle order. Requires "Analyze all sentences" to have already been run — reads its cached translations rather than calling Ollama itself. New `crates/practice-audio` library crate. See `docs/src/usage/practice-audio.md`
+
 ## [0.1.57] - 2026-07-19
 
 ### Added

@@ -12,6 +12,7 @@ mod niqud_pronunciation;
 mod ollama_model_picker;
 mod open_media_dialog;
 mod open_subtitles_dialog;
+mod practice_audio_ui;
 mod sentence_card;
 mod sentence_list;
 mod settings_dialog;
@@ -827,6 +828,42 @@ fn ffmpeg_path_from_env() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("ffmpeg"))
 }
 
+/// Builds a `practice_audio::PracticeAudioBuilder` for "Generate practice
+/// audio" (`TODO.md` Vaihe 34): reuses [`ffmpeg_path_from_env`] (same
+/// `ffmpeg` every other feature uses) and resolves `espeak-ng`'s binary
+/// the same way `whisper_cli_generator` resolves `whisper-cli`'s —
+/// `TRANGO_ESPEAK_PATH` env var, defaulting to `"espeak-ng"` on `PATH`.
+fn practice_audio_builder() -> practice_audio::PracticeAudioBuilder {
+    let ffmpeg_path = ffmpeg_path_from_env();
+    let espeak_path = std::env::var_os("TRANGO_ESPEAK_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("espeak-ng"));
+    practice_audio::PracticeAudioBuilder {
+        ffmpeg_path,
+        tts: practice_audio::EspeakTtsSynthesizer {
+            binary_path: espeak_path,
+        },
+    }
+}
+
+/// The output folder for one "Generate practice audio" run: a
+/// `practice-audio` subfolder of `media_path`'s own folder, named after
+/// the media file's stem and `now` (`<stem>-<YYYY-MM-DD_HH-MM-SS>`) so
+/// repeated runs never collide. Takes `now` explicitly rather than
+/// calling `Local::now()` internally, same reasoning as
+/// `system_audio_capture::default_recording_filename`: tests can assert
+/// on a fixed timestamp.
+fn practice_audio_output_dir(media_path: &Path, now: chrono::DateTime<chrono::Local>) -> PathBuf {
+    let stem = media_path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "media".to_string());
+    let folder = media_path.parent().unwrap_or_else(|| Path::new("."));
+    folder
+        .join("practice-audio")
+        .join(format!("{stem}-{}", now.format("%Y-%m-%d_%H-%M-%S")))
+}
+
 /// How long [`niqud_client_from_config`] waits for `OnnxNiqudClient::load`
 /// before giving up — real loads finish in well under a second, but a
 /// found-yet-incompatible `libonnxruntime.so` has been observed to hang
@@ -1617,6 +1654,114 @@ fn wire_word_analysis_batch(
     });
 }
 
+/// Wires the Open Subtitles dialog's "Generate practice audio" button
+/// (`TODO.md` Vaihe 34): `generate-practice-audio-requested` runs
+/// `practice_audio_ui::spawn_batch_generate` over every cue in the
+/// currently loaded subtitle, writing one `.mp3` per cue into a fresh
+/// timestamped folder (`practice_audio_output_dir`) next to the media
+/// file. Unlike [`wire_word_analysis_batch`], this reads
+/// already-cached word-analysis translations rather than calling
+/// Ollama itself — a missing cache file is its own guarded error
+/// ("Analyze all sentences" first), not something this button produces.
+fn wire_practice_audio_batch(
+    window: &AppWindow,
+    state: &Rc<RefCell<PlayerState>>,
+    current_media: &Rc<RefCell<CurrentMedia>>,
+    selected_model: Rc<RefCell<Option<PathBuf>>>,
+    target_language: Rc<RefCell<String>>,
+) {
+    let window_weak = window.as_weak();
+    let state = Rc::clone(state);
+    let current_media = Rc::clone(current_media);
+    window.on_generate_practice_audio_requested(move || {
+        let Some(window) = window_weak.upgrade() else {
+            return;
+        };
+        let Some(model_path) = selected_model.borrow().clone() else {
+            tracing::warn!("practice-audio generation requested with no whisper model selected");
+            window.set_practice_audio_batch_status(PracticeAudioBatchStatus::Error);
+            window.set_practice_audio_batch_error_message("Select a whisper model first.".into());
+            return;
+        };
+        let Some(media_path) = current_media.borrow().media_path.clone() else {
+            tracing::warn!("practice-audio generation requested with no video or audio file open");
+            window.set_practice_audio_batch_status(PracticeAudioBatchStatus::Error);
+            window
+                .set_practice_audio_batch_error_message("Open a video or audio file first.".into());
+            return;
+        };
+        let Some(subtitle_path) = current_media.borrow().subtitle_path.clone() else {
+            tracing::warn!("practice-audio generation requested with no subtitle loaded");
+            window.set_practice_audio_batch_status(PracticeAudioBatchStatus::Error);
+            window.set_practice_audio_batch_error_message("Link a subtitle first.".into());
+            return;
+        };
+        let cache_path = ::word_analysis::cache_path_for(&subtitle_path);
+        if !cache_path.is_file() {
+            tracing::warn!("practice-audio generation requested with no word-analysis cache yet");
+            window.set_practice_audio_batch_status(PracticeAudioBatchStatus::Error);
+            window.set_practice_audio_batch_error_message(
+                "Run \"Analyze all sentences\" first.".into(),
+            );
+            return;
+        }
+
+        let cues = state.borrow().cues.clone();
+        let output_dir = practice_audio_output_dir(&media_path, chrono::Local::now());
+        if let Err(err) = std::fs::create_dir_all(&output_dir) {
+            tracing::warn!(?output_dir, %err, "failed to create practice-audio output folder");
+            window.set_practice_audio_batch_status(PracticeAudioBatchStatus::Error);
+            window.set_practice_audio_batch_error_message(
+                format!(
+                    "Failed to create output folder {}: {err}",
+                    output_dir.display()
+                )
+                .into(),
+            );
+            return;
+        }
+
+        let segmenter = whisper_cli_word_segmenter(model_path);
+        let builder = practice_audio_builder();
+        let tts_voice =
+            practice_audio::espeak_voice_for_language(&target_language.borrow()).to_string();
+
+        practice_audio_ui::open_batch_running(&window, cues.len());
+
+        // Only Send data may cross into the background thread and back via
+        // slint::invoke_from_event_loop below — see wire_word_analysis_batch's
+        // identical note.
+        let progress_window_weak = window_weak.clone();
+        let done_window_weak = window_weak.clone();
+        practice_audio_ui::spawn_batch_generate(
+            segmenter,
+            builder,
+            tts_voice,
+            media_path,
+            cues,
+            cache_path,
+            output_dir,
+            move |done, total| {
+                let progress_window_weak = progress_window_weak.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(window) = progress_window_weak.upgrade() else {
+                        return;
+                    };
+                    practice_audio_ui::apply_batch_progress(&window, done, total);
+                });
+            },
+            move |result| {
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(window) = done_window_weak.upgrade() else {
+                        return;
+                    };
+                    practice_audio_ui::apply_batch_result(&window, result);
+                });
+            },
+        );
+    });
+}
+
 /// Wires the Ctrl+A word-analysis popup (`TODO.md` Vaihe 24, part 5/6):
 /// `show-word-analysis` resolves the sentence currently shown in the
 /// current-sentence card (`PlayerState::current_cue_index`), checks the
@@ -1963,6 +2108,13 @@ fn main() -> anyhow::Result<()> {
         Rc::clone(&target_language),
         niqud_client,
     );
+    wire_practice_audio_batch(
+        &window,
+        &player_state,
+        &current_media,
+        Rc::clone(&selected_model),
+        Rc::clone(&target_language),
+    );
     let word_timing_video_player = Rc::clone(&video_player);
     wire_word_timing_popup(
         &window,
@@ -2038,6 +2190,24 @@ mod tests {
         // When:  reading CARGO_PKG_VERSION
         // Then:  it is non-empty, proving the version is wired up for display
         assert!(!env!("CARGO_PKG_VERSION").is_empty());
+    }
+
+    #[test]
+    fn test_practice_audio_output_dir_names_folder_after_stem_and_timestamp() {
+        // Given: a media path and a fixed local date/time
+        // When:  building the practice-audio output folder path
+        // Then:  it's "<media's folder>/practice-audio/<stem>-<timestamp>"
+        use chrono::TimeZone;
+        let now = chrono::Local
+            .with_ymd_and_hms(2026, 7, 19, 18, 42, 5)
+            .unwrap();
+
+        let output_dir = practice_audio_output_dir(Path::new("/videos/some_video.mp4"), now);
+
+        assert_eq!(
+            output_dir,
+            PathBuf::from("/videos/practice-audio/some_video-2026-07-19_18-42-05")
+        );
     }
 
     #[test]

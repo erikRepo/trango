@@ -73,8 +73,11 @@ that isn't on `PATH`, point TrangoPlayer at it directly with an
 environment variable:
 
 - `TRANGO_WHISPER_CLI_PATH` — path to the `whisper-cli` binary.
-- `TRANGO_FFMPEG_PATH` — path to the `ffmpeg` binary, used both for
-  subtitle generation and for the Audio source's system audio capture.
+- `TRANGO_FFMPEG_PATH` — path to the `ffmpeg` binary, used for subtitle
+  generation, the Audio source's system audio capture, and
+  [practice audio](practice-audio.md).
+- `TRANGO_ESPEAK_PATH` — path to the `espeak-ng` binary, used for
+  [practice audio](practice-audio.md)'s per-word translation TTS.
 
 These are environment variables rather than settings inside the app
 because they're one-time system install paths that rarely change, unlike

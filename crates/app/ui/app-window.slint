@@ -55,6 +55,16 @@ export enum WordAnalysisBatchStatus {
     Error,
 }
 
+/// State of the "Generate practice audio" batch loop (`TODO.md` Vaihe
+/// 34) — same Idle/Running/Done/Error shape as `WordAnalysisBatchStatus`.
+/// Set from Rust by `crates/app/src/practice_audio_ui.rs`.
+export enum PracticeAudioBatchStatus {
+    Idle,
+    Running,
+    Done,
+    Error,
+}
+
 /// Mirrors `playback_state::PlaybackMode` for the top bar's "Sentence by
 /// sentence" toggle (on = `SentenceBySentence`, off = `Normal` — "Normal" is
 /// never shown in the UI). Named `PlaybackModeUi` rather than `PlaybackMode`
@@ -1922,11 +1932,16 @@ component OpenSubtitlesDialog {
     in property <int> word-analysis-batch-progress-current: 0;
     in property <int> word-analysis-batch-progress-total: 0;
     in property <string> word-analysis-batch-error-message: "";
+    in property <PracticeAudioBatchStatus> practice-audio-batch-status: PracticeAudioBatchStatus.Idle;
+    in property <int> practice-audio-batch-progress-current: 0;
+    in property <int> practice-audio-batch-progress-total: 0;
+    in property <string> practice-audio-batch-error-message: "";
     callback generate-subtitles();
     callback select-model();
     callback select-ollama-model();
     callback set-ollama-target-language(string);
     callback analyze-all-sentences();
+    callback generate-practice-audio();
     callback link-translation();
     callback cancel();
     callback confirm();
@@ -2236,6 +2251,68 @@ component OpenSubtitlesDialog {
                             color: Palette.error-text;
                             font-family: "Inter";
                             font-size: 12px;
+                            wrap: word-wrap;
+                        }
+                    }
+
+                    VerticalLayout {
+                        spacing: 6px;
+
+                        Text {
+                            text: "Practice audio";
+                            color: Palette.muted-text;
+                            font-family: "JetBrains Mono";
+                            font-size: 10px;
+                            font-weight: 600;
+                            letter-spacing: 0.8px;
+                        }
+
+                        Rectangle {
+                            border-radius: 6px;
+                            background: Palette.accent;
+                            opacity: root.practice-audio-batch-status == PracticeAudioBatchStatus.Running || !root.model-selected ? 0.55 : 1.0;
+
+                            HorizontalLayout {
+                                padding-left: 14px;
+                                padding-right: 14px;
+                                padding-top: 8px;
+                                padding-bottom: 8px;
+
+                                Text {
+                                    text: root.practice-audio-batch-status == PracticeAudioBatchStatus.Running
+                                        ? "Generating " + root.practice-audio-batch-progress-current + " / " + root.practice-audio-batch-progress-total + "…"
+                                        : root.practice-audio-batch-status == PracticeAudioBatchStatus.Error
+                                            ? "Try again"
+                                            : root.practice-audio-batch-status == PracticeAudioBatchStatus.Done
+                                                ? "Generated practice audio"
+                                                : "Generate practice audio";
+                                    color: white;
+                                    font-family: "Inter";
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            TouchArea {
+                                enabled: root.practice-audio-batch-status != PracticeAudioBatchStatus.Running && root.model-selected;
+                                clicked => { root.generate-practice-audio(); }
+                            }
+                        }
+
+                        if root.practice-audio-batch-status == PracticeAudioBatchStatus.Error && root.practice-audio-batch-error-message != "" : Text {
+                            text: root.practice-audio-batch-error-message;
+                            color: Palette.error-text;
+                            font-family: "Inter";
+                            font-size: 12px;
+                            wrap: word-wrap;
+                        }
+
+                        Text {
+                            text: "Needs \"Analyze all sentences\" to have already run — walks every sentence, building one pronunciation-practice .mp3 each.";
+                            color: Palette.muted-text;
+                            font-family: "Inter";
+                            font-size: 11px;
                             wrap: word-wrap;
                         }
                     }
@@ -2677,6 +2754,15 @@ export component AppWindow inherits Window {
     in property <int> word-analysis-batch-progress-current: 0;
     in property <int> word-analysis-batch-progress-total: 0;
     in property <string> word-analysis-batch-error-message: "";
+    // "Generate practice audio" batch loop (TODO.md Vaihe 34): walks every
+    // cue, building one pronunciation-practice .mp3 each from already-
+    // cached word-analysis translations plus re-segmented word timing.
+    // Set from Rust by crates/app/src/practice_audio_ui.rs.
+    callback generate-practice-audio-requested();
+    in property <PracticeAudioBatchStatus> practice-audio-batch-status: PracticeAudioBatchStatus.Idle;
+    in property <int> practice-audio-batch-progress-current: 0;
+    in property <int> practice-audio-batch-progress-total: 0;
+    in property <string> practice-audio-batch-error-message: "";
 
     // Settings screen (top bar's gear icon): shows most of
     // config::TrangoConfig's remembered settings (docs/src/usage/settings.md)
@@ -3084,11 +3170,16 @@ export component AppWindow inherits Window {
             word-analysis-batch-progress-current: root.word-analysis-batch-progress-current;
             word-analysis-batch-progress-total: root.word-analysis-batch-progress-total;
             word-analysis-batch-error-message: root.word-analysis-batch-error-message;
+            practice-audio-batch-status: root.practice-audio-batch-status;
+            practice-audio-batch-progress-current: root.practice-audio-batch-progress-current;
+            practice-audio-batch-progress-total: root.practice-audio-batch-progress-total;
+            practice-audio-batch-error-message: root.practice-audio-batch-error-message;
             generate-subtitles => { root.generate-subtitles-requested(); }
             select-model => { root.select-whisper-model-requested(); }
             select-ollama-model => { root.select-ollama-model-requested(); }
             set-ollama-target-language(text) => { root.set-ollama-target-language(text); }
             analyze-all-sentences => { root.analyze-all-requested(); }
+            generate-practice-audio => { root.generate-practice-audio-requested(); }
             link-translation => { root.link-translation-requested(); }
             cancel => { root.cancel-open-subtitles-dialog(); }
             confirm => { root.confirm-open-subtitles-dialog(); }
