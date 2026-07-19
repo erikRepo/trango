@@ -358,7 +358,7 @@ fn temp_audio_path(video_path: &Path) -> PathBuf {
 /// crate's own tests hit it occasionally, writing a fresh fake binary
 /// immediately before running it) rather than an installed system binary
 /// that's been sitting on disk unchanged.
-fn run_command(command: &mut Command) -> io::Result<std::process::Output> {
+pub(crate) fn run_command(command: &mut Command) -> io::Result<std::process::Output> {
     for attempt in 0..5 {
         match command.output() {
             Err(err) if attempt < 4 && err.kind() == io::ErrorKind::ExecutableFileBusy => {
@@ -374,7 +374,7 @@ fn run_command(command: &mut Command) -> io::Result<std::process::Output> {
 /// to be the final line after loader/setup chatter, so showing just that
 /// keeps `GenerationFailed`'s message readable instead of dumping the
 /// whole log.
-fn last_stderr_line(stderr: &[u8]) -> String {
+pub(crate) fn last_stderr_line(stderr: &[u8]) -> String {
     let stderr = String::from_utf8_lossy(stderr);
     stderr
         .lines()
