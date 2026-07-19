@@ -243,11 +243,20 @@ impl WhisperCliWordSegmenter {
     /// `source_path`'s audio: cuts that span out via [`Self::extract_clip`],
     /// runs `whisper-cli` against the clip via
     /// [`Self::run_whisper_cli_word_level`], then parses the resulting
-    /// `.srt` (reusing [`crate::parse_srt`] — one word per cue, so no
-    /// separate JSON/token parsing is needed) and offsets every timestamp
-    /// by `cue_start` so callers get timings absolute within
-    /// `source_path`, not the clip. Always deletes the temporary clip and
-    /// `.srt`, on success or error.
+    /// `.srt` via [`crate::srt::parse_srt_blocks`] (one word per block, so
+    /// no separate JSON/token parsing is needed) and offsets every
+    /// timestamp by `cue_start` so callers get timings absolute within
+    /// `source_path`, not the clip.
+    ///
+    /// Uses `parse_srt_blocks` rather than the stricter [`crate::parse_srt`]
+    /// because `whisper-cli`'s DTW timestamps can occasionally collapse a
+    /// word right at the clip's edge to a zero (or, rarely, negative)
+    /// duration — observed in real use on a word landing exactly at a
+    /// clip boundary. Such a block is dropped (logged at `warn`) instead
+    /// of failing the whole sentence's segmentation over one degenerate
+    /// word.
+    ///
+    /// Always deletes the temporary clip and `.srt`, on success or error.
     pub fn segment_words(
         &self,
         source_path: &Path,
@@ -262,13 +271,25 @@ impl WhisperCliWordSegmenter {
             self.extract_clip(source_path, cue_start, cue_end, &clip_path)?;
             self.run_whisper_cli_word_level(&clip_path, &output_stem, &output_path)?;
             let text = std::fs::read_to_string(&output_path)?;
-            let cues = crate::parse_srt(&text)?;
-            Ok(cues
+            let blocks = crate::srt::parse_srt_blocks(&text)?;
+            Ok(blocks
                 .into_iter()
-                .map(|cue| WordTiming {
-                    word: cue.text.trim().to_string(),
-                    start: cue_start + cue.start,
-                    end: cue_start + cue.end,
+                .filter_map(|(index, start, end, word)| {
+                    if end <= start {
+                        tracing::warn!(
+                            index,
+                            ?start,
+                            ?end,
+                            %word,
+                            "dropping zero/negative-duration word from whisper-cli word-level output"
+                        );
+                        return None;
+                    }
+                    Some(WordTiming {
+                        word: word.trim().to_string(),
+                        start: cue_start + start,
+                        end: cue_start + end,
+                    })
                 })
                 .collect())
         })();
@@ -537,6 +558,61 @@ printf '1\n00:00:00,000 --> 00:00:00,500\nhello\n\n2\n00:00:00,600 --> 00:00:01,
         assert_eq!(words[1].word, "world");
         assert_eq!(words[1].start, Duration::from_millis(10_600));
         assert_eq!(words[1].end, Duration::from_millis(11_200));
+
+        sweep_temp_word_timing_files();
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A fake `whisper-cli` that writes a `.srt` with a leading
+    /// zero-duration cue (mirrors a real `whisper-cli`/DTW quirk observed
+    /// in manual testing: a word right at a clip's edge occasionally gets
+    /// `start == end`) followed by one normal cue, to `"<-of value>.srt"`.
+    #[cfg(unix)]
+    const FAKE_WHISPER_CLI_SCRIPT_WITH_DEGENERATE_CUE: &str = r#"#!/bin/sh
+of=""
+prev=""
+for arg in "$@"; do
+    if [ "$prev" = "-of" ]; then
+        of="$arg"
+    fi
+    prev="$arg"
+done
+printf '1\n00:00:00,000 --> 00:00:00,000\nghost\n\n2\n00:00:00,600 --> 00:00:01,200\nworld\n' > "${of}.srt"
+"#;
+
+    #[test]
+    #[cfg(unix)]
+    fn test_segment_words_drops_zero_duration_words_instead_of_failing() {
+        // Given: a fake whisper-cli whose .srt has one zero-duration cue
+        //        (start == end) ahead of a normal one
+        // When:  segmenting words
+        // Then:  it succeeds, returning only the normal word — the
+        //        degenerate one is dropped rather than the whole call
+        //        failing with SubtitleError::InvalidTiming
+        let _guard = TEMP_WORD_TIMING_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = test_dir("drops-zero-duration-words");
+        let source_path = dir.join("source.mp4");
+        std::fs::write(&source_path, b"").unwrap();
+        let ffmpeg_path = write_fake_binary(&dir, "fake-ffmpeg.sh", FAKE_FFMPEG_SCRIPT);
+        let binary_path = write_fake_binary(
+            &dir,
+            "fake-whisper-cli.sh",
+            FAKE_WHISPER_CLI_SCRIPT_WITH_DEGENERATE_CUE,
+        );
+        let segmenter = WhisperCliWordSegmenter {
+            binary_path,
+            ffmpeg_path,
+            ..WhisperCliWordSegmenter::default()
+        };
+
+        let words = segmenter
+            .segment_words(&source_path, Duration::from_secs(0), Duration::from_secs(2))
+            .unwrap();
+
+        assert_eq!(words.len(), 1);
+        assert_eq!(words[0].word, "world");
 
         sweep_temp_word_timing_files();
         std::fs::remove_dir_all(&dir).unwrap();
