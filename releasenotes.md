@@ -12,6 +12,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 
 ### Removed
 
+## [0.1.57] - 2026-07-19
+
+### Fixed
+- Ctrl+W word timing: a `whisper-cli` block with valid, non-zero timing but empty transcribed text (an edge case found while testing an experimental VAD-based fix — see `docs/src/developer/specs.md`'s "VAD tried and fully reverted" entry) is now dropped like the existing zero-duration-word case, instead of showing up as a blank row.
+
+(An experimental `--vad`-based fix for hallucinated/merged words in Ctrl+W word timing was added and then fully reverted within this same unreleased version, after real testing found it caused worse problems than it solved on both "Generate subtitles" and Ctrl+W. No user-visible change remains from that work other than the fix above.)
+
 ## [0.1.56] - 2026-07-19
 
 ### Added

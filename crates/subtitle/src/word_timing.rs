@@ -37,6 +37,19 @@ pub struct WordTiming {
 /// `whisper-cli` with a different flag set (`-ml 1 -sow` for one word per
 /// output cue, plus an optional `-dtw` preset) aimed at a different goal
 /// (word timing within an already-known sentence, not a full transcript).
+///
+/// Deliberately has **no** VAD (Voice Activity Detection) support — see
+/// `docs/src/developer/specs.md`'s "VAD tried and fully reverted" entry.
+/// VAD was tried here too, on the theory that this struct's fixed clip
+/// boundary (the caller already knows the sentence's own start/end) made
+/// it safe from the segment-redrawing regression found in
+/// `WhisperCliGenerator`. It wasn't: `whisper-cli` decodes each VAD
+/// speech segment independently, with no acoustic context across
+/// segments — if VAD's frame-level speech/silence classifier dips
+/// mid-word (plausible for many phonetic structures), one real word gets
+/// decoded as two disconnected fragments and `-sow` dutifully splits
+/// them into two separate words, breaking exactly the "one clip per real
+/// word" guarantee this struct exists to provide.
 pub struct WhisperCliWordSegmenter {
     /// Path or bare name of the `whisper-cli` binary. [`Default::default`]
     /// uses `"whisper-cli"`, resolved via `PATH`.
@@ -285,8 +298,19 @@ impl WhisperCliWordSegmenter {
                         );
                         return None;
                     }
+                    let word = word.trim().to_string();
+                    if word.is_empty() {
+                        tracing::warn!(
+                            index,
+                            ?start,
+                            ?end,
+                            "dropping empty-text word from whisper-cli word-level output \
+                             (e.g. a VAD-detected speech blip with nothing transcribed)"
+                        );
+                        return None;
+                    }
                     Some(WordTiming {
-                        word: word.trim().to_string(),
+                        word,
                         start: cue_start + start,
                         end: cue_start + end,
                     })
@@ -579,6 +603,61 @@ for arg in "$@"; do
 done
 printf '1\n00:00:00,000 --> 00:00:00,000\nghost\n\n2\n00:00:00,600 --> 00:00:01,200\nworld\n' > "${of}.srt"
 "#;
+
+    /// A fake `whisper-cli` that writes a `.srt` with one cue whose text
+    /// is empty (mirrors a real quirk observed with VAD enabled: a
+    /// detected speech blip with a valid, non-zero duration but nothing
+    /// actually transcribed) followed by one normal cue.
+    #[cfg(unix)]
+    const FAKE_WHISPER_CLI_SCRIPT_WITH_EMPTY_TEXT_CUE: &str = r#"#!/bin/sh
+of=""
+prev=""
+for arg in "$@"; do
+    if [ "$prev" = "-of" ]; then
+        of="$arg"
+    fi
+    prev="$arg"
+done
+printf '1\n00:00:00,690 --> 00:00:00,790\n\n\n2\n00:00:00,600 --> 00:00:01,200\nworld\n' > "${of}.srt"
+"#;
+
+    #[test]
+    #[cfg(unix)]
+    fn test_segment_words_drops_empty_text_words_instead_of_returning_blank_rows() {
+        // Given: a fake whisper-cli whose .srt has one cue with valid
+        //        timing but empty text ahead of a normal one
+        // When:  segmenting words
+        // Then:  it succeeds, returning only the normal word — the
+        //        empty-text one is dropped rather than becoming a blank
+        //        row in the popup
+        let _guard = TEMP_WORD_TIMING_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = test_dir("drops-empty-text-words");
+        let source_path = dir.join("source.mp4");
+        std::fs::write(&source_path, b"").unwrap();
+        let ffmpeg_path = write_fake_binary(&dir, "fake-ffmpeg.sh", FAKE_FFMPEG_SCRIPT);
+        let binary_path = write_fake_binary(
+            &dir,
+            "fake-whisper-cli.sh",
+            FAKE_WHISPER_CLI_SCRIPT_WITH_EMPTY_TEXT_CUE,
+        );
+        let segmenter = WhisperCliWordSegmenter {
+            binary_path,
+            ffmpeg_path,
+            ..WhisperCliWordSegmenter::default()
+        };
+
+        let words = segmenter
+            .segment_words(&source_path, Duration::from_secs(0), Duration::from_secs(2))
+            .unwrap();
+
+        assert_eq!(words.len(), 1);
+        assert_eq!(words[0].word, "world");
+
+        sweep_temp_word_timing_files();
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     #[cfg(unix)]

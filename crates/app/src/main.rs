@@ -767,8 +767,8 @@ pub(crate) fn whisper_cli_generator(model_path: PathBuf) -> subtitle::WhisperCli
 }
 
 /// Builds a `subtitle::WhisperCliWordSegmenter` for the Ctrl+W word-timing
-/// popup (`TODO.md` Vaihe 32), mirroring [`whisper_cli_generator`] exactly
-/// (same `TRANGO_WHISPER_CLI_PATH`/`TRANGO_FFMPEG_PATH`/`language_flag`
+/// popup (`TODO.md` Vaihe 32), mirroring [`whisper_cli_generator`] (same
+/// `TRANGO_WHISPER_CLI_PATH`/`TRANGO_FFMPEG_PATH`/`language_flag`
 /// derivation from the same selected whisper model) plus one addition:
 /// `dtw_preset`, derived from `model_path`'s filename via
 /// `subtitle::dtw_preset_for_model` — `None` for an unrecognized model

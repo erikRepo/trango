@@ -785,6 +785,56 @@ audiopätkän.
 
 ---
 
+## Vaihe 33 — Valinnainen VAD word timingiin (ei koko-tiedoston generointiin)
+
+**Tavoite:** Korjata Ctrl+W-testauksessa löydetty ongelma — lauseen
+klipin alussa oleva ei-puhe (esim. syntikka-pad) sai whisper-cli:n
+hallusinoimaan siitä sanan ja sekoittamaan myös seuraavien oikeiden
+sanojen tunnistuksen (kaksi sanaa summautui yhdeksi). whisper.cpp:n
+oma `--vad -vm <malli>` -tuki suodattaa ei-puhe-audion pois ennen
+dekoodausta, joten malli ei koskaan yritä tulkita sitä.
+
+Otettiin ensin käyttöön **kaikissa** whisper-cli-ajoissa käyttäjän
+alkuperäisestä pyynnöstä, mutta rajattiin testauksen jälkeen takaisin
+**vain** word timingiin: oikealla (laulettu, taustamusiikillinen)
+materiaalilla VAD ei vain suodattanut ei-puhetta vaan myös piirsi
+uusiksi whisper-cli:n omat cue-rajat — jatkuva taustamusiikki ei
+koskaan alittanut VAD:in puhekynnystä lauseiden välissä, jolloin 66
+cueta romahti 26:een, monta lausetta yhdessä cuessa. Word timingissä
+tätä riskiä ei ole, koska klipin cue-raja on jo kiinnitetty kutsujan
+toimesta (alkuperäisen tekstityksen oma ajastus) — VAD vaikuttaa
+sielläkin vain sanahallusinaatioon jo-kiinnitetyn välin *sisällä*.
+
+- `TrangoConfig.vad_model_path` (`config.rs`), uusi asetus samaan
+  tapaan kuin heprean niqud-malli
+- `crates/app/src/vad_model_picker.rs` (uusi): lähes suora peilaus
+  `niqud_model_picker.rs`:stä — `.bin`-tiedostot, whisper-tyylinen
+  `whisper.cpp/models`-automaattilöytö niqudin "ei automaattilöytöä"
+  -tapauksen sijaan
+- Vain `WhisperCliWordSegmenter` saa `vad_model_path`-kentän → `--vad
+  -vm <polku>` kun asetettu; `WhisperCliGenerator` (Generate subtitles
+  + live-segmentti) **ei** — ks. sen doc-kommentti ja
+  `docs/src/developer/specs.md`
+- `main.rs`:n `whisper_cli_word_segmenter` lukee `config::load()`:n
+  VAD-polun tuoreena joka kutsulla — **ei** niqudin kaltaista "restart
+  required" -käytöstä, koska konstruktori ajetaan joka tapauksessa
+  vasta käyttöhetkellä
+- Settings-dialogiin uusi "VAD MODEL (.BIN)" -rivi samalla
+  `FileListDialog`-kromilla kuin niqud-rivi
+- `segment_words` pudottaa nyt myös tyhjätekstiset (mutta validin
+  kestoiset) sanat — toinen VAD-testauksessa löytynyt reunatapaus
+
+**Voit ajaa/testata:** `scripts/test.sh` — uudet yksikkötestit
+(`word_timing.rs`: `--vad -vm`-lipun läsnä/poissaolo, tyhjätekstisen
+sanan pudotus; `vad_model_picker.rs`: samat 4 testiä kuin niqudilla)
+`OK`. Manuaalinen läpikäynti: aseta Settings → "VAD MODEL (.BIN)"
+oikealle Silero VAD -ggml-mallille, aja Ctrl+W samalla lauseella joka
+aiemmin tuotti hallusinoidun/summautuneen sanan, tarkista että tulos on
+nyt siisti; varmista myös että "Generate subtitles" toimii ennallaan
+(ei VAD:ia, ei cue-määrän muutosta).
+
+---
+
 ## Ei tässä listassa (myöhempää harkintaa)
 
 - Kansion vaihto Open Video -dialogissa natiivilla kansiovalitsimella
@@ -802,3 +852,15 @@ audiopätkän.
   toteutettu ja sittemmin purettu liian monimutkaisena; korvattu
   suoraviivaisemmalla nauhoita-koko-tiedosto-ja-generoi-erikseen-mallilla
   (ks. Vaihe 25:n "Suunnanmuutos"-huomautus yllä)
+- `whisper-cli --vad` subtitle-/word-timing-generointiin (Vaihe 33,
+  versio 0.1.57) — toteutettu ensin kaikkialle, rajattiin testauksen
+  jälkeen word timingiin, ja lopulta purettu kokonaan: `--vad` ei ole
+  passiivinen "ohita tämä audio" -suodatin vaan pilkkoo koko syötteen
+  itsenäisiin puhesegmentteihin joita whisper-cli dekoodaa ilman
+  jaettua kontekstia — tämä paitsi piirsi uusiksi koko-tiedoston
+  cue-rajat (66→26 cueta musiikkipitoisella sisällöllä), myös pilkkoi
+  yksittäisiä sanoja kahdeksi erilliseksi sanaksi word timingissä
+  (esim. "Shalom" → kaksi osaa), mikä rikkoi juuri sen takuun jota
+  `WhisperCliWordSegmenter` on olemassa antamaan. Ei jäänyt config-
+  asetusta uudelleenyritystä varten — ks. `docs/src/developer/specs.md`
+  "VAD tried and fully reverted" -päätöskirjaus

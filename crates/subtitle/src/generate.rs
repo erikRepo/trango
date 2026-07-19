@@ -76,6 +76,16 @@ impl SubtitleGenerator for StubSubtitleGenerator {
 /// `-osrt` is set), matching [`StubSubtitleGenerator`]'s convention and
 /// the one `open_media_dialog::matching_subtitle_path` looks for, so no
 /// raw-text parsing is needed here.
+///
+/// Deliberately has **no** VAD (Voice Activity Detection) support — see
+/// `docs/src/developer/specs.md`'s "VAD tried and fully reverted" entry:
+/// `whisper-cli`'s `--vad` doesn't just gate hallucination, it re-chunks
+/// audio into independent segments decoded with no shared context, and
+/// on music-heavy content (continuous instrumental audio rarely dips
+/// below VAD's speech threshold) that collapsed many short, natural cues
+/// into far fewer, much longer ones. Tried, found to regress
+/// `word_timing::WhisperCliWordSegmenter` too for the same underlying
+/// reason, and removed from both entirely rather than tuned further.
 pub struct WhisperCliGenerator {
     /// Path or bare name of the `whisper-cli` binary to run.
     /// [`Default::default`] uses `"whisper-cli"`, resolved via `PATH`.
