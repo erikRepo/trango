@@ -1213,6 +1213,8 @@ component SettingsDialog {
     in property <bool> niqud-model-selected: false;
     in property <string> niqud-model-name;
     in property <bool> niqud-model-needs-restart: false;
+    in property <bool> vad-model-selected: false;
+    in property <string> vad-model-name;
     callback set-video-folder(string);
     callback select-whisper-model();
     callback select-ollama-model();
@@ -1220,6 +1222,7 @@ component SettingsDialog {
     callback set-audio-monitor-source(string);
     callback set-audio-recording-folder(string);
     callback select-niqud-model();
+    callback select-vad-model();
     callback close();
 
     Rectangle {
@@ -1429,6 +1432,38 @@ component SettingsDialog {
                             font-family: "Inter";
                             font-size: 12px;
                             wrap: word-wrap;
+                        }
+                    }
+
+                    VerticalLayout {
+                        spacing: 4px;
+
+                        Text {
+                            text: "VAD MODEL (.BIN)";
+                            color: Palette.muted-text;
+                            font-family: "JetBrains Mono";
+                            font-size: 10px;
+                            font-weight: 600;
+                            letter-spacing: 0.8px;
+                        }
+
+                        Rectangle {
+                            HorizontalLayout {
+                                Text {
+                                    text: root.vad-model-selected
+                                        ? root.vad-model-name + " (change)"
+                                        : "not set — whisper runs without voice-activity filtering";
+                                    color: Palette.accent;
+                                    font-family: "Inter";
+                                    font-size: 13px;
+                                    font-weight: 500;
+                                    wrap: word-wrap;
+                                }
+                            }
+
+                            TouchArea {
+                                clicked => { root.select-vad-model(); }
+                            }
                         }
                     }
 
@@ -2526,6 +2561,26 @@ export component AppWindow inherits Window {
     callback select-niqud-model-picker-row(int);
     callback cancel-niqud-model-picker-dialog();
     callback confirm-niqud-model-picker-dialog();
+    // VAD (Voice Activity Detection) ggml model selection (TODO.md Vaihe
+    // 33): skips non-speech audio before every whisper-cli call (subtitle
+    // generation, live-segment transcription, Ctrl+W word timing) when
+    // set, avoiding hallucinated/merged words from non-speech audio (e.g.
+    // a synth pad before a clip's real speech starts). Set from Rust by
+    // crates/app/src/vad_model_picker.rs; persisted across restarts by
+    // crates/app/src/config.rs. Only reachable from the Settings dialog
+    // (no Open Subtitles dialog row, unlike whisper/Ollama models) —
+    // unlike niqud, no restart-required property: whisper_cli_generator/
+    // whisper_cli_word_segmenter read config::load() fresh on every call.
+    in property <bool> vad-model-selected: false;
+    in property <string> vad-model-name: "";
+    callback select-vad-model-requested();
+    in property <bool> is-vad-model-picker-dialog-open: false;
+    in property <string> vad-model-picker-folder-label: "";
+    in property <[FileListRow]> vad-model-picker-rows: [];
+    in property <int> vad-model-picker-selected-index: -1;
+    callback select-vad-model-picker-row(int);
+    callback cancel-vad-model-picker-dialog();
+    callback confirm-vad-model-picker-dialog();
     // Ollama model selection (TODO.md Vaihe 24): which locally installed
     // Ollama model the Ctrl+A popup and "Analyze all sentences" batch loop
     // run word-by-word sentence analysis against. Set from Rust by
@@ -3060,6 +3115,8 @@ export component AppWindow inherits Window {
             niqud-model-selected: root.niqud-model-selected;
             niqud-model-name: root.niqud-model-name;
             niqud-model-needs-restart: root.niqud-model-needs-restart;
+            vad-model-selected: root.vad-model-selected;
+            vad-model-name: root.vad-model-name;
             set-video-folder(text) => { root.set-settings-video-folder(text); }
             select-whisper-model => { root.select-whisper-model-requested(); }
             select-ollama-model => { root.select-ollama-model-requested(); }
@@ -3067,6 +3124,7 @@ export component AppWindow inherits Window {
             set-audio-monitor-source(text) => { root.set-settings-audio-monitor-source(text); }
             set-audio-recording-folder(text) => { root.set-settings-audio-recording-folder(text); }
             select-niqud-model => { root.select-niqud-model-requested(); }
+            select-vad-model => { root.select-vad-model-requested(); }
             close => { root.close-settings-dialog(); }
         }
 
@@ -3114,6 +3172,21 @@ export component AppWindow inherits Window {
             row-clicked(index) => { root.select-niqud-model-picker-row(index); }
             cancel => { root.cancel-niqud-model-picker-dialog(); }
             confirm => { root.confirm-niqud-model-picker-dialog(); }
+        }
+
+        // Only reachable from the Settings dialog, same as the niqud
+        // model picker above.
+        if root.is-vad-model-picker-dialog-open : FileListDialog {
+            width: parent.width;
+            height: parent.height;
+            title: "Select VAD model";
+            confirm-label: "Select";
+            folder-label: root.vad-model-picker-folder-label;
+            rows: root.vad-model-picker-rows;
+            selected-index: root.vad-model-picker-selected-index;
+            row-clicked(index) => { root.select-vad-model-picker-row(index); }
+            cancel => { root.cancel-vad-model-picker-dialog(); }
+            confirm => { root.confirm-vad-model-picker-dialog(); }
         }
 
         // Also reached from inside the Open Subtitles dialog, same as the

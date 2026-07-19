@@ -55,6 +55,14 @@ pub struct WhisperCliWordSegmenter {
     /// back to whisper.cpp's non-DTW word timestamps rather than failing
     /// outright on an unrecognized model.
     pub dtw_preset: Option<String>,
+    /// Path to a VAD (Voice Activity Detection) ggml model, passed via
+    /// `--vad -vm`. `None` omits both flags — see
+    /// `WhisperCliGenerator::vad_model_path`'s doc comment (`generate.rs`)
+    /// for why this matters here especially: a clip's leading non-speech
+    /// audio (e.g. a synth pad before the sentence's real speech starts)
+    /// can otherwise get hallucinated into a spurious word, and confuse
+    /// recognition of the real words right after it.
+    pub vad_model_path: Option<PathBuf>,
 }
 
 /// `whisper-cli`'s `--dtw` preset tokens (`TODO.md` Vaihe 31), ordered
@@ -109,6 +117,7 @@ impl Default for WhisperCliWordSegmenter {
             model_path: None,
             language: None,
             dtw_preset: None,
+            vad_model_path: None,
         }
     }
 }
@@ -191,6 +200,7 @@ impl WhisperCliWordSegmenter {
             model = ?self.model_path,
             language = ?self.language,
             dtw_preset = ?self.dtw_preset,
+            vad_model = ?self.vad_model_path,
             "running whisper-cli for word-level timing"
         );
         let mut command = Command::new(&self.binary_path);
@@ -200,6 +210,9 @@ impl WhisperCliWordSegmenter {
         }
         if let Some(language) = &self.language {
             command.arg("-l").arg(language);
+        }
+        if let Some(vad_model_path) = &self.vad_model_path {
+            command.arg("--vad").arg("-vm").arg(vad_model_path);
         }
         command.arg("-ml").arg("1").arg("-sow");
         if let Some(dtw_preset) = &self.dtw_preset {
@@ -285,8 +298,19 @@ impl WhisperCliWordSegmenter {
                         );
                         return None;
                     }
+                    let word = word.trim().to_string();
+                    if word.is_empty() {
+                        tracing::warn!(
+                            index,
+                            ?start,
+                            ?end,
+                            "dropping empty-text word from whisper-cli word-level output \
+                             (e.g. a VAD-detected speech blip with nothing transcribed)"
+                        );
+                        return None;
+                    }
                     Some(WordTiming {
-                        word: word.trim().to_string(),
+                        word,
                         start: cue_start + start,
                         end: cue_start + end,
                     })
@@ -522,6 +546,72 @@ printf '1\n00:00:00,000 --> 00:00:00,500\nhello\n\n2\n00:00:00,600 --> 00:00:01,
 
     #[test]
     #[cfg(unix)]
+    fn test_segment_words_passes_vad_flags_when_set_and_omits_when_none() {
+        // Given: a segmenter with vad_model_path set, and one without
+        //        (each with its own fake whisper-cli, same reasoning as
+        //        the dtw-preset test above)
+        // When:  segmenting words
+        // Then:  --vad -vm <path> are passed only when vad_model_path is
+        //        Some; absent entirely when it's None
+        let _guard = TEMP_WORD_TIMING_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = test_dir("vad-flag");
+        let source_path = dir.join("source.mp4");
+        std::fs::write(&source_path, b"").unwrap();
+        let ffmpeg_path = write_fake_binary(&dir, "fake-ffmpeg.sh", FAKE_FFMPEG_SCRIPT);
+
+        let with_vad_dir = dir.join("with-vad");
+        std::fs::create_dir_all(&with_vad_dir).unwrap();
+        let with_vad_binary = write_fake_binary(
+            &with_vad_dir,
+            "fake-whisper-cli.sh",
+            FAKE_WHISPER_CLI_SCRIPT,
+        );
+        let vad_model_path = with_vad_dir.join("silero-vad-ggml.bin");
+        let with_vad = WhisperCliWordSegmenter {
+            binary_path: with_vad_binary,
+            ffmpeg_path: ffmpeg_path.clone(),
+            vad_model_path: Some(vad_model_path.clone()),
+            ..WhisperCliWordSegmenter::default()
+        };
+        with_vad
+            .segment_words(&source_path, Duration::from_secs(0), Duration::from_secs(2))
+            .unwrap();
+        let with_vad_args =
+            std::fs::read_to_string(with_vad_dir.join("last-invocation.args")).unwrap();
+        assert!(
+            with_vad_args.contains(&format!("-vm {}", vad_model_path.display())),
+            "{with_vad_args}"
+        );
+        assert!(with_vad_args.contains("--vad"), "{with_vad_args}");
+
+        let without_vad_dir = dir.join("without-vad");
+        std::fs::create_dir_all(&without_vad_dir).unwrap();
+        let without_vad_binary = write_fake_binary(
+            &without_vad_dir,
+            "fake-whisper-cli.sh",
+            FAKE_WHISPER_CLI_SCRIPT,
+        );
+        let without_vad = WhisperCliWordSegmenter {
+            binary_path: without_vad_binary,
+            ffmpeg_path,
+            vad_model_path: None,
+            ..WhisperCliWordSegmenter::default()
+        };
+        without_vad
+            .segment_words(&source_path, Duration::from_secs(0), Duration::from_secs(2))
+            .unwrap();
+        let without_vad_args =
+            std::fs::read_to_string(without_vad_dir.join("last-invocation.args")).unwrap();
+        assert!(!without_vad_args.contains("--vad"), "{without_vad_args}");
+
+        sweep_temp_word_timing_files();
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
     fn test_segment_words_maps_srt_cues_to_word_timings_offset_by_cue_start() {
         // Given: a fake whisper-cli producing a fixed two-word .srt, and
         //        a sentence starting 10s into the source file
@@ -579,6 +669,61 @@ for arg in "$@"; do
 done
 printf '1\n00:00:00,000 --> 00:00:00,000\nghost\n\n2\n00:00:00,600 --> 00:00:01,200\nworld\n' > "${of}.srt"
 "#;
+
+    /// A fake `whisper-cli` that writes a `.srt` with one cue whose text
+    /// is empty (mirrors a real quirk observed with VAD enabled: a
+    /// detected speech blip with a valid, non-zero duration but nothing
+    /// actually transcribed) followed by one normal cue.
+    #[cfg(unix)]
+    const FAKE_WHISPER_CLI_SCRIPT_WITH_EMPTY_TEXT_CUE: &str = r#"#!/bin/sh
+of=""
+prev=""
+for arg in "$@"; do
+    if [ "$prev" = "-of" ]; then
+        of="$arg"
+    fi
+    prev="$arg"
+done
+printf '1\n00:00:00,690 --> 00:00:00,790\n\n\n2\n00:00:00,600 --> 00:00:01,200\nworld\n' > "${of}.srt"
+"#;
+
+    #[test]
+    #[cfg(unix)]
+    fn test_segment_words_drops_empty_text_words_instead_of_returning_blank_rows() {
+        // Given: a fake whisper-cli whose .srt has one cue with valid
+        //        timing but empty text ahead of a normal one
+        // When:  segmenting words
+        // Then:  it succeeds, returning only the normal word — the
+        //        empty-text one is dropped rather than becoming a blank
+        //        row in the popup
+        let _guard = TEMP_WORD_TIMING_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = test_dir("drops-empty-text-words");
+        let source_path = dir.join("source.mp4");
+        std::fs::write(&source_path, b"").unwrap();
+        let ffmpeg_path = write_fake_binary(&dir, "fake-ffmpeg.sh", FAKE_FFMPEG_SCRIPT);
+        let binary_path = write_fake_binary(
+            &dir,
+            "fake-whisper-cli.sh",
+            FAKE_WHISPER_CLI_SCRIPT_WITH_EMPTY_TEXT_CUE,
+        );
+        let segmenter = WhisperCliWordSegmenter {
+            binary_path,
+            ffmpeg_path,
+            ..WhisperCliWordSegmenter::default()
+        };
+
+        let words = segmenter
+            .segment_words(&source_path, Duration::from_secs(0), Duration::from_secs(2))
+            .unwrap();
+
+        assert_eq!(words.len(), 1);
+        assert_eq!(words[0].word, "world");
+
+        sweep_temp_word_timing_files();
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     #[cfg(unix)]

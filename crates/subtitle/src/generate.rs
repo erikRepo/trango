@@ -95,6 +95,13 @@ pub struct WhisperCliGenerator {
     /// `app` crate's `model_picker::language_flag` derives one from the
     /// selected model's filename).
     pub language: Option<String>,
+    /// Path to a VAD (Voice Activity Detection) ggml model, passed via
+    /// `--vad -vm`. `None` omits both flags, running `whisper-cli`
+    /// without VAD — it may then occasionally hallucinate a "word" from
+    /// non-speech audio (e.g. a music/noise intro before the real speech
+    /// starts) and mis-recognize real words immediately after it, since
+    /// nothing tells it to skip that audio before decoding.
+    pub vad_model_path: Option<PathBuf>,
 }
 
 impl Default for WhisperCliGenerator {
@@ -104,6 +111,7 @@ impl Default for WhisperCliGenerator {
             ffmpeg_path: PathBuf::from("ffmpeg"),
             model_path: None,
             language: None,
+            vad_model_path: None,
         }
     }
 }
@@ -166,6 +174,7 @@ impl WhisperCliGenerator {
             binary = ?self.binary_path,
             model = ?self.model_path,
             language = ?self.language,
+            vad_model = ?self.vad_model_path,
             "running whisper-cli"
         );
         let mut command = Command::new(&self.binary_path);
@@ -175,6 +184,9 @@ impl WhisperCliGenerator {
         }
         if let Some(language) = &self.language {
             command.arg("-l").arg(language);
+        }
+        if let Some(vad_model_path) = &self.vad_model_path {
+            command.arg("--vad").arg("-vm").arg(vad_model_path);
         }
         command.arg("-of").arg(output_stem).arg("-osrt");
 
@@ -548,6 +560,66 @@ printf '1\n00:00:00,000 --> 00:00:05,000\n[fake whisper-cli output]\n' > "${of}.
         assert!(logged_args.contains("-osrt"));
 
         std::fs::remove_dir_all(dir).expect("failed to clean up temp test dir");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_run_whisper_cli_passes_vad_flags_when_set_and_omits_when_none() {
+        // Given: two generators, one with vad_model_path set and one
+        //        without (each with its own fake whisper-cli, so their
+        //        logged argv don't overwrite each other)
+        // When:  running each directly
+        // Then:  --vad -vm <path> are passed only when vad_model_path is
+        //        Some; absent entirely when it's None
+        let with_vad_audio = video_fixture("vad-flags-with-vad");
+        let with_vad_dir = with_vad_audio.parent().unwrap();
+        let with_vad_binary =
+            write_fake_binary(with_vad_dir, "fake-whisper-cli.sh", FAKE_WHISPER_CLI_SCRIPT);
+        let vad_model_path = with_vad_dir.join("silero-vad-ggml.bin");
+        let with_vad = WhisperCliGenerator {
+            binary_path: with_vad_binary,
+            vad_model_path: Some(vad_model_path.clone()),
+            ..WhisperCliGenerator::default()
+        };
+        with_vad
+            .run_whisper_cli(
+                &with_vad_audio,
+                &with_vad_audio.with_extension(""),
+                &with_vad_audio.with_extension("srt"),
+            )
+            .unwrap();
+        let with_vad_args = std::fs::read_to_string(with_vad_audio.with_extension("args")).unwrap();
+        assert!(
+            with_vad_args.contains(&format!("-vm {}", vad_model_path.display())),
+            "{with_vad_args}"
+        );
+        assert!(with_vad_args.contains("--vad"), "{with_vad_args}");
+
+        let without_vad_audio = video_fixture("vad-flags-without-vad");
+        let without_vad_dir = without_vad_audio.parent().unwrap();
+        let without_vad_binary = write_fake_binary(
+            without_vad_dir,
+            "fake-whisper-cli.sh",
+            FAKE_WHISPER_CLI_SCRIPT,
+        );
+        let without_vad = WhisperCliGenerator {
+            binary_path: without_vad_binary,
+            vad_model_path: None,
+            ..WhisperCliGenerator::default()
+        };
+        without_vad
+            .run_whisper_cli(
+                &without_vad_audio,
+                &without_vad_audio.with_extension(""),
+                &without_vad_audio.with_extension("srt"),
+            )
+            .unwrap();
+        let without_vad_args =
+            std::fs::read_to_string(without_vad_audio.with_extension("args")).unwrap();
+        assert!(!without_vad_args.contains("--vad"), "{without_vad_args}");
+
+        std::fs::remove_dir_all(with_vad_dir).expect("failed to clean up temp test dir");
+        std::fs::remove_dir_all(without_vad_dir).expect("failed to clean up temp test dir");
     }
 
     #[test]

@@ -598,3 +598,46 @@ a plain `impl Fn(PlaySpanCommand)` closure rather than a
 `wire_open_subtitles_dialog`'s `reload_video` parameter already
 documents: it keeps the function's guard-path logic testable without a
 real mpv render context.
+
+## Optional VAD for every whisper-cli call
+
+Real Ctrl+W testing found a concrete failure: a sentence whose clip had
+a synth pad before the real speech starts got a hallucinated "word"
+from the pad, and the resulting garbage context also merged two real
+words right after it into one entry. `-ml 1 -sow` can't fix this after
+the fact — it only splits whitespace within whatever text `whisper-cli`
+already decided to output, and here the model glued two spoken words
+into one token in the first place.
+
+whisper.cpp's own `--vad -vm <model>` fixes this at the source by
+skipping non-speech audio before decoding. `TrangoConfig.vad_model_path`
+(`crates/app/src/config.rs`) is a new optional setting, picked via
+`crates/app/src/vad_model_picker.rs` — a near-exact mirror of
+`niqud_model_picker.rs` (same `FileListDialog` chrome/traversal logic,
+`.bin` extension instead of `.onnx`, whisper-style
+`whisper.cpp/models`-family autodiscovery instead of niqud's
+no-autodiscovery case). `WhisperCliGenerator` and
+`WhisperCliWordSegmenter` both gained an independent `vad_model_path`
+field (kept separate rather than introduced as a shared sub-struct,
+matching this codebase's existing precedent of duplicating these two
+structs' fields); both `main.rs` constructors
+(`whisper_cli_generator`/`whisper_cli_word_segmenter`) pass it through
+whenever a model is configured, so it applies to subtitle generation,
+live-segment transcription, and word timing alike.
+
+One deliberate difference from niqud: no restart-required behavior.
+Niqud's client loads once at startup, so a new pick needs
+`niqud-model-needs-restart` to warn the user. VAD has no equivalent
+long-lived client — both constructors already call `config::load()`
+fresh every time they're invoked (subtitle generation/word timing are
+both on-demand, not continuous), so a new pick just applies on the very
+next whisper-cli call.
+
+Testing this against real audio with a real VAD model turned up one
+more `segment_words` edge case beyond the zero-duration-word one
+(`crates/subtitle/src/word_timing.rs`): a VAD-detected speech blip can
+come back as a cue with valid, non-zero timing but **empty** text —
+nothing was actually transcribed there. Left alone, that would show up
+as a blank row in the Ctrl+W popup. `segment_words`'s existing
+degenerate-block filter (already dropping zero/negative-duration
+blocks, logged at `warn`) now also drops empty-text ones the same way.

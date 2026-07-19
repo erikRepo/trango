@@ -785,6 +785,43 @@ audiopätkän.
 
 ---
 
+## Vaihe 33 — Valinnainen VAD whisper-cli-ajoihin
+
+**Tavoite:** Korjata Ctrl+W-testauksessa löydetty ongelma — lauseen
+klipin alussa oleva ei-puhe (esim. syntikka-pad) sai whisper-cli:n
+hallusinoimaan siitä sanan ja sekoittamaan myös seuraavien oikeiden
+sanojen tunnistuksen (kaksi sanaa summautui yhdeksi). whisper.cpp:n
+oma `--vad -vm <malli>` -tuki suodattaa ei-puhe-audion pois ennen
+dekoodausta, joten malli ei koskaan yritä tulkita sitä. Käyttäjän
+pyynnöstä otetaan käyttöön **kaikissa** whisper-cli-ajoissa kun malli
+on konfiguroitu — ei vain word timingissä.
+
+- `TrangoConfig.vad_model_path` (`config.rs`), uusi asetus samaan
+  tapaan kuin heprean niqud-malli
+- `crates/app/src/vad_model_picker.rs` (uusi): lähes suora peilaus
+  `niqud_model_picker.rs`:stä — `.bin`-tiedostot, whisper-tyylinen
+  `whisper.cpp/models`-automaattilöytö niqudin "ei automaattilöytöä"
+  -tapauksen sijaan
+- `WhisperCliGenerator` ja `WhisperCliWordSegmenter` (molemmat,
+  itsenäisinä kenttinä) saavat `vad_model_path`-kentän → `--vad -vm
+  <polku>` kun asetettu
+- `main.rs`:n `whisper_cli_generator`/`whisper_cli_word_segmenter`
+  lukevat `config::load()`:n VAD-polun tuoreena joka kutsulla — **ei**
+  niqudin kaltaista "restart required" -käytöstä, koska kumpikin
+  konstruktori ajetaan joka tapauksessa vasta käyttöhetkellä
+- Settings-dialogiin uusi "VAD MODEL (.BIN)" -rivi samalla
+  `FileListDialog`-kromilla kuin niqud-rivi
+
+**Voit ajaa/testata:** `scripts/test.sh` — uudet yksikkötestit
+(`generate.rs`, `word_timing.rs`: `--vad -vm`-lipun läsnä/poissaolo;
+`vad_model_picker.rs`: samat 4 testiä kuin niqudilla) `OK`. Manuaalinen
+läpikäynti: aseta Settings → "VAD MODEL (.BIN)" oikealle Silero
+VAD -ggml-mallille, aja Ctrl+W samalla lauseella joka aiemmin tuotti
+hallusinoidun/summautuneen sanan, tarkista että tulos on nyt siisti;
+varmista myös ettei "Generate subtitles" hajonnut VAD:n kanssa.
+
+---
+
 ## Ei tässä listassa (myöhempää harkintaa)
 
 - Kansion vaihto Open Video -dialogissa natiivilla kansiovalitsimella
