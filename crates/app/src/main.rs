@@ -19,12 +19,13 @@ mod subtitle_generation;
 mod system_audio_capture;
 mod video_player;
 mod word_analysis;
+mod word_timing_ui;
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use playback_state::{MediaSource, PlaybackMode, PlayerState, SeekCommand};
+use playback_state::{MediaSource, PlaySpanCommand, PlaybackMode, PlayerState, SeekCommand};
 use slint::Model;
 
 slint::include_modules!();
@@ -762,6 +763,37 @@ pub(crate) fn whisper_cli_generator(model_path: PathBuf) -> subtitle::WhisperCli
         ffmpeg_path,
         model_path: Some(model_path),
         language: Some(language),
+    }
+}
+
+/// Builds a `subtitle::WhisperCliWordSegmenter` for the Ctrl+W word-timing
+/// popup (`TODO.md` Vaihe 32), mirroring [`whisper_cli_generator`] exactly
+/// (same `TRANGO_WHISPER_CLI_PATH`/`TRANGO_FFMPEG_PATH`/`language_flag`
+/// derivation from the same selected whisper model) plus one addition:
+/// `dtw_preset`, derived from `model_path`'s filename via
+/// `subtitle::dtw_preset_for_model` — `None` for an unrecognized model
+/// name, which makes the segmenter omit `-dtw` rather than guess wrong.
+pub(crate) fn whisper_cli_word_segmenter(model_path: PathBuf) -> subtitle::WhisperCliWordSegmenter {
+    let binary_path = std::env::var_os("TRANGO_WHISPER_CLI_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("whisper-cli"));
+    let ffmpeg_path = ffmpeg_path_from_env();
+    let language = model_picker::language_flag(&model_path).to_string();
+    let dtw_preset = subtitle::dtw_preset_for_model(&model_path).map(str::to_string);
+    tracing::info!(
+        ?binary_path,
+        ?ffmpeg_path,
+        ?model_path,
+        %language,
+        ?dtw_preset,
+        "configured whisper-cli word segmenter"
+    );
+    subtitle::WhisperCliWordSegmenter {
+        binary_path,
+        ffmpeg_path,
+        model_path: Some(model_path),
+        language: Some(language),
+        dtw_preset,
     }
 }
 
@@ -1599,6 +1631,104 @@ fn wire_word_analysis_popup(
     });
 }
 
+/// Wires the Ctrl+W word-timing popup (`TODO.md` Vaihe 32): `show-word-timing`
+/// resolves the current cue/media/whisper model the same way
+/// `wire_word_analysis_popup` resolves the current cue/subtitle/Ollama
+/// model, then runs `word_timing_ui::spawn_segment_words` on a background
+/// thread and applies its result once finished. `close-word-timing-popup`
+/// just hides the popup. `play-word-timing` plays back the clicked row's
+/// exact audio span via `play_span` — the same bounded-span playback
+/// `wire_cue_navigation`'s `repeat-cue` uses for a whole cue
+/// (`video_player::VideoPlayer::toggle_play_span`), reused here for one
+/// word. Taking a plain closure rather than a `Rc<video_player::VideoPlayer>`
+/// directly keeps this function testable without a real mpv render
+/// context, same reasoning as `wire_open_subtitles_dialog`'s
+/// `reload_video` parameter (see its doc comment).
+fn wire_word_timing_popup(
+    window: &AppWindow,
+    state: &Rc<RefCell<PlayerState>>,
+    current_media: &Rc<RefCell<CurrentMedia>>,
+    selected_model: Rc<RefCell<Option<PathBuf>>>,
+    play_span: impl Fn(PlaySpanCommand) + 'static,
+) {
+    let window_weak = window.as_weak();
+    let request_state = Rc::clone(state);
+    let request_media = Rc::clone(current_media);
+    window.on_show_word_timing(move || {
+        let Some(window) = window_weak.upgrade() else {
+            return;
+        };
+        let Some(model_path) = selected_model.borrow().clone() else {
+            tracing::warn!("word timing requested with no whisper model selected");
+            window.set_word_timing_status(WordTimingStatus::Error);
+            window.set_word_timing_error_message("Select a whisper model first.".into());
+            window.set_is_word_timing_popup_open(true);
+            return;
+        };
+        let Some(media_path) = request_media.borrow().media_path.clone() else {
+            tracing::warn!("word timing requested with no video or audio file open");
+            window.set_word_timing_status(WordTimingStatus::Error);
+            window.set_word_timing_error_message("Open a video or audio file first.".into());
+            window.set_is_word_timing_popup_open(true);
+            return;
+        };
+        // panel_content_ready guards against segmenting a sentence that
+        // isn't actually being shown, same as wire_word_analysis_popup's
+        // identical check — an empty PlayerState.cues (no subtitle
+        // loaded) also naturally falls into the "no cue" branch below.
+        let cue = if panel_content_ready(&window) {
+            let state = request_state.borrow();
+            state
+                .current_cue_index
+                .and_then(|index| state.cues.get(index).cloned())
+        } else {
+            None
+        };
+        let Some(cue) = cue else {
+            tracing::warn!("word timing requested with no sentence in focus");
+            window.set_word_timing_status(WordTimingStatus::Error);
+            window.set_word_timing_error_message("No sentence is currently in focus.".into());
+            window.set_is_word_timing_popup_open(true);
+            return;
+        };
+
+        word_timing_ui::open_popup_loading(&window);
+
+        // Only Send data may cross into the background thread and back via
+        // slint::invoke_from_event_loop below — see wire_word_analysis_popup's
+        // identical note.
+        let callback_window_weak = window_weak.clone();
+        word_timing_ui::spawn_segment_words(
+            whisper_cli_word_segmenter(model_path),
+            media_path,
+            cue.start,
+            cue.end,
+            move |result| {
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(window) = callback_window_weak.upgrade() else {
+                        return;
+                    };
+                    word_timing_ui::apply_result(&window, result);
+                });
+            },
+        );
+    });
+
+    let close_window_weak = window.as_weak();
+    window.on_close_word_timing_popup(move || {
+        if let Some(window) = close_window_weak.upgrade() {
+            window.set_is_word_timing_popup_open(false);
+        }
+    });
+
+    window.on_play_word_timing(move |start_seconds, end_seconds| {
+        play_span(PlaySpanCommand {
+            start: std::time::Duration::from_secs_f32(start_seconds),
+            end: std::time::Duration::from_secs_f32(end_seconds),
+        });
+    });
+}
+
 fn main() -> anyhow::Result<()> {
     let (debug, args) = extract_debug_flag(std::env::args().collect());
     init_logging(debug);
@@ -1715,6 +1845,14 @@ fn main() -> anyhow::Result<()> {
         Rc::clone(&selected_ollama_model),
         Rc::clone(&target_language),
         niqud_client,
+    );
+    let word_timing_video_player = Rc::clone(&video_player);
+    wire_word_timing_popup(
+        &window,
+        &player_state,
+        &current_media,
+        Rc::clone(&selected_model),
+        move |command| word_timing_video_player.toggle_play_span(command),
     );
 
     let mut startup_audio_capture = audio_capture::AudioCapture::default();
@@ -2307,6 +2445,66 @@ mod tests {
         window.invoke_close_word_analysis_popup();
         window.invoke_select_media_source(MediaSourceUi::Video);
         let _ = std::fs::remove_file(&word_analysis_cache_path);
+
+        // When:  wiring the Ctrl+W word-timing popup (`TODO.md` Vaihe 32)
+        //        with no whisper model selected yet and requesting it
+        // Then:  Error, with the same "select a model first" wording as
+        //        the analogous whisper-model guard elsewhere (e.g.
+        //        on-generate-subtitles-requested) — no background thread
+        //        is spawned, so this is checkable synchronously
+        let word_timing_current_media = Rc::new(RefCell::new(CurrentMedia {
+            media_path: None,
+            subtitle_path: Some(subtitle_path.clone()),
+            translation_path: None,
+        }));
+        let word_timing_selected_model: Rc<RefCell<Option<PathBuf>>> = Rc::new(RefCell::new(None));
+        wire_word_timing_popup(
+            &window,
+            &player_state,
+            &word_timing_current_media,
+            Rc::clone(&word_timing_selected_model),
+            |_command| {},
+        );
+
+        window.invoke_show_word_timing();
+        assert_eq!(window.get_word_timing_status(), WordTimingStatus::Error);
+        assert_eq!(
+            window.get_word_timing_error_message(),
+            "Select a whisper model first."
+        );
+        window.invoke_close_word_timing_popup();
+        assert!(!window.get_is_word_timing_popup_open());
+
+        // When:  a whisper model is selected but no video/audio file is
+        //        open (word_timing_current_media.media_path is still None)
+        // Then:  Error, distinct wording from the no-model case
+        *word_timing_selected_model.borrow_mut() = Some(PathBuf::from("/models/ggml-base.bin"));
+        window.invoke_show_word_timing();
+        assert_eq!(window.get_word_timing_status(), WordTimingStatus::Error);
+        assert_eq!(
+            window.get_word_timing_error_message(),
+            "Open a video or audio file first."
+        );
+        window.invoke_close_word_timing_popup();
+
+        // When:  a model is selected and a media file is open, but no
+        //        sentence is in focus (mirrors the identical Ctrl+A check
+        //        above: switching to the Audio source with nothing loaded
+        //        there yet makes panel_content_ready false)
+        // Then:  Error, "No sentence is currently in focus." — same
+        //        wording/guard as Ctrl+A's identical scenario
+        word_timing_current_media.borrow_mut().media_path =
+            Some(PathBuf::from("/videos/some_video.mp4"));
+        window.set_loaded_media_source(MediaSourceUi::Video);
+        window.invoke_select_media_source(MediaSourceUi::Audio);
+        window.invoke_show_word_timing();
+        assert_eq!(window.get_word_timing_status(), WordTimingStatus::Error);
+        assert_eq!(
+            window.get_word_timing_error_message(),
+            "No sentence is currently in focus."
+        );
+        window.invoke_close_word_timing_popup();
+        window.invoke_select_media_source(MediaSourceUi::Video);
 
         // When:  opening the Open dialog with an Up row, a subfolder, and
         //        two video entries

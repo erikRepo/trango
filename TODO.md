@@ -747,6 +747,44 @@ että sanat/ajat osuvat `[start, end)`:n sisään ja täsmäävät ääneen.
 
 ---
 
+## Vaihe 32 — Word timing -popup (Ctrl+W)
+
+**Tavoite:** Anna Vaihe 31:n `segment_words`-kyvykkyydelle oikea
+käyttöliittymä, jotta se on ylipäätään tavoitettavissa ja jotta sen
+todellinen tarkkuus voidaan tarkistaa korvakuulolla eikä vain lukemalla
+numeroita. Ei vielä käännöstä, TTS:ää, nopeusvariantteja tai
+harjoitteluäänitteen kokoamista — pelkkä ajoitusdatan näyttäminen ja
+kuunteleminen.
+
+- Uusi Ctrl+W-pikanäppäin avaa "Word timing" -popupin nykyiselle
+  sentence-cardin lauseelle — sama Idle/Loading/Done/Error-tilakone ja
+  sama guard-järjestys (malli → media → `panel_content_ready` + nykyinen
+  cue) kuin Ctrl+A:n word-analysis-popupissa
+- Popup listaa jokaisen sanan ja sen `[start, end)`-ajan; rivin
+  klikkaus toistaa juuri sen sanan audion
+  `video_player::VideoPlayer::toggle_play_span`in kautta — sama
+  rajattu-väli-toisto jota `repeat-cue` jo käyttää koko lauseelle
+- `whisper_cli_word_segmenter` (`main.rs`) rakentaa
+  `WhisperCliWordSegmenter`in samasta valitusta whisper-mallista kuin
+  "Generate subtitles", lisäten `dtw_preset_for_model`in päättelemän
+  presetin
+- `crates/app/src/word_timing_ui.rs` (uusi): `spawn_segment_words`,
+  `open_popup_loading`, `apply_result`, `format_timestamp` — sama
+  taustasäie+`invoke_from_event_loop`-kuvio kuin
+  `subtitle_generation::spawn_generate`/`word_analysis::spawn_analyze_sentence`
+
+**Voit ajaa/testata:** `scripts/test.sh` — `word_timing_ui.rs`:n
+yksikkötestit (`format_timestamp`, rivimappaus) ja `main.rs`:n
+laajennettu `test_app_window_properties` (kolme synkronista
+guard-polkua: ei mallia, ei mediaa, ei fokusoitua lausetta) molemmat
+`OK`; segmentoinnin itsensä oikeellisuus on jo katettu Vaihe 31:n
+`crates/subtitle`-testeillä. Manuaalinen läpikäynti: avaa oikea video +
+tekstitys + whisper-malli, paina Ctrl+W fokusoidulla lauseella,
+tarkista että sanat/ajat näkyvät ja rivin klikkaus soittaa oikean
+audiopätkän.
+
+---
+
 ## Ei tässä listassa (myöhempää harkintaa)
 
 - Kansion vaihto Open Video -dialogissa natiivilla kansiovalitsimella

@@ -949,6 +949,215 @@ component WordAnalysisPopup {
     }
 }
 
+/// One row in the Ctrl+W word-timing popup: a word plus its
+/// `[start, end)` span within the source file, from
+/// `subtitle::WordTiming` (`crates/subtitle/src/word_timing.rs`), set
+/// from Rust by `crates/app/src/word_timing_ui.rs`. `start-label`/
+/// `end-label` are pre-formatted ("M:SS.mmm") in Rust, same as
+/// `WordAnalysisRow.parts-label` above; `start-seconds`/`end-seconds`
+/// are the raw values a row click hands back via `WordTimingPopup.play`
+/// so `main.rs` can play exactly that span without a separate lookup.
+struct WordTimingRow {
+    word: string,
+    start-label: string,
+    end-label: string,
+    start-seconds: float,
+    end-seconds: float,
+}
+
+/// State of the Ctrl+W word-timing popup (`TODO.md` Vaihe 32) — mirrors
+/// `WordAnalysisStatus` exactly: `Idle` before it's ever been opened,
+/// `Loading` while `whisper-cli` is segmenting the current sentence's
+/// audio, `Done` once `word-timing-rows` has content, `Error` (with
+/// `word-timing-error-message`) if no whisper model/media is available,
+/// no sentence is in focus, or the segmentation itself failed.
+export enum WordTimingStatus {
+    Idle,
+    Loading,
+    Done,
+    Error,
+}
+
+/// Ctrl+W's per-word audio-timing popup for the sentence currently shown
+/// in the current-sentence card: header ("Word timing" + "✕"), a
+/// scrollable list of `word · start – end` rows (or a loading/error
+/// message in place of the list), footer "Close". Clicking a row plays
+/// back exactly that word's audio span (`play`, wired in `main.rs` to
+/// `video_player::VideoPlayer::toggle_play_span`) — the main way this
+/// popup is actually used, letting the DTW timing be heard rather than
+/// just read as numbers. Opened by `AppWindow`'s `show-word-timing`
+/// (wired in `main.rs`'s `wire_word_timing_popup` to Ctrl+W, see
+/// `nav-focus`'s `key-pressed` below); closed by the backdrop, header
+/// "✕", or footer "Close", all emitting `close`.
+component WordTimingPopup {
+    in property <WordTimingStatus> status: WordTimingStatus.Idle;
+    in property <[WordTimingRow]> rows: [];
+    in property <string> error-message: "";
+    callback close();
+    callback play(float, float);
+
+    Rectangle {
+        background: rgba(0, 0, 0, 0.55);
+
+        TouchArea {
+            clicked => { root.close(); }
+        }
+
+        Rectangle {
+            width: 480px;
+            height: 420px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: Palette.modal-bg;
+            border-width: 1px;
+            border-radius: 12px;
+            border-color: Palette.border;
+            drop-shadow-color: rgba(0, 0, 0, 0.6);
+            drop-shadow-blur: 40px;
+            drop-shadow-offset-y: 16px;
+            clip: true;
+
+            TouchArea {
+                // Swallows clicks inside the card so they don't fall
+                // through to the backdrop's close handler above.
+            }
+
+            VerticalLayout {
+                Rectangle {
+                    height: 52px;
+                    border-width: 1px;
+                    border-color: Palette.border;
+
+                    HorizontalLayout {
+                        padding-left: 20px;
+                        padding-right: 20px;
+                        alignment: space-between;
+                        cross-axis-alignment: center;
+
+                        Text {
+                            text: "Word timing";
+                            color: Palette.primary-text;
+                            font-family: "Inter";
+                            font-size: 15px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+
+                        TouchArea {
+                            width: 20px;
+                            height: 20px;
+                            clicked => { root.close(); }
+
+                            Text {
+                                text: "✕";
+                                color: Palette.muted-text;
+                                font-family: "Inter";
+                                font-size: 16px;
+                                font-weight: 600;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    vertical-stretch: 1;
+                    padding: 16px;
+                    spacing: 6px;
+
+                    if root.status == WordTimingStatus.Loading : Text {
+                        text: "Segmenting…";
+                        color: Palette.muted-text;
+                        font-family: "Inter";
+                        font-size: 13px;
+                    }
+
+                    if root.status == WordTimingStatus.Error : Text {
+                        text: root.error-message;
+                        color: Palette.error-text;
+                        font-family: "Inter";
+                        font-size: 13px;
+                        wrap: word-wrap;
+                    }
+
+                    if root.status == WordTimingStatus.Done : ListView {
+                        for row in root.rows : Rectangle {
+                            height: 44px;
+                            border-radius: 7px;
+
+                            TouchArea {
+                                clicked => { root.play(row.start-seconds, row.end-seconds); }
+                            }
+
+                            HorizontalLayout {
+                                padding-left: 12px;
+                                padding-right: 12px;
+                                alignment: space-between;
+                                cross-axis-alignment: center;
+
+                                Text {
+                                    text: row.word;
+                                    color: Palette.primary-text;
+                                    font-family: "Inter";
+                                    font-size: 15px;
+                                    font-weight: 600;
+                                }
+
+                                Text {
+                                    text: row.start-label + " – " + row.end-label;
+                                    color: Palette.muted-text;
+                                    font-family: "JetBrains Mono";
+                                    font-size: 12px;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    height: 60px;
+                    border-width: 1px;
+                    border-color: Palette.border;
+
+                    HorizontalLayout {
+                        padding-left: 20px;
+                        padding-right: 20px;
+                        alignment: end;
+                        cross-axis-alignment: center;
+
+                        Rectangle {
+                            border-width: 1px;
+                            border-radius: 6px;
+                            border-color: Palette.border;
+
+                            HorizontalLayout {
+                                padding-left: 16px;
+                                padding-right: 16px;
+                                padding-top: 8px;
+                                padding-bottom: 8px;
+
+                                Text {
+                                    text: "Close";
+                                    color: Palette.ghost-text;
+                                    font-family: "Inter";
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            TouchArea {
+                                clicked => { root.close(); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// One editable "label / value" row in `SettingsDialog` below — a small-
 /// caps mono label above a `LineEdit`, matching the section-header style
 /// used elsewhere in the dialogs (e.g. OpenSubtitlesDialog's "Original
@@ -1306,9 +1515,10 @@ component HintLabel {
 /// line vs. plain play/pause) depending on whether there's a cue to bound it
 /// to. Right/Left/Space drive `next-cue`/`previous-cue`/`repeat-cue`, wired
 /// to `playback-state` navigation and mpv seeking in
-/// `crates/app/src/main.rs` and `video_player.rs`. Ctrl+T/Ctrl+A
-/// (`toggle-translation`/`show-word-analysis`, `TODO.md` Vaihe 24) work
-/// unconditionally in either mode, so they're always shown.
+/// `crates/app/src/main.rs` and `video_player.rs`. Ctrl+T/Ctrl+A/Ctrl+W
+/// (`toggle-translation`/`show-word-analysis`/`show-word-timing`,
+/// `TODO.md` Vaihe 24/32) work unconditionally in either mode, so
+/// they're always shown.
 component HintBar {
     in property <bool> sentence-mode-active: true;
 
@@ -1345,6 +1555,10 @@ component HintBar {
 
             HintLabel {
                 text: "ctrl+a · word analysis";
+            }
+
+            HintLabel {
+                text: "ctrl+w · word timing";
             }
         }
     }
@@ -2388,6 +2602,18 @@ export component AppWindow inherits Window {
     in property <WordAnalysisStatus> word-analysis-status: WordAnalysisStatus.Idle;
     in property <[WordAnalysisRow]> word-analysis-rows: [];
     in property <string> word-analysis-error-message: "";
+    // Ctrl+W word-timing popup (TODO.md Vaihe 32): segments the sentence
+    // currently shown in the current-sentence card into per-word audio
+    // timing via whisper-cli DTW. Set from Rust by
+    // crates/app/src/main.rs's wire_word_timing_popup /
+    // crates/app/src/word_timing_ui.rs.
+    callback show-word-timing();
+    callback close-word-timing-popup();
+    callback play-word-timing(float, float);
+    in property <bool> is-word-timing-popup-open: false;
+    in property <WordTimingStatus> word-timing-status: WordTimingStatus.Idle;
+    in property <[WordTimingRow]> word-timing-rows: [];
+    in property <string> word-timing-error-message: "";
     // "Analyze all sentences" batch loop (TODO.md Vaihe 24, part 4/6): runs
     // word-by-word analysis for every cue not already in the subtitle's
     // cache file. Set from Rust by crates/app/src/word_analysis.rs.
@@ -2471,6 +2697,11 @@ export component AppWindow inherits Window {
                 // current-sentence card is showing right now, same as
                 // Ctrl+T above — not mode-gated for the same reason.
                 root.show-word-analysis();
+                accept
+            } else if (event.modifiers.control && (event.text == "w" || event.text == "W")) {
+                // Word timing, same target/reasoning as Ctrl+A above —
+                // whatever sentence the current-sentence card is showing.
+                root.show-word-timing();
                 accept
             } else if (event.modifiers.control && event.text == " ") {
                 // Starts/stops system-audio capture (TODO.md Vaihe 26,
@@ -2914,6 +3145,16 @@ export component AppWindow inherits Window {
             rows: root.word-analysis-rows;
             error-message: root.word-analysis-error-message;
             close => { root.close-word-analysis-popup(); }
+        }
+
+        if root.is-word-timing-popup-open : WordTimingPopup {
+            width: parent.width;
+            height: parent.height;
+            status: root.word-timing-status;
+            rows: root.word-timing-rows;
+            error-message: root.word-timing-error-message;
+            close => { root.close-word-timing-popup(); }
+            play(start-seconds, end-seconds) => { root.play-word-timing(start-seconds, end-seconds); }
         }
     }
 }
