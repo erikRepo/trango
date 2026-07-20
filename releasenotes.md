@@ -12,6 +12,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versio
 
 ### Removed
 
+## [0.1.56] - 2026-07-19
+
+### Added
+- Word timing popup (**Ctrl+W**): shows per-word audio timing for the current sentence, derived via `subtitle::WhisperCliWordSegmenter::segment_words` (added unreleased in 0.1.55), and lets you click any word to play back just that word's audio span. Reuses whichever whisper model is already selected for subtitle generation — no separate setup. See `docs/src/usage/word-timing.md`
+
 ## [0.1.55] - 2026-07-19
 
 ### Added

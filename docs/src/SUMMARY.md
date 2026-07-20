@@ -14,6 +14,7 @@
 - [Subtitles](usage/subtitles.md)
 - [Generating subtitles automatically](usage/generating-subtitles.md)
 - [Word-by-word analysis](usage/word-analysis.md)
+- [Word timing](usage/word-timing.md)
 - [Settings](usage/settings.md)
 
 # Developer Guide

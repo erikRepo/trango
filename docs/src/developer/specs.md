@@ -575,3 +575,26 @@ unrecognized filename (e.g. a custom fine-tune) returns `None` rather
 than guessing — `whisper-cli` hard-errors on an unknown `--dtw` value,
 and the non-DTW word timestamps whisper.cpp falls back to are still
 usable, just less precisely aligned.
+
+## Word timing gets its own popup (Ctrl+W), not folded into Ctrl+A
+
+`segment_words` needed an actual UI trigger to be reachable and to let
+its real-world accuracy be checked by ear rather than just read as
+numbers. A new Ctrl+W popup (`crates/app/src/word_timing_ui.rs`,
+`wire_word_timing_popup` in `main.rs`) mirrors the Ctrl+A word-analysis
+popup's structure almost exactly (same `Idle`/`Loading`/`Done`/`Error`
+state shape, same guard order — model, then media, then
+`panel_content_ready` + current cue) rather than adding a timing column
+to Ctrl+A's existing rows, since the two popups' data (`WordTiming`'s
+timestamps vs `WordEntry`'s translation/pronunciation) and their crates
+(`subtitle` vs `word_analysis`) are unrelated.
+
+Clicking a row plays back exactly that word's span via
+`video_player::VideoPlayer::toggle_play_span` — the same bounded-span
+playback `repeat-cue` already uses for a whole sentence, reused as-is
+for one word. `wire_word_timing_popup` takes that playback capability as
+a plain `impl Fn(PlaySpanCommand)` closure rather than a
+`Rc<video_player::VideoPlayer>` directly, the same reasoning
+`wire_open_subtitles_dialog`'s `reload_video` parameter already
+documents: it keeps the function's guard-path logic testable without a
+real mpv render context.
